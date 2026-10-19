@@ -1,0 +1,20 @@
+{
+  "default": "Team",
+  "claude_args": "--dangerously-skip-permissions",
+  "layouts": {
+    "Team": {
+      "layout": "columns",
+      "panes": [
+        {
+          "label": "Team",
+          "cwd": "",
+          "claude": true
+        },
+        {
+          "label": "shell",
+          "cwd": ""
+        }
+      ]
+    }
+  }
+}
