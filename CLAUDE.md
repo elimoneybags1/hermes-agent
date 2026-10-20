@@ -59,6 +59,13 @@ Nobody has read it yet; it needs a session in `platform`.
 - Until the foreman exists, the session in this repo acts as foreman: it writes
   the briefs, launches walls and records outcomes. Jobs that ran before the
   ledger existed are backfilled into it.
+- **The session runs each wall from start to finish without Eli:** launch, watch,
+  `crew check`, `crew review`, run the tests, merge, `crew down`, ledger row.
+  `crew accept` reads from a terminal, so drive it with
+  `printf 'm\n' | script -q /dev/null crew accept --name <wall>`. Bring Eli only
+  real decisions. Never push to a remote without asking.
+- The Team window is 120 columns, too narrow for two crew panes (60-column
+  minimum). Give each agent its own wall: `crew up --name <slug> ...`.
 
 ## Outcomes ledger (agreed 2026-10-19)
 
