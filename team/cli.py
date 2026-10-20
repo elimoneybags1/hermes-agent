@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import sys
+from pathlib import Path
 
 from team import ledger, targets, roles, dash
 
@@ -74,7 +77,36 @@ def _dash(args: argparse.Namespace) -> int:
     return dash.main(argv=["--json"] if args.json else [])
 
 
+def boss_argv(repo: Path, extra: list[str]) -> list[str]:
+    """Build the argv for the boss agent."""
+    plugin_dir = repo / "plugin"
+    return ["claude", "--plugin-dir", str(plugin_dir), "--agent", "boss", *extra]
+
+
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+
+    # Start the boss ONLY when argv is empty, or when argv[0] == "--"
+    if not argv or argv[0] == "--":
+        # No subcommand: start the boss agent
+        # Find the `--` separator to split extra args
+        try:
+            separator_idx = argv.index("--")
+            extra = argv[separator_idx + 1 :]
+        except ValueError:
+            extra = argv if argv else []
+
+        repo = Path(__file__).resolve().parent.parent
+        os.chdir(repo)
+        claude_path = shutil.which("claude")
+        if claude_path is None:
+            print("claude not found on PATH", file=sys.stderr)
+            return 1
+        boss_argv_list = boss_argv(repo, extra)
+        os.execvp(claude_path, boss_argv_list)
+
+    # Has a subcommand: parse normally
     parser = argparse.ArgumentParser(prog="team")
     commands = parser.add_subparsers(dest="command", required=True)
 
