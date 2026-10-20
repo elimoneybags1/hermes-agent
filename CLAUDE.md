@@ -67,7 +67,7 @@ SQLite at `~/state/team/team.db`.
   files), attempt, started, ended, outcome (`pass|fail|error|timeout`), grader,
   grader_detail
 - `calls`: job_id, provider, model, task_class, tokens_in, tokens_out,
-  latency_ms, ok, error
+  latency_ms, ok, error, ts (when the call was made, UTC ISO seconds)
 
 A job's outcome comes from its grading check, never from a model. No cost
 column: the free gate refuses any paid model.

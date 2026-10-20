@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS calls (
     tokens_out  INTEGER,
     latency_ms  INTEGER,
     ok          INTEGER NOT NULL CHECK (ok IN (0, 1)),
-    error       TEXT
+    error       TEXT,
+    ts          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS calls_job_id ON calls(job_id);
@@ -71,9 +72,16 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
 
 
 def init(conn: sqlite3.Connection) -> None:
-    """Create the jobs and calls tables. Safe to run on an existing ledger."""
+    """Create the jobs and calls tables. Safe to run on an existing ledger.
+
+    A ledger made before calls.ts existed gets the column added in place;
+    its existing calls keep a NULL ts, since when they ran was never recorded.
+    """
     with conn:
         conn.executescript(SCHEMA)
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(calls)")}
+        if "ts" not in cols:
+            conn.execute("ALTER TABLE calls ADD COLUMN ts TEXT")
 
 
 def start_job(
@@ -130,9 +138,10 @@ def record_call(
     with conn:
         cur = conn.execute(
             "INSERT INTO calls (job_id, provider, model, task_class, tokens_in,"
-            " tokens_out, latency_ms, ok, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " tokens_out, latency_ms, ok, error, ts)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (job_id, provider, model, task_class, tokens_in, tokens_out,
-             latency_ms, int(ok), error),
+             latency_ms, int(ok), error, _now()),
         )
     return cur.lastrowid
 
