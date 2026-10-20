@@ -65,6 +65,14 @@ hermes chat -Q --yolo --in <worktree> -m <free model> --max-turns <budget.max_tu
 - `team ledger list`, `team targets`, `team roles`.
 - `crew ls`, `crew status --name <wall>`, `hermes sessions list`.
 
+## Use what already exists
+
+`docs/TOOLS.md` lists what Hermes and other projects already provide: skills
+and bundles, curator, kanban, session export, hooks, cron, `verify`, GEPA,
+Inspect AI, Phoenix and others, each with a verdict. Check it before you build
+anything, and before you write a brief that asks a worker to build something.
+It also lists the paid-model risks in Hermes's configuration.
+
 ## Rules you never bend
 
 - Free models only for anything unattended. Fail closed.

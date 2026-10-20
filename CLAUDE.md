@@ -52,13 +52,18 @@ Nobody has read it yet; it needs a session in `platform`.
 
 ## How Team is built
 
-- **Building agents:** `crew up` (Claude per worktree). Graded by `crew check`
-  and gated by `crew accept`. Attended, so the free-only rule does not apply.
-- **Operating agents:** Hermes workers on free models (the `profiler` role first).
-  Graded by code.
-- Until the foreman exists, the session in this repo acts as foreman: it writes
-  the briefs, launches walls and records outcomes. Jobs that ran before the
-  ledger existed are backfilled into it.
+- **The boss is the agent Eli talks to** (Eli, 2026-10-19): a Claude Code agent,
+  `plugin/agents/boss.md`, started by plain `team`. Its role, tools and rules
+  live in git so they can be tuned. Roster in `roles/*/role.toml`; what
+  each agent is doing shows in `team dash`, and in grid (`docs/DASH.md`).
+- **Free models do almost all the work** (Eli, 2026-10-19). Workers are Hermes
+  on free models, each pinned with `-m`, working in a worktree under
+  `~/state/team/worktrees/`. The boss plans, grades and lands.
+- **Claude via `crew` is the escalation path** after the free attempts a role
+  allows. Attended and gated by review, so the free-only rule doesn't apply.
+- **Use what exists before building:** `docs/TOOLS.md` (Hermes features,
+  GEPA, Inspect AI, Phoenix and others, plus the paid-model risks in Hermes).
+- Jobs that ran before the ledger existed are backfilled into it.
 - **The session runs each wall from start to finish without Eli:** launch, watch,
   `crew check`, `crew review`, run the tests, merge, `crew down`, ledger row.
   `crew accept` reads from a terminal, so drive it with
