@@ -16,5 +16,13 @@
         }
       ]
     }
+  },
+  "gate": {
+    "rules": [
+      "No empty folders or stub files: a directory appears with its first real file",
+      "Paths derive from $HOME or the script location, never a hardcoded user dir",
+      "Free-only: no paid model provider in any code that runs unattended",
+      "uv run pytest passes"
+    ]
   }
 }
