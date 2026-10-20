@@ -5,6 +5,9 @@ description = "An agent team you point at a repo"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+team = "team.cli:main"
+
 [dependency-groups]
 dev = ["pytest>=8"]
 
