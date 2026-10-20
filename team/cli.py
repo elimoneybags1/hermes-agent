@@ -1,14 +1,15 @@
-"""Command line: `team ledger init|list`, `team attach`, `team targets`."""
+"""Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 
-from team import ledger, targets
+from team import ledger, targets, roles, dash
 
 LIST_COLUMNS = ("id", "target", "role", "attempt", "started", "ended", "outcome", "grader")
 TARGET_COLUMNS = ("name", "path", "commit", "attached_at")
+ROLE_COLUMNS = ("name", "status", "runs_on.harness", "runs_on.model", "title")
 
 
 def _init(args: argparse.Namespace) -> int:
@@ -51,6 +52,28 @@ def _targets(args: argparse.Namespace) -> int:
     return 0
 
 
+def _roles(args: argparse.Namespace) -> int:
+    role_list = roles.load_roles()
+    print("\t".join(ROLE_COLUMNS))
+    for role in role_list:
+        print(
+            "\t".join(
+                [
+                    role.get("name", ""),
+                    role.get("status", ""),
+                    role.get("runs_on", {}).get("harness", ""),
+                    role.get("runs_on", {}).get("model", ""),
+                    role.get("title", ""),
+                ]
+            )
+        )
+    return 0
+
+
+def _dash(args: argparse.Namespace) -> int:
+    return dash.main(argv=["--json"] if args.json else [])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="team")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -69,6 +92,10 @@ def main(argv: list[str] | None = None) -> int:
     att.add_argument("--name", help="target name (default: repo directory, lowercased)")
     att.set_defaults(func=_attach)
     commands.add_parser("targets", help="list attached targets").set_defaults(func=_targets)
+    commands.add_parser("roles", help="list roles").set_defaults(func=_roles)
+    dash_parser = commands.add_parser("dash", help="dashboard snapshot")
+    dash_parser.add_argument("--json", action="store_true", help="print JSON snapshot")
+    dash_parser.set_defaults(func=_dash)
 
     args = parser.parse_args(argv)
     return args.func(args)
