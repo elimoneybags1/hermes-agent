@@ -133,6 +133,44 @@ def test_team_no_subcommand_with_extra_args(monkeypatch, capsys):
     ]
 
 
+def test_team_help_exits_via_argparse(monkeypatch, capsys):
+    """Test that team --help exits through argparse (SystemExit 0) without calling execvp."""
+    execvp_called = False
+
+    def mock_execvp(cmd, argv):
+        nonlocal execvp_called
+        execvp_called = True
+        raise SystemExit(0)
+
+    monkeypatch.setattr(os, "execvp", mock_execvp)
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/claude")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["--help"])
+    
+    assert excinfo.value.code == 0
+    assert not execvp_called
+
+
+def test_team_unknown_subcommand_exits_via_argparse(monkeypatch, capsys):
+    """Test that team ledgr (unknown subcommand) raises SystemExit 2 without calling execvp."""
+    execvp_called = False
+
+    def mock_execvp(cmd, argv):
+        nonlocal execvp_called
+        execvp_called = True
+        raise SystemExit(0)
+
+    monkeypatch.setattr(os, "execvp", mock_execvp)
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/claude")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["ledgr"])
+    
+    assert excinfo.value.code == 2
+    assert not execvp_called
+
+
 def test_team_claude_not_found(monkeypatch, capsys):
     """Test that team returns 1 when claude is not on PATH."""
     repo = Path("/fake/repo")
@@ -152,9 +190,3 @@ def test_existing_subcommand_still_works(state, capsys):
     result = cli.main(["ledger", "init"])
     assert result == 0
     assert (state / "team.db").exists()
-
-
-def test_all_subcommands_are_recognized():
-    """Verify all known subcommands work."""
-    for subcmd in ["ledger", "attach", "targets", "roles", "dash"]:
-        assert subcmd in cli.SUBCOMMANDS

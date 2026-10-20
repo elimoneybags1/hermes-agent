@@ -14,8 +14,6 @@ LIST_COLUMNS = ("id", "target", "role", "attempt", "started", "ended", "outcome"
 TARGET_COLUMNS = ("name", "path", "commit", "attached_at")
 ROLE_COLUMNS = ("name", "status", "runs_on.harness", "runs_on.model", "title")
 
-SUBCOMMANDS = {"ledger", "attach", "targets", "roles", "dash"}
-
 
 def _init(args: argparse.Namespace) -> int:
     path = ledger.db_path()
@@ -89,9 +87,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    # Check if first arg is a known subcommand
-    if not argv or argv[0] not in SUBCOMMANDS:
-        # No subcommand or unknown first arg: start the boss agent
+    # Start the boss ONLY when argv is empty, or when argv[0] == "--"
+    if not argv or argv[0] == "--":
+        # No subcommand: start the boss agent
         # Find the `--` separator to split extra args
         try:
             separator_idx = argv.index("--")
@@ -108,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         boss_argv_list = boss_argv(repo, extra)
         os.execvp(claude_path, boss_argv_list)
 
-    # Has a known subcommand: parse normally
+    # Has a subcommand: parse normally
     parser = argparse.ArgumentParser(prog="team")
     commands = parser.add_subparsers(dest="command", required=True)
 
