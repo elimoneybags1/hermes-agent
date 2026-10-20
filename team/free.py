@@ -1,8 +1,22 @@
-"""Free model guard for hermes commands."""
+"""Free model guard for hermes commands.
 
+check_command() reads a shell command the way the shell will split it and
+refuses any hermes call that could reach a model other than a pinned free one.
+A hermes call is allowed only as:
+
+  hermes sessions list|export ...      no model is called
+  hermes fallback list ...
+  hermes [chat] ... -m <free model>    every -m/--model free, every --provider
+                                       in FREE_PROVIDERS, nothing else positional
+
+Anything it cannot read for certain is refused. Reading is static, so it does
+not see hermes run from a script file, from another language (python -c with a
+subprocess list), or under a name assembled from variables.
+"""
+
+import fnmatch
 import re
-import shlex
-from typing import Optional
+from typing import NamedTuple, Optional
 
 # Models that are free despite not ending in ":free"
 FREE_EXACT: frozenset[str] = frozenset({
@@ -10,29 +24,55 @@ FREE_EXACT: frozenset[str] = frozenset({
     "openai/gpt-oss-120b",
 })
 
-# Providers that are known to be paid
-PAID_PROVIDERS: frozenset[str] = frozenset({
-    "anthropic",
-    "openai",
-    "openai-codex",
-    "codex",
-    "cerebras",
-    "xai",
-    "deepseek",
+# Explicit --provider values allowed. Empty until a provider is checked to serve
+# only free models: a FREE_EXACT model is paid through OpenRouter, for one.
+FREE_PROVIDERS: frozenset[str] = frozenset()
+
+# The only hermes calls that run without a model
+READ_ONLY: frozenset[tuple[str, str]] = frozenset({
+    ("sessions", "list"),
+    ("sessions", "export"),
+    ("fallback", "list"),
 })
 
-# Wrapper commands that can precede the actual command
-WRAPPER_COMMANDS: frozenset[str] = frozenset({
-    "env",
-    "command",
-    "exec",
-    "nohup",
-    "time",
-    "timeout",
-    "nice",
-    "uv",
-    "uvx",
+# hermes options that take a value, top level and chat (`hermes chat --help`).
+# Missing one here makes the guard stricter, never looser: its value is then
+# read as a positional and refused.
+SHORT_VALUE = frozenset("mzqstrc")
+LONG_VALUE: frozenset[str] = frozenset({
+    "query", "query-file", "image", "toolsets", "reasoning", "skills", "resume",
+    "in", "continue", "max-turns", "run-budget", "source", "usage-file",
 })
+
+# Commands that only print or search: `grep hermes` names hermes, it does not
+# run it. Not exempt when their output is piped or substituted.
+HARMLESS: frozenset[str] = frozenset({
+    "echo", "printf", "which", "type", "whereis", "man", "grep", "egrep",
+    "fgrep", "rg", "pgrep", "ps", "ls", "cat", "head", "tail", "wc",
+})
+
+UNVERIFIED = "cannot verify hermes invocation is pinned to a free model"
+MAX_DEPTH = 10
+
+_HERMES_WORD = re.compile(r"\bhermes\b", re.IGNORECASE)
+_CODE_CHARS = re.compile(r"[\s;&|<>()$`]")
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_REDIRECT = re.compile(r"^\d*(?:>>|>&|>\||&>>|&>|<<<|<<-|<<|<&|<>|>|<)")
+
+
+class _Unbalanced(Exception):
+    pass
+
+
+class Word(NamedTuple):
+    text: str
+    dynamic: bool  # contains an expansion: its value is not this text
+    splits: bool   # unquoted expansion, glob or brace: may become several words
+
+
+class Segment(NamedTuple):
+    words: list[Word]
+    exposed: bool  # output is piped or captured, so it may be run as code
 
 
 def is_free_model(model: str) -> bool:
@@ -40,289 +80,288 @@ def is_free_model(model: str) -> bool:
     return model.endswith(":free") or model in FREE_EXACT
 
 
-def _split_commands(cmd: str) -> list[str]:
-    """Split a shell command on ;, &, &&, ||, |, and newlines. Respects braces and parens."""
-    parts = []
-    current = []
-    paren_depth = 0
-    brace_depth = 0
+def _close_paren(s: str, i: int) -> int:
+    """Index of the ')' closing a '(' just before s[i], honouring quotes."""
+    depth, quote = 1, None
+    while i < len(s):
+        c = s[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif c == "\\":
+            i += 1
+        elif quote == '"':
+            if c == '"':
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    raise _Unbalanced
 
+
+def _close_backtick(s: str, i: int) -> int:
+    while i < len(s):
+        if s[i] == "\\":
+            i += 2
+            continue
+        if s[i] == "`":
+            return i
+        i += 1
+    raise _Unbalanced
+
+
+def _scan(cmd: str, exposed: bool) -> tuple[list[Segment], list[str]]:
+    """Split cmd into simple commands of words, and collect the bodies of
+    $(...), `...`, <(...) and >(...) so they can be checked as commands too."""
+    segments: list[Segment] = []
+    subs: list[str] = []
+    words: list[Word] = []
+    cur: list[str] = []
+    state = {"word": False, "dynamic": False, "splits": False, "piped_in": False}
+    quote = None
+
+    def end_word() -> None:
+        if state["word"]:
+            words.append(Word("".join(cur), state["dynamic"], state["splits"]))
+        cur.clear()
+        state.update(word=False, dynamic=False, splits=False)
+
+    def end_segment(sep: str) -> None:
+        end_word()
+        piped_out = sep in ("|", "|&", "(", ")")
+        if words:
+            segments.append(Segment(list(words), exposed or state["piped_in"] or piped_out))
+        words.clear()
+        state["piped_in"] = piped_out
+
+    def expansion(unquoted: bool) -> None:
+        state.update(word=True, dynamic=True)
+        if unquoted:
+            state["splits"] = True
+
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            else:
+                cur.append(c)
+            i += 1
+            continue
+        if c == "\\":
+            if i + 1 < n:
+                nxt = cmd[i + 1]
+                if quote == '"' and nxt not in '$`"\\\n':
+                    cur.append(c)
+                if nxt != "\n":
+                    cur.append(nxt)
+                    state["word"] = True
+            i += 2
+            continue
+        if cmd.startswith("$(", i) or (quote is None and cmd.startswith(("<(", ">("), i)):
+            j = _close_paren(cmd, i + 2)
+            subs.append(cmd[i + 2:j])
+            cur.append("$")
+            expansion(quote is None)
+            i = j + 1
+            continue
+        if c == "`":
+            j = _close_backtick(cmd, i + 1)
+            subs.append(cmd[i + 1:j])
+            cur.append("$")
+            expansion(quote is None)
+            i = j + 1
+            continue
+        if quote == '"':
+            if c == '"':
+                quote = None
+            else:
+                cur.append(c)
+                if c == "$":
+                    expansion(False)
+            i += 1
+            continue
+        # Unquoted
+        if c in "'\"":
+            quote = c
+            state["word"] = True
+        elif c in " \t":
+            end_word()
+        elif cmd.startswith(("&&", "||", "|&", ";;"), i):
+            end_segment(cmd[i:i + 2])
+            i += 2
+            continue
+        elif c == "&" and (cmd[i - 1:i] in ("<", ">") or cmd[i + 1:i + 2] == ">"):
+            cur.append(c)  # part of a redirection: 2>&1, &>file
+            state["word"] = True
+        elif c in ";&|\n()":
+            end_segment(c)
+        else:
+            if c == "$":
+                expansion(True)
+            elif c in "*?[{":
+                state["splits"] = True
+            cur.append(c)
+            state["word"] = True
+        i += 1
+
+    if quote is not None:
+        raise _Unbalanced
+    end_segment(";")
+    return segments, subs
+
+
+def _check(cmd: str, exposed: bool = False, depth: int = 0) -> Optional[str]:
+    if depth > MAX_DEPTH:
+        return UNVERIFIED
+    try:
+        segments, subs = _scan(cmd, exposed)
+    except _Unbalanced:
+        return "unbalanced quotes in command"
+    for segment in segments:
+        reason = _check_segment(segment, depth)
+        if reason:
+            return reason
+    for body in subs:
+        reason = _check(body, True, depth + 1)
+        if reason:
+            return reason
+    return None
+
+
+def _command_index(words: list[Word]) -> Optional[int]:
+    """Index of the command word: past assignments and redirections."""
     i = 0
-    while i < len(cmd):
-        ch = cmd[i]
-        # Handle parentheses and braces FIRST (before checking for separators)
-        if ch == '(':
-            paren_depth += 1
-            current.append(ch)
-        elif ch == ')':
-            paren_depth = max(0, paren_depth - 1)
-            current.append(ch)
-        elif ch == '{':
-            brace_depth += 1
-            current.append(ch)
-        elif ch == '}':
-            brace_depth = max(0, brace_depth - 1)
-            current.append(ch)
-        elif paren_depth == 0 and brace_depth == 0:
-            # At top level - check for operators
-            if cmd[i:i+2] in ('&&', '||'):
-                if current:
-                    parts.append(''.join(current).strip())
-                current = []
-                i += 2
+    while i < len(words):
+        text = words[i].text
+        if _ASSIGNMENT.match(text):
+            i += 1
+        elif m := _REDIRECT.match(text):
+            i += 1 if text[m.end():] else 2
+        else:
+            return i
+    return None
+
+
+def _is_hermes(word: Word, is_command: bool) -> bool:
+    base = word.text.rsplit("/", 1)[-1].lower()
+    if base == "hermes":
+        return True
+    # herm?s, ~/.local/bin/h* as the command word expand to hermes
+    return is_command and word.splits and fnmatch.fnmatchcase("hermes", base)
+
+
+def _check_segment(segment: Segment, depth: int) -> Optional[str]:
+    words = segment.words
+    cmd = _command_index(words)
+    harmless = (
+        cmd is not None
+        and not segment.exposed
+        and words[cmd].text.rsplit("/", 1)[-1] in HARMLESS
+    )
+    for k, word in enumerate(words):
+        if _is_hermes(word, k == cmd):
+            if harmless and k != cmd:
                 continue
-            elif ch in (';', '|', '&', '\n'):
-                if current:
-                    parts.append(''.join(current).strip())
-                current = []
+            return _check_hermes(words[k + 1:])
+        # A string that may be run as code: bash -c, eval, H=hermes, commit messages
+        text = word.text
+        embedded = []
+        if _CODE_CHARS.search(text):
+            embedded.append(text)
+        if "=" in text:
+            embedded.append(text.split("=", 1)[1])
+        for code in embedded:
+            if _HERMES_WORD.search(code):
+                reason = _check(code, False, depth + 1)
+                if reason:
+                    return f"{UNVERIFIED}: {reason}"
+    return None
+
+
+def _check_hermes(args: list[Word]) -> Optional[str]:
+    """Check the arguments of one hermes call."""
+    if len(args) >= 2 and (args[0].text, args[1].text) in READ_ONLY:
+        if not (args[0].dynamic or args[1].dynamic):
+            return None
+
+    models: list[str] = []
+    providers: list[str] = []
+    seen_chat = False
+    i = 0
+    while i < len(args):
+        word = args[i]
+        text = word.text
+        if m := _REDIRECT.match(text):
+            i += 1 if text[m.end():] else 2
+            continue
+        if word.dynamic:
+            # "$X" alone may be --provider, unquoted $X may be several words
+            return f"{UNVERIFIED}: argument '{text}' expands at run time"
+
+        value: Optional[str] = None
+        kind = None
+        takes_value = False
+        if text.startswith("--") and len(text) > 2:
+            name, eq, inline = text[2:].partition("=")
+            # argparse accepts any unambiguous prefix: --mod, --prov
+            if "model".startswith(name):
+                kind = "model"
+            elif "provider".startswith(name):
+                kind = "provider"
+            takes_value = kind is not None or name in LONG_VALUE
+            if eq:
+                value, takes_value = inline, False
+        elif text.startswith("-") and len(text) > 1:
+            # A cluster such as -Qm X or -mX: the first value option takes the rest
+            for j, ch in enumerate(text[1:], 1):
+                if ch in SHORT_VALUE:
+                    kind = "model" if ch == "m" else None
+                    if text[j + 1:]:
+                        value = text[j + 1:]
+                    else:
+                        takes_value = True
+                    break
+        else:
+            if text == "chat" and not seen_chat:
+                seen_chat = True
                 i += 1
                 continue
-            else:
-                # Regular character at top level
-                current.append(ch)
-        else:
-            # Inside parens/braces - just append
-            current.append(ch)
+            return (
+                f"hermes argument '{text}' is not allowed: only chat on a free model, "
+                "sessions list/export and fallback list"
+            )
+
+        if takes_value and i + 1 < len(args):
+            nxt = args[i + 1]
+            # argparse does not take an option-like word as a value
+            if not nxt.text.startswith("-") or " " in nxt.text:
+                if nxt.splits or (kind and nxt.dynamic):
+                    return f"{UNVERIFIED}: argument '{nxt.text}' expands at run time"
+                value = nxt.text
+                i += 1
+        if kind == "model" and value is not None:
+            models.append(value)
+        elif kind == "provider" and value is not None:
+            providers.append(value)
         i += 1
 
-    if current:
-        parts.append(''.join(current).strip())
-
-    # Filter out empty parts and parentheses/braces-only parts
-    result = []
-    for part in parts:
-        stripped = part.strip()
-        if stripped and stripped not in ('(', ')', '{', '}'):
-            result.append(stripped)
-    return result
-
-
-def _skip_var_assignments_and_wrappers(tokens: list[str]) -> list[str]:
-    """Skip leading VAR=value assignments and wrapper commands."""
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        # VAR=value assignment
-        if re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', token):
-            i += 1
-            continue
-        # Wrapper commands
-        if token in WRAPPER_COMMANDS:
-            # Special handling: "timeout N" or "nice -N" consume extra args
-            if token == "timeout" and i + 1 < len(tokens) and tokens[i + 1].isdigit():
-                i += 2
-                continue
-            if token == "nice" and i + 1 < len(tokens) and tokens[i + 1].startswith("-"):
-                i += 2
-                continue
-            # uv run, uvx need special handling
-            if token == "uv" and i + 1 < len(tokens) and tokens[i + 1] == "run":
-                i += 2
-                continue
-            i += 1
-            continue
-        break
-    return tokens[i:]
-
-
-def _extract_body_braces(s: str) -> Optional[str]:
-    """Extract content from the first { ... } pair, handling nested braces."""
-    start = s.find('{')
-    if start == -1:
-        return None
-    depth = 0
-    for i, ch in enumerate(s[start:], start=start):
-        if ch == '{':
-            depth += 1
-        elif ch == '}':
-            depth -= 1
-            if depth == 0:
-                return s[start + 1:i]
+    if not models:
+        return "hermes chat requires explicit -m/--model with a free model"
+    for model in models:
+        if not is_free_model(model):
+            return f"model '{model}' is not free (must end with :free or be in FREE_EXACT)"
+    for provider in providers:
+        if provider not in FREE_PROVIDERS:
+            return f"provider '{provider}' is not free (not in FREE_PROVIDERS)"
     return None
-
-
-def _extract_body_parens(s: str) -> Optional[str]:
-    """Extract content from the first ( ... ) pair, handling nested parens."""
-    start = s.find('(')
-    if start == -1:
-        return None
-    depth = 0
-    for i, ch in enumerate(s[start:], start=start):
-        if ch == '(':
-            depth += 1
-        elif ch == ')':
-            depth -= 1
-            if depth == 0:
-                return s[start + 1:i]
-    return None
-
-
-def _find_hermes_in_string(s: str) -> list[list[str]]:
-    """Find hermes invocations in a command string (recursively handles subshells)."""
-    hermes_calls = []
-
-    # Split on command separators at top level
-    commands = _split_commands(s)
-
-    for subcmd in commands:
-        subcmd = subcmd.strip()
-        if not subcmd:
-            continue
-
-        # Try to parse as tokens first
-        try:
-            tokens = shlex.split(subcmd)
-        except ValueError:
-            # Unbalanced quotes - skip this part
-            continue
-
-        if not tokens:
-            continue
-
-        # Check for function definition: name() { ... } or name () { ... }
-        # Pattern: first token ends with () or first token is name and second is ()
-        is_func_def = False
-        func_body = None
-        if len(tokens) >= 2:
-            if tokens[0].endswith('()') or (tokens[0] and tokens[1] == '()'):
-                is_func_def = True
-            elif tokens[0] == '{' or tokens[0].endswith('{'):
-                # Brace group at start
-                is_func_def = True
-        
-        if is_func_def:
-            body = _extract_body_braces(subcmd)
-            if body:
-                hermes_calls.extend(_find_hermes_in_string(body))
-            continue
-
-        # Skip var assignments and wrappers
-        tokens = _skip_var_assignments_and_wrappers(tokens)
-
-        if not tokens:
-            continue
-
-        # Check if first token is hermes (basename)
-        first = tokens[0]
-        if first.endswith('/hermes') or first == 'hermes':
-            hermes_calls.append(tokens)
-            continue
-
-        # Check for bash -c, sh -c, zsh -c
-        if len(tokens) >= 3 and tokens[0] in ('bash', 'sh', 'zsh') and tokens[1] == '-c':
-            inner_cmd = tokens[2]
-            hermes_calls.extend(_find_hermes_in_string(inner_cmd))
-            continue
-
-        # Check for brace group { ... } at top level
-        if tokens[0] == '{' or (tokens[0] and tokens[0].endswith('{')):
-            body = _extract_body_braces(subcmd)
-            if body:
-                hermes_calls.extend(_find_hermes_in_string(body))
-            continue
-
-        # Check for subshell ( ... ) at top level
-        if tokens[0] == '(' or (tokens[0] and tokens[0].endswith('(')):
-            body = _extract_body_parens(subcmd)
-            if body:
-                hermes_calls.extend(_find_hermes_in_string(body))
-            continue
-
-        # Check for $(...) or `...` - command substitution
-        for match in re.finditer(r'\$\(([^)]+)\)', subcmd):
-            hermes_calls.extend(_find_hermes_in_string(match.group(1)))
-        for match in re.finditer(r'`([^`]+)`', subcmd):
-            hermes_calls.extend(_find_hermes_in_string(match.group(1)))
-
-    return hermes_calls
-
-
-def _find_hermes_invocations(cmd: str) -> list[list[str]]:
-    """Find all hermes command invocations in a shell command string."""
-    return _find_hermes_in_string(cmd)
-
-
-def _is_chat_invocation(tokens: list[str]) -> bool:
-    """Check if this is a hermes chat invocation (or implicit chat via -q/--query/--query-file/-z)."""
-    if len(tokens) < 2:
-        return False
-
-    subcommand = tokens[1]
-
-    # Explicit chat subcommand
-    if subcommand == 'chat':
-        return True
-
-    # Implicit chat: -q, --query, --query-file, -z without a subcommand
-    chat_flags = {'-q', '--query', '--query-file', '-z'}
-    has_chat_flag = any(t in chat_flags for t in tokens[1:])
-
-    # List of known non-chat subcommands
-    non_chat_subcommands = {
-        'sessions', 'fallback', 'models', 'providers', 'skills',
-        'plugins', 'cron', 'memory', 'config', 'auth', 'doctor'
-    }
-
-    # If first arg after hermes is a known non-chat subcommand, it's not chat
-    if subcommand in non_chat_subcommands:
-        return False
-
-    # If we have a chat flag and no explicit subcommand, it's implicit chat
-    if has_chat_flag:
-        return True
-
-    return False
-
-
-def _extract_model(tokens: list[str]) -> Optional[str]:
-    """Extract model from -m/--model flag (supports -m X, --model X, --model=X)."""
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token == '-m':
-            if i + 1 < len(tokens):
-                return tokens[i + 1]
-        elif token == '--model':
-            if i + 1 < len(tokens):
-                return tokens[i + 1]
-        elif token.startswith('--model='):
-            return token[8:]  # len('--model=') == 8
-        i += 1
-    return None
-
-
-def _extract_provider(tokens: list[str]) -> Optional[str]:
-    """Extract provider from --provider flag (supports --provider X, --provider=X)."""
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token == '--provider':
-            if i + 1 < len(tokens):
-                return tokens[i + 1]
-        elif token.startswith('--provider='):
-            return token[11:]  # len('--provider=') == 11
-        i += 1
-    return None
-
-
-def _count_hermes_chat_occurrences(cmd: str) -> int:
-    """Count occurrences of hermes with chat-related keywords in the raw command."""
-    pattern = r'\bhermes\b.*?(?:chat|-q\b|-z\b|--query\b|--query-file\b)|(?:chat|-q\b|-z\b|--query\b|--query-file\b).*?\bhermes\b'
-    matches = re.findall(pattern, cmd, re.IGNORECASE)
-    return len(matches)
-
-
-def _count_approved_hermes_chat(tokens_list: list[list[str]]) -> int:
-    """Count approved hermes chat invocations (those with free model pin)."""
-    count = 0
-    for tokens in tokens_list:
-        if _is_chat_invocation(tokens):
-            model = _extract_model(tokens)
-            if model and is_free_model(model):
-                provider = _extract_provider(tokens)
-                if not (provider and provider in PAID_PROVIDERS):
-                    count += 1
-    return count
 
 
 def check_command(cmd: str) -> Optional[str]:
@@ -331,38 +370,4 @@ def check_command(cmd: str) -> Optional[str]:
 
     Returns None if allowed, otherwise a one-line refusal reason.
     """
-    try:
-        # First, try to parse the whole command to catch unbalanced quotes
-        shlex.split(cmd)
-    except ValueError:
-        return "unbalanced quotes in command"
-
-    hermes_calls = _find_hermes_invocations(cmd)
-
-    # Check each hermes call
-    for tokens in hermes_calls:
-        if not _is_chat_invocation(tokens):
-            # Read-only subcommands like sessions list, fallback list are allowed
-            continue
-
-        # This is a chat invocation - check for model pin
-        model = _extract_model(tokens)
-        if not model:
-            return "hermes chat requires explicit -m/--model with a free model"
-
-        if not is_free_model(model):
-            return f"model '{model}' is not free (must end with :free or be in FREE_EXACT)"
-
-        # Check for paid provider
-        provider = _extract_provider(tokens)
-        if provider and provider in PAID_PROVIDERS:
-            return f"provider '{provider}' is not free"
-
-    # Backstop: fail closed if raw command has hermes+chat keywords but we didn't approve them
-    raw_chat_count = _count_hermes_chat_occurrences(cmd)
-    approved_count = _count_approved_hermes_chat(hermes_calls)
-
-    if raw_chat_count > approved_count:
-        return "cannot verify hermes invocation is pinned to a free model"
-
-    return None
+    return _check(cmd)

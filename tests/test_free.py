@@ -184,10 +184,11 @@ class TestReviewFindings:
 
     # Finding 2: Subshells, brace groups, function bodies, $(), backticks, bash -c
     def test_function_body_refused(self):
+        # The call inside the body is parsed, so the specific reason is reported.
         cmd = 'run() { s=$1; hermes chat -Q --yolo --in /tmp/w --query-file /tmp/b.md > /tmp/o 2>&1; }; run a & run b & wait'
         reason = check_command(cmd)
         assert reason is not None
-        assert "cannot verify hermes invocation is pinned to a free model" in reason
+        assert "requires explicit -m/--model" in reason
 
     def test_function_body_with_free_model_allowed(self):
         cmd = 'run() { s=$1; hermes chat -Q --yolo --in /tmp/w --query-file /tmp/b.md -m nvidia/nemotron-3-ultra-550b-a55b:free > /tmp/o 2>&1; }; run a & run b & wait'
@@ -317,3 +318,114 @@ class TestReviewFindings:
     def test_hermes_sessions_export_allowed(self):
         cmd = 'hermes sessions export - --session-id X --format jsonl'
         assert check_command(cmd) is None
+
+
+class TestFailOpen:
+    """Each command here got past the guard before; all must be refused."""
+
+    def test_bare_hermes_refused(self):
+        # No subcommand starts an interactive chat on the default model.
+        assert check_command('hermes') is not None
+
+    def test_implicit_chat_paid_model_without_query_refused(self):
+        assert check_command('hermes -m anthropic/claude-sonnet-4') is not None
+
+    def test_other_subcommand_refused(self):
+        assert check_command('hermes cron run nightly') is not None
+
+    def test_other_subcommand_with_free_model_refused(self):
+        assert check_command('hermes -m x:free config set model anthropic/claude-sonnet-4') is not None
+
+    def test_fallback_add_refused(self):
+        assert check_command('hermes fallback add anthropic') is not None
+
+    def test_sessions_other_action_refused(self):
+        assert check_command('hermes sessions delete X') is not None
+
+    def test_repeated_model_last_wins_refused(self):
+        assert check_command('hermes chat -m x:free -m gpt-4') is not None
+
+    def test_attached_short_model_refused(self):
+        assert check_command('hermes chat -m x:free -mgpt-4') is not None
+
+    def test_clustered_short_model_refused(self):
+        assert check_command('hermes chat -m x:free -Qm gpt-4') is not None
+
+    def test_abbreviated_model_refused(self):
+        assert check_command('hermes chat -m x:free --mod gpt-4') is not None
+
+    def test_abbreviated_provider_refused(self):
+        assert check_command('hermes chat -m x:free --prov anthropic') is not None
+
+    def test_provider_case_refused(self):
+        assert check_command('hermes chat -m x:free --provider Anthropic') is not None
+
+    def test_unlisted_provider_refused(self):
+        # gemini-2.5-flash is free on Google's tier, not through OpenRouter.
+        assert check_command('hermes chat -m gemini-2.5-flash --provider openrouter') is not None
+
+    def test_uppercase_command_refused(self):
+        # macOS filesystems are case-insensitive: HERMES runs hermes.
+        assert check_command('HERMES -m gpt-4') is not None
+
+    def test_unknown_wrapper_refused(self):
+        assert check_command('sudo -u eli hermes -m gpt-4') is not None
+
+    def test_xargs_refused(self):
+        assert check_command('echo hi | xargs hermes -m gpt-4') is not None
+
+    def test_substitution_in_allowed_command_refused(self):
+        assert check_command('hermes sessions list $(hermes -m gpt-4)') is not None
+
+    def test_substitution_in_free_chat_refused(self):
+        assert check_command('hermes chat -m x:free -q "$(hermes -m gpt-4)"') is not None
+
+    def test_redirect_ampersand_does_not_hide_args(self):
+        assert check_command('hermes chat -m x:free -q hi 2>&1 --provider anthropic') is not None
+
+    def test_unquoted_variable_arg_refused(self):
+        # $EXTRA may expand to "--provider anthropic".
+        assert check_command('hermes chat -m x:free -q hi $EXTRA') is not None
+
+    def test_brace_expansion_arg_refused(self):
+        assert check_command('hermes chat -m x:free -q hi {--provider,anthropic}') is not None
+
+    def test_variable_command_refused(self):
+        assert check_command('H=hermes; $H -m gpt-4') is not None
+
+    def test_pipe_into_shell_refused(self):
+        assert check_command('echo hermes -m gpt-4 | sh') is not None
+
+    def test_glob_command_refused(self):
+        assert check_command('herm?s -m gpt-4') is not None
+
+    def test_separator_inside_quotes_refused(self):
+        assert check_command('bash -c "true; hermes -m gpt-4"') is not None
+
+    def test_process_substitution_refused(self):
+        assert check_command('bash <(echo hermes -m gpt-4)') is not None
+
+    def test_eval_string_refused(self):
+        assert check_command('eval "hermes -m gpt-4"') is not None
+
+
+class TestStillAllowed:
+    """Ordinary commands the stricter parsing must not refuse."""
+
+    def test_top_level_model_before_chat(self):
+        assert check_command('hermes -m x:free chat -q hi') is None
+
+    def test_line_continuation(self):
+        assert check_command('hermes chat -m x:free \\\n  -Q --query-file /tmp/b.md') is None
+
+    def test_quoted_variable_as_option_value(self):
+        assert check_command('hermes chat -m x:free --query-file "$BRIEF" --in "$WT"') is None
+
+    def test_grep_for_hermes(self):
+        assert check_command('grep -rn hermes team/') is None
+
+    def test_hermes_state_path(self):
+        assert check_command('ls ~/.hermes/sessions') is None
+
+    def test_pipe_out_of_sessions_list(self):
+        assert check_command('hermes sessions list | grep chat') is None
