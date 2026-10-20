@@ -36,16 +36,41 @@ target end to end before adding roles, targets or autonomy.
 - **Hermes is the runtime and clock**, not the brain of the system: it schedules
   the foreman and runs workers (`hermes chat -s <skills> --query-file <brief>`).
 
-## Open decisions — ask Eli, do not assume
+## Decisions (Eli, 2026-10-19)
 
-1. Where a target's specialization lives: in the target repo (`.team/`) or in
-   `~/state/team/targets/<name>/`.
-2. Reuse `brain`'s router by copying it, or extract it into a shared package.
-3. Overlap with `~/work/platform/ai` (gateway, router, agents, skills) — not yet
-   read; it may already hold pieces of this.
-4. First target repo (`brain` is the natural one: it has real evals already).
-5. Sandbox: git worktrees (crew) only, or Docker via colima as the Hermes
-   terminal backend for workers that execute code.
+1. **Team manages every project from outside it.** One target per project; its
+   profile, skill overlays and outcomes live in `~/state/team/targets/<name>/`.
+   Attaching Team adds nothing to the target repo.
+2. **Router: copy** `brain`'s `llm.py` into this repo. Extract a shared package
+   only once both copies are actually in use.
+3. **First target is Team itself.** Team is built by its own agents from the
+   first job. Every change to this repo is a job that the ledger records.
+4. **Sandbox: crew worktrees only.** Docker via colima waits until a worker runs code.
+
+Still open: overlap with `~/work/platform/ai` (gateway, router, agents, skills).
+Nobody has read it yet; it needs a session in `platform`.
+
+## How Team is built
+
+- **Building agents:** `crew up` (Claude per worktree). Graded by `crew check`
+  and gated by `crew accept`. Attended, so the free-only rule does not apply.
+- **Operating agents:** Hermes workers on free models (the `profiler` role first).
+  Graded by code.
+- Until the foreman exists, the session in this repo acts as foreman: it writes
+  the briefs, launches walls and records outcomes. Jobs that ran before the
+  ledger existed are backfilled into it.
+
+## Outcomes ledger (agreed 2026-10-19)
+
+SQLite at `~/state/team/team.db`.
+- `jobs`: id, target, target_commit, role, role_version (git sha of that role's
+  files), attempt, started, ended, outcome (`pass|fail|error|timeout`), grader,
+  grader_detail
+- `calls`: job_id, provider, model, task_class, tokens_in, tokens_out,
+  latency_ms, ok, error
+
+A job's outcome comes from its grading check, never from a model. No cost
+column: the free gate refuses any paid model.
 
 ## Conventions
 
