@@ -1,0 +1,13 @@
+name = "spec"
+title = "Spec"
+does = "Writes the plan for one job and the tests that must pass when it is done."
+graded_by = "The tests exist, run, and fail before the work is done"
+status = "planned"
+
+[runs_on]
+harness = "hermes"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+[budget]
+max_turns = 25
+run_budget_s = 600

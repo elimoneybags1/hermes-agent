@@ -1,0 +1,13 @@
+name = "review"
+title = "Review"
+does = "Checks a finished diff against the target's rules and returns land or fix, with reasons. The boss has the final say."
+graded_by = "The boss agrees with its verdict"
+status = "planned"
+
+[runs_on]
+harness = "hermes"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+[budget]
+max_turns = 15
+run_budget_s = 300

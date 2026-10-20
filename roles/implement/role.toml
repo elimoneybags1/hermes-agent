@@ -1,0 +1,18 @@
+name = "implement"
+title = "Implement"
+does = "Writes the code for one job in its own git worktree until the spec's tests pass. After two failed free attempts the job escalates to a Claude crew agent."
+graded_by = "The target's test command passes in the worktree"
+status = "active"
+
+[runs_on]
+harness = "hermes"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+[escalation]
+harness = "crew"
+model = "claude"
+after_failures = 2
+
+[budget]
+max_turns = 40
+run_budget_s = 900
