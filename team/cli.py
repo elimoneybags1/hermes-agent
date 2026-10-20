@@ -1,11 +1,13 @@
-"""Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`."""
+"""Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`, `team free-check`."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from team import ledger, targets, roles, dash
+from team.free import check_command
 
 LIST_COLUMNS = ("id", "target", "role", "attempt", "started", "ended", "outcome", "grader")
 TARGET_COLUMNS = ("name", "path", "commit", "attached_at")
@@ -74,6 +76,31 @@ def _dash(args: argparse.Namespace) -> int:
     return dash.main(argv=["--json"] if args.json else [])
 
 
+def _free_check(args: argparse.Namespace) -> int:
+    """Check a hermes command from a Claude Code PreToolUse hook payload."""
+    try:
+        payload = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        # Not a JSON payload we judge - exit 0
+        return 0
+    
+    # Check it's a Bash tool call
+    if payload.get("tool_name") != "Bash":
+        return 0
+    
+    tool_input = payload.get("tool_input", {})
+    command = tool_input.get("command")
+    if not command:
+        return 0
+    
+    reason = check_command(command)
+    if reason is None:
+        return 0
+    
+    print(reason, file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="team")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -96,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     dash_parser = commands.add_parser("dash", help="dashboard snapshot")
     dash_parser.add_argument("--json", action="store_true", help="print JSON snapshot")
     dash_parser.set_defaults(func=_dash)
+    commands.add_parser("free-check", help="check hermes command for free model compliance").set_defaults(func=_free_check)
 
     args = parser.parse_args(argv)
     return args.func(args)
