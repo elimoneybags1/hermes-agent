@@ -1,0 +1,444 @@
+"""Tests for team/ui.py: the dashboard server, over real HTTP on port 0."""
+
+from __future__ import annotations
+
+import http.client
+import json
+import shutil
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+from team import agents, cli, ledger, ui
+
+REPO = Path(__file__).parent.parent
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def temp_repo(tmp_path):
+    """A tmp git repo holding a copy of the real roles/ and plugin/."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init")
+    _git(repo, "config", "user.name", "Test User")
+    _git(repo, "config", "user.email", "test@example.com")
+    shutil.copytree(REPO / "roles", repo / "roles")
+    shutil.copytree(REPO / "plugin", repo / "plugin")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "initial")
+    return repo
+
+
+@pytest.fixture
+def db(tmp_path):
+    path = tmp_path / "state" / "team.db"
+    conn = ledger.connect(path)
+    ledger.init(conn)
+    job = ledger.start_job(conn, "team", "abc", "implement", "v1")
+    ledger.finish_job(conn, job, "pass", "pytest")
+    ledger.start_job(conn, "team", "def", "implement", "v1")
+    conn.close()
+    return path
+
+
+@pytest.fixture
+def index(tmp_path):
+    path = tmp_path / "index.html"
+    path.write_text("<!doctype html><title>Team</title>")
+    return path
+
+
+@pytest.fixture
+def server(temp_repo, db, index):
+    srv = ui.make_server(temp_repo, db, port=0, index=index, poll_s=0.05, ping_s=0.2)
+    thread = threading.Thread(target=srv.serve_forever, args=(0.05,), daemon=True)
+    thread.start()
+    yield srv
+    srv.shutdown()
+    srv.server_close()
+    thread.join(timeout=5)
+
+
+def _url(srv, path: str) -> str:
+    return f"http://127.0.0.1:{srv.server_address[1]}{path}"
+
+
+def request(srv, method: str, path: str, body=None, headers=None, json_type=True):
+    """(status, parsed body or bytes) for one request."""
+    data = None if body is None else json.dumps(body).encode()
+    hdrs = dict(headers or {})
+    if json_type and method != "GET":
+        hdrs.setdefault("Content-Type", "application/json")
+    req = urllib.request.Request(_url(srv, path), data=data, method=method, headers=hdrs)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            status, ctype, raw = resp.status, resp.headers["Content-Type"], resp.read()
+    except urllib.error.HTTPError as e:
+        status, ctype, raw = e.code, e.headers["Content-Type"], e.read()
+    if ctype and ctype.startswith("application/json"):
+        return status, json.loads(raw)
+    return status, raw
+
+
+def head(repo: Path) -> str:
+    return _git(repo, "rev-parse", "HEAD")
+
+
+class TestHost:
+    @pytest.mark.parametrize(
+        "method,path",
+        [
+            ("GET", "/"),
+            ("GET", "/api/state"),
+            ("GET", "/api/events"),
+            ("GET", "/api/agents/implement"),
+            ("PATCH", "/api/agents/implement/role"),
+            ("GET", "/nope"),
+        ],
+    )
+    def test_foreign_host_is_403(self, server, temp_repo, method, path):
+        before = head(temp_repo)
+        body = {"field": "title", "value": "x"} if method != "GET" else None
+        status, data = request(server, method, path, body, {"Host": "evil.example"})
+        assert status == 403
+        assert data == {"error": "forbidden host"}
+        assert head(temp_repo) == before
+
+    def test_wrong_port_is_403(self, server):
+        status, _ = request(server, "GET", "/", headers={"Host": "127.0.0.1:1"})
+        assert status == 403
+
+    def test_localhost_is_allowed(self, server):
+        port = server.server_address[1]
+        status, _ = request(server, "GET", "/api/state", headers={"Host": f"localhost:{port}"})
+        assert status == 200
+
+
+class TestReads:
+    def test_index(self, server):
+        status, body = request(server, "GET", "/")
+        assert status == 200
+        assert body == b"<!doctype html><title>Team</title>"
+
+    def test_index_missing_is_404(self, temp_repo, db, tmp_path):
+        srv = ui.make_server(temp_repo, db, port=0, index=tmp_path / "none.html")
+        thread = threading.Thread(target=srv.serve_forever, args=(0.05,), daemon=True)
+        thread.start()
+        try:
+            status, data = request(srv, "GET", "/")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        assert status == 404
+        assert "error" in data
+
+    def test_state_has_snapshot_and_pipeline(self, server):
+        status, data = request(server, "GET", "/api/state")
+        assert status == 200
+        assert data["pipeline"] == ["boss", "triage", "spec", "implement", "review"]
+        assert data["base"] == {"jobs": 1, "passed": 1, "pass_rate": 1.0}
+        implement = next(r for r in data["roles"] if r["name"] == "implement")
+        assert [w["target"] for w in implement["working_on"]] == ["team"]
+
+    def test_state_without_ledger(self, temp_repo, tmp_path, index):
+        missing = tmp_path / "nostate" / "team.db"
+        srv = ui.make_server(temp_repo, missing, port=0, index=index)
+        thread = threading.Thread(target=srv.serve_forever, args=(0.05,), daemon=True)
+        thread.start()
+        try:
+            status, data = request(srv, "GET", "/api/state")
+            dstatus, detail = request(srv, "GET", "/api/agents/implement")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        assert status == 200
+        assert data["base"]["jobs"] == 0
+        assert dstatus == 200
+        assert detail["jobs"] == []
+        assert not missing.exists()
+
+    def test_detail(self, server):
+        status, data = request(server, "GET", "/api/agents/implement")
+        assert status == 200
+        assert data["name"] == "implement"
+        assert data["available_tools"] == agents.TOOLSETS
+        assert len(data["jobs"]) == 2
+        assert data["history"][0]["subject"] == "initial"
+
+    def test_unknown_agent_is_400(self, server):
+        status, data = request(server, "GET", "/api/agents/ghost")
+        assert status == 400
+        assert data == {"error": "unknown agent: ghost"}
+
+
+class TestRoutes:
+    @pytest.mark.parametrize(
+        "method,path",
+        [
+            ("GET", "/nope"),
+            ("GET", "/api"),
+            ("GET", "/api/agents"),
+            ("GET", "/api/agents/implement/role"),
+            ("POST", "/api/state"),
+            ("DELETE", "/api/agents/implement"),
+            ("PUT", "/api/agents/implement/skills"),
+        ],
+    )
+    def test_unknown_route_is_404(self, server, method, path):
+        status, data = request(server, method, path, {} if method != "GET" else None)
+        assert status == 404
+        assert "error" in data
+
+    def test_query_string_ignored(self, server):
+        status, _ = request(server, "GET", "/api/state?x=1")
+        assert status == 200
+
+
+class TestWrites:
+    def test_set_field(self, server, temp_repo):
+        status, data = request(
+            server, "PATCH", "/api/agents/implement/role", {"field": "title", "value": "Builder"}
+        )
+        assert status == 200
+        assert data["sha"] == head(temp_repo)
+        assert _git(temp_repo, "log", "-1", "--format=%s") == "implement: set title (dashboard)"
+        _, detail = request(server, "GET", "/api/agents/implement")
+        assert detail["role"]["title"] == "Builder"
+
+    def test_bad_field_is_400(self, server, temp_repo):
+        before = head(temp_repo)
+        status, data = request(
+            server, "PATCH", "/api/agents/implement/role", {"field": "nope", "value": 1}
+        )
+        assert status == 400
+        assert data == {"error": "unknown field: nope"}
+        assert head(temp_repo) == before
+
+    def test_missing_value_is_400(self, server):
+        status, data = request(server, "PATCH", "/api/agents/implement/role", {"field": "title"})
+        assert status == 400
+        assert "value" in data["error"]
+
+    def test_invalid_json_is_400(self, server):
+        req = urllib.request.Request(
+            _url(server, "/api/agents/implement/role"),
+            data=b"{not json",
+            method="PATCH",
+            headers={"Content-Type": "application/json"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req, timeout=10)
+        assert e.value.code == 400
+        assert "invalid JSON" in json.loads(e.value.read())["error"]
+
+    @pytest.mark.parametrize("ctype", [None, "text/plain", "application/x-www-form-urlencoded"])
+    def test_write_without_json_type_is_415(self, server, temp_repo, ctype):
+        before = head(temp_repo)
+        headers = {"Content-Type": ctype} if ctype else {}
+        status, data = request(
+            server,
+            "PATCH",
+            "/api/agents/implement/role",
+            {"field": "title", "value": "x"},
+            headers,
+            json_type=False,
+        )
+        assert status == 415
+        assert "error" in data
+        assert head(temp_repo) == before
+
+    def test_delete_without_json_type_is_415(self, server, temp_repo):
+        request(server, "PUT", "/api/agents/implement/skills/demo", {"text": "x"})
+        status, _ = request(
+            server, "DELETE", "/api/agents/implement/skills/demo", json_type=False
+        )
+        assert status == 415
+        assert (temp_repo / "roles/implement/skills/demo/SKILL.md").exists()
+
+    def test_json_type_with_charset(self, server):
+        status, _ = request(
+            server,
+            "PATCH",
+            "/api/agents/implement/role",
+            {"field": "title", "value": "Builder"},
+            {"Content-Type": "application/json; charset=utf-8"},
+        )
+        assert status == 200
+
+    def test_write_instructions(self, server, temp_repo):
+        status, data = request(
+            server, "PUT", "/api/agents/implement/instructions", {"text": "be careful\n"}
+        )
+        assert status == 200
+        assert data["sha"] == head(temp_repo)
+        assert (temp_repo / "roles/implement/SOUL.md").read_text() == "be careful\n"
+
+    def test_skill_write_then_delete(self, server, temp_repo):
+        path = temp_repo / "roles/implement/skills/run-pytest/SKILL.md"
+        status, data = request(
+            server, "PUT", "/api/agents/implement/skills/run-pytest", {"text": "run it\n"}
+        )
+        assert status == 200
+        assert data["sha"] == head(temp_repo)
+        assert path.read_text() == "run it\n"
+
+        status, data = request(server, "DELETE", "/api/agents/implement/skills/run-pytest")
+        assert status == 200
+        assert data["sha"] == head(temp_repo)
+        assert not path.exists()
+
+    def test_bad_skill_name_is_400(self, server):
+        status, data = request(
+            server, "PUT", "/api/agents/implement/skills/Bad_Name", {"text": "x"}
+        )
+        assert status == 400
+        assert "skill name" in data["error"]
+
+    def test_revert(self, server, temp_repo):
+        _, first = request(
+            server, "PATCH", "/api/agents/implement/role", {"field": "title", "value": "Builder"}
+        )
+        status, data = request(
+            server, "POST", "/api/agents/implement/revert", {"sha": first["sha"]}
+        )
+        assert status == 200
+        assert data["sha"] == head(temp_repo)
+        original = (agents.load_roles(REPO))
+        title = next(r["title"] for r in original if r["name"] == "implement")
+        _, detail = request(server, "GET", "/api/agents/implement")
+        assert detail["role"]["title"] == title
+
+    def test_revert_other_agents_commit_is_400(self, server):
+        _, first = request(
+            server, "PATCH", "/api/agents/spec/role", {"field": "title", "value": "Speccer"}
+        )
+        status, data = request(
+            server, "POST", "/api/agents/implement/revert", {"sha": first["sha"]}
+        )
+        assert status == 400
+        assert "does not belong to implement" in data["error"]
+
+    def test_other_exception_is_500_with_text(self, server, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("disk on fire")
+
+        monkeypatch.setattr(agents, "set_field", boom)
+        status, data = request(
+            server, "PATCH", "/api/agents/implement/role", {"field": "title", "value": "x"}
+        )
+        assert status == 500
+        assert data == {"error": "disk on fire"}
+
+
+class EventStream:
+    """A raw SSE client: http.client so the test controls when it hangs up."""
+
+    def __init__(self, srv):
+        port = srv.server_address[1]
+        self.conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        self.conn.request("GET", "/api/events")
+        self.resp = self.conn.getresponse()
+
+    def next_line(self, prefix: str) -> str:
+        while True:
+            line = self.resp.fp.readline().decode()
+            if not line:
+                raise EOFError("stream closed")
+            if line.startswith(prefix):
+                return line.rstrip("\n")
+
+    def next_fingerprint(self) -> str:
+        return json.loads(self.next_line("data: ")[len("data: "):])["fingerprint"]
+
+    def close(self):
+        self.resp.close()
+        self.conn.close()
+
+
+def _wait_for(cond, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+class TestEvents:
+    def test_headers_and_first_fingerprint(self, server, temp_repo, db):
+        stream = EventStream(server)
+        try:
+            assert stream.resp.status == 200
+            assert stream.resp.getheader("Content-Type") == "text/event-stream"
+            assert stream.next_fingerprint() == agents.fingerprint(temp_repo, db)
+        finally:
+            stream.close()
+
+    def test_change_sends_new_fingerprint(self, server):
+        stream = EventStream(server)
+        try:
+            first = stream.next_fingerprint()
+            status, _ = request(
+                server, "PATCH", "/api/agents/implement/role", {"field": "title", "value": "B"}
+            )
+            assert status == 200
+            assert stream.next_fingerprint() != first
+        finally:
+            stream.close()
+
+    def test_unchanged_fingerprint_is_not_resent(self, server):
+        stream = EventStream(server)
+        try:
+            stream.next_fingerprint()
+            # Several poll intervals pass with nothing changing: only pings arrive.
+            for _ in range(2):
+                line = stream.next_line(":")
+                assert line == ": ping"
+        finally:
+            stream.close()
+
+    def test_each_connection_keeps_its_own_fingerprint(self, server):
+        a = EventStream(server)
+        try:
+            fp = a.next_fingerprint()
+            b = EventStream(server)
+            try:
+                # b is new, so it gets the current fingerprint even though a has it.
+                assert b.next_fingerprint() == fp
+            finally:
+                b.close()
+        finally:
+            a.close()
+
+    def test_stream_stops_when_client_leaves(self, server):
+        stream = EventStream(server)
+        stream.next_fingerprint()
+        assert _wait_for(lambda: server.streams == 1)
+        stream.close()
+        assert _wait_for(lambda: server.streams == 0)
+
+
+class TestCli:
+    def test_ui_subcommand(self, monkeypatch):
+        seen = {}
+
+        def fake_main(port, open_browser):
+            seen.update(port=port, open_browser=open_browser)
+            return 0
+
+        monkeypatch.setattr(ui, "main", fake_main)
+        assert cli.main(["ui"]) == 0
+        assert seen == {"port": 7341, "open_browser": True}
+        assert cli.main(["ui", "--port", "9000", "--no-open"]) == 0
+        assert seen == {"port": 9000, "open_browser": False}

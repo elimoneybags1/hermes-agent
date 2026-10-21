@@ -1,4 +1,4 @@
-"""Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`, `team free-check`."""
+"""Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`, `team ui`, `team free-check`."""
 
 from __future__ import annotations
 
@@ -79,6 +79,12 @@ def _dash(args: argparse.Namespace) -> int:
     return dash.main(argv=["--json"] if args.json else [])
 
 
+def _ui(args: argparse.Namespace) -> int:
+    from team import ui
+
+    return ui.main(port=args.port, open_browser=not args.no_open)
+
+
 def boss_argv(repo: Path, extra: list[str]) -> list[str]:
     """Build the argv for the boss agent."""
     plugin_dir = repo / "plugin"
@@ -155,6 +161,10 @@ def main(argv: list[str] | None = None) -> int:
     dash_parser = commands.add_parser("dash", help="dashboard snapshot")
     dash_parser.add_argument("--json", action="store_true", help="print JSON snapshot")
     dash_parser.set_defaults(func=_dash)
+    ui_parser = commands.add_parser("ui", help="agent dashboard in the browser")
+    ui_parser.add_argument("--port", type=int, default=7341)
+    ui_parser.add_argument("--no-open", action="store_true", help="do not open the browser")
+    ui_parser.set_defaults(func=_ui)
     commands.add_parser("free-check", help="check hermes command for free model compliance").set_defaults(func=_free_check)
 
     args = parser.parse_args(argv)
