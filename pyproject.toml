@@ -3,7 +3,9 @@ name = "team"
 version = "0.1.0"
 description = "An agent team you point at a repo"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "tomli-w>=1.2.0",
+]
 
 [project.scripts]
 team = "team.cli:main"
