@@ -3,6 +3,8 @@ title = "Review"
 does = "Checks a finished diff against the target's rules and returns land or fix, with reasons. The boss has the final say."
 graded_by = "The boss agrees with its verdict"
 status = "planned"
+hands_to = "boss"
+tools = ["terminal", "file", "skills"]
 
 [runs_on]
 harness = "hermes"

@@ -3,6 +3,8 @@ title = "Triage"
 does = "Turns one request into scoped jobs: what is in and out, which role takes each, which target and files it touches."
 graded_by = "The boss or Eli accepts the scope unchanged"
 status = "planned"
+hands_to = "spec"
+tools = ["file", "terminal", "todo", "skills"]
 
 [runs_on]
 harness = "hermes"

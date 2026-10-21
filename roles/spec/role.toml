@@ -3,6 +3,8 @@ title = "Spec"
 does = "Writes the plan for one job and the tests that must pass when it is done."
 graded_by = "The tests exist, run, and fail before the work is done"
 status = "planned"
+hands_to = "implement"
+tools = ["file", "terminal", "todo", "skills"]
 
 [runs_on]
 harness = "hermes"

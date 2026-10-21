@@ -3,6 +3,8 @@ title = "Implement"
 does = "Writes the code for one job in its own git worktree until the spec's tests pass. After two failed free attempts the job escalates to a Claude crew agent."
 graded_by = "The target's test command passes in the worktree"
 status = "active"
+hands_to = "review"
+tools = ["terminal", "file", "todo", "skills"]
 
 [runs_on]
 harness = "hermes"
