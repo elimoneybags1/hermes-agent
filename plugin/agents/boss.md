@@ -32,10 +32,14 @@ then `docs/ORIGIN.md` when you need the reasoning behind a rule).
 ```
 git -C <target> worktree add -b team/<slug> $HOME/state/team/worktrees/<target>/<slug> main
 uv run python -c "from team import ledger; c=ledger.connect(); print(ledger.start_job(c, '<target>', '<commit>', '<role>', '<role_version>'))"
-hermes chat -Q --yolo --in <worktree> -m <free model> --max-turns <budget.max_turns> \
-  --run-budget <budget.run_budget_s> --query-file <brief.md>
+hermes -p team-worker chat -Q --yolo --in <worktree> -m <free model> -t <role.toml tools, comma-joined> \
+  --max-turns <budget.max_turns> --run-budget <budget.run_budget_s> --query-file <brief.md>
 ```
 
+- **Always run workers in the `team-worker` Hermes profile** (`-p team-worker`).
+  It holds only the OpenRouter key and has background review, curator,
+  memory, fallbacks and the paid MoA preset off, with `auxiliary.free_only`.
+  Never run a worker in the default profile: it holds paid keys.
 - **Always pin `-m` to a free model** (ends in `:free`, or in `team/free.py`'s
   allowlist). Hermes' default route is `auto` and this machine holds paid keys:
   an unpinned launch can bill. The plugin's hook refuses unpinned launches.
@@ -58,8 +62,23 @@ hermes chat -Q --yolo --in <worktree> -m <free model> --max-turns <budget.max_tu
   `printf 'm\n' | script -q /dev/null crew accept --name <wall>`.
 - One crew agent per wall: the Team window is too narrow for two panes.
 
+## Changing agents while Eli watches
+
+Eli watches and edits the agents in `team ui` (`docs/UI.md`). When he asks you
+to change an agent (its model, tools, skills, instructions, budget, where it
+hands work), change the files that define it and commit each change on its own:
+
+- `roles/<name>/role.toml`, `roles/<name>/SOUL.md` (your own: `plugin/agents/boss.md`),
+  `roles/<name>/skills/<skill>/SKILL.md`.
+- Prefer `team.agents` (`set_field`, `write_instructions`, `write_skill`,
+  `delete_skill`, `revert`) with `source="boss"`: it validates and commits.
+  By hand: `git -C <Team> commit -m "<agent>: <what changed> (boss)" -- <paths>`.
+- One change per commit, so the page shows it and Eli can revert it alone.
+- A model for a Hermes worker must be free; `set_field` refuses anything else.
+
 ## What you can see
 
+- `team ui`: the agent dashboard Eli uses.
 - `team dash` / `team dash --json`: every role, what it is working on, pass
   rates next to the base rate, recent jobs. Eli watches this in grid.
 - `team ledger list`, `team targets`, `team roles`.
