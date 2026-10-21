@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team</title>
+<style>
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --panel-2: #f0f2f5;
+  --border: #e2e5ea;
+  --border-strong: #c9ced6;
+  --text: #1a1f26;
+  --muted: #5e6875;
+  --faint: #8d96a3;
+  --accent: #3563d9;
+  --accent-soft: #e7eefc;
+  --ok: #18834e;
+  --ok-soft: #e2f4e9;
+  --bad: #c3382f;
+  --bad-soft: #fbe8e6;
+  --warn: #a35f00;
+  --warn-soft: #fdf1dc;
+  --idle: #a1a9b4;
+  --hl: rgba(255, 213, 79, .45);
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .08);
+  --shadow-lg: 0 8px 24px rgba(16, 24, 40, .16);
+  --radius: 8px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216;
+    --panel: #171b21;
+    --panel-2: #1e232a;
+    --border: #2a3039;
+    --border-strong: #3a424d;
+    --text: #e4e8ee;
+    --muted: #9aa4b1;
+    --faint: #6e7886;
+    --accent: #6d94f2;
+    --accent-soft: #1d2a45;
+    --ok: #3fbf7f;
+    --ok-soft: #15301f;
+    --bad: #ef6b61;
+    --bad-soft: #3a1b19;
+    --warn: #e0a24a;
+    --warn-soft: #36290f;
+    --idle: #59626e;
+    --hl: rgba(255, 200, 60, .28);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-lg: 0 8px 28px rgba(0, 0, 0, .55);
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; min-width: 1100px;
+  display: flex; flex-direction: column;
+  background: var(--bg); color: var(--text);
+  font: 14px/1.45 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.spacer { flex: 1; }
+
+/* header */
+.top {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 20px; background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
+.live { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
+.live.on .dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.base { font-size: 13px; color: var(--muted); }
+.base b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* pipeline strip */
+.strip {
+  display: flex; align-items: stretch; gap: 0;
+  padding: 14px 20px; overflow-x: auto;
+  background: var(--panel-2); border-bottom: 1px solid var(--border);
+}
+.stage {
+  flex: 0 0 auto; width: 188px; text-align: left; cursor: pointer;
+  padding: 10px 12px; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--border); box-shadow: var(--shadow);
+  transition: border-color .15s, transform .15s;
+}
+.stage:hover { border-color: var(--border-strong); }
+.stage.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.stage.planned { opacity: .5; }
+.stage.busy { border-top: 3px solid var(--accent); padding-top: 8px; }
+.stage-head { display: flex; align-items: center; gap: 7px; }
+.stage-name { font-weight: 650; }
+.stage-title { color: var(--muted); font-size: 12.5px; margin: 1px 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage-jobs { display: flex; flex-direction: column; gap: 3px; }
+.job-chip {
+  font-family: var(--mono); font-size: 11.5px; padding: 2px 6px; border-radius: 4px;
+  background: var(--accent-soft); color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.idle { font-size: 12px; color: var(--faint); }
+.arrow { flex: 0 0 34px; align-self: center; position: relative; height: 2px; background: var(--border-strong); margin: 0 6px; }
+.arrow::after {
+  content: ""; position: absolute; right: -1px; top: -4px;
+  border-left: 7px solid var(--border-strong); border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+}
+.loop {
+  align-self: center; margin-left: 10px; padding: 4px 10px; border-radius: 999px;
+  border: 1px dashed var(--border-strong); color: var(--muted); font-size: 12.5px; white-space: nowrap;
+}
+.banner { padding: 8px 12px; border-radius: 6px; background: var(--bad-soft); color: var(--bad); }
+
+/* main */
+.main { flex: 1; min-height: 0; display: grid; grid-template-columns: 290px 1fr; }
+.list { overflow-y: auto; border-right: 1px solid var(--border); background: var(--panel); padding: 8px; }
+.list-head {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px 10px;
+  font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint);
+}
+.count { background: var(--panel-2); border-radius: 999px; padding: 0 7px; letter-spacing: 0; }
+.agent {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  padding: 9px 10px; margin-bottom: 2px; border-radius: 7px;
+  background: none; border: 1px solid transparent;
+}
+.agent:hover { background: var(--panel-2); }
+.agent.sel { background: var(--accent-soft); border-color: transparent; }
+.agent.planned .agent-name, .agent.planned .agent-title { opacity: .6; }
+.agent-row { display: flex; align-items: center; gap: 7px; }
+.agent-name { font-weight: 600; }
+.agent-model {
+  margin-left: auto; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+}
+.agent-title { color: var(--muted); font-size: 12.5px; margin-left: 15px; }
+.agent-pass { color: var(--faint); font-size: 12px; margin-left: 15px; font-variant-numeric: tabular-nums; }
+
+.sdot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
+.sdot.active { background: var(--ok); }
+.sdot.working { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); } 50% { box-shadow: 0 0 0 4px var(--accent-soft); } }
+
+/* pane */
+.pane { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.pane-head { padding: 16px 24px 0; }
+.pane-title { display: flex; align-items: center; gap: 10px; }
+.pane-title h1 { margin: 0; font-size: 21px; letter-spacing: -.01em; }
+.pane-sub { color: var(--muted); font-size: 15px; }
+.pane-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0 18px; }
+.chip {
+  padding: 2px 8px; border-radius: 999px; font-size: 12px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+  max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chip.busy { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.tabs { display: flex; gap: 2px; padding: 14px 24px 0; border-bottom: 1px solid var(--border); }
+.tab {
+  position: relative; padding: 7px 12px 9px; cursor: pointer;
+  background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  color: var(--muted); font-weight: 500;
+}
+.tab:hover { color: var(--text); }
+.tab.on { color: var(--text); border-bottom-color: var(--accent); }
+.tab .n { margin-left: 5px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tab-dot { position: absolute; top: 6px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.tabbody { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 24px 40px; }
+.empty { margin: auto; padding: 60px 20px; text-align: center; color: var(--faint); }
+.empty.small { padding: 30px 10px; }
+.note { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px; background: var(--panel-2); color: var(--muted); font-size: 13px; }
+h3 { margin: 26px 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+
+/* highlight */
+[data-hl] { animation: flash 4s ease-out both; }
+@keyframes flash { 0%, 25% { background-color: var(--hl); } 100% { background-color: transparent; } }
+
+/* overview fields */
+.fields { display: grid; grid-template-columns: 200px 1fr; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.field { display: contents; }
+.field > div { padding: 9px 14px; border-top: 1px solid var(--border); }
+.field:first-child > div { border-top: none; }
+.field[data-hl] > div { animation: flash 4s ease-out both; animation-delay: inherit; }
+.label { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.ro-tag { font-size: 10.5px; color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.fv { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.val { padding: 2px 6px; margin: -2px -6px; border-radius: 5px; text-align: left; white-space: pre-wrap; word-break: break-word; }
+.val.editable { background: none; border: 1px dashed transparent; cursor: text; }
+.val.editable:hover { border-color: var(--border-strong); background: var(--panel-2); }
+.val .suffix { color: var(--faint); margin-left: 6px; }
+.edit-wrap { width: 100%; }
+.inp {
+  width: 100%; padding: 5px 8px; border-radius: 6px; font: inherit;
+  background: var(--panel); color: var(--text); border: 1px solid var(--accent); outline: 3px solid var(--accent-soft);
+}
+.inp.num { width: 140px; }
+select.inp { width: auto; min-width: 160px; }
+textarea.inp { resize: vertical; }
+.edit-hint { font-size: 11.5px; color: var(--faint); margin-top: 4px; }
+.warn { color: var(--warn); font-weight: 500; }
+.msg { font-size: 12px; padding: 1px 7px; border-radius: 4px; }
+.msg.ok { color: var(--ok); background: var(--ok-soft); font-family: var(--mono); font-size: 11.5px; }
+.msg.err { color: var(--bad); background: var(--bad-soft); }
+
+/* editors */
+.editor { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); overflow: hidden; }
+.editor-bar { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--panel-2); flex-wrap: wrap; }
+.path { color: var(--muted); }
+.unsaved { display: none; font-size: 12px; color: var(--warn); }
+.editor.dirty .unsaved { display: inline; }
+.code {
+  width: 100%; min-height: 460px; height: calc(100vh - 360px); resize: vertical;
+  padding: 12px 14px; border: none; outline: none;
+  background: var(--panel); color: var(--text);
+  font: 13px/1.55 var(--mono); tab-size: 4;
+}
+.tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+.btn {
+  padding: 4px 11px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;
+  background: var(--panel); border: 1px solid var(--border-strong);
+}
+.btn:hover { background: var(--panel-2); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.ghost { background: none; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { background: var(--panel); color: var(--text); border-color: var(--border); }
+.btn.danger-text:hover { color: var(--bad); }
+.btn.full { width: 100%; text-align: left; margin-top: 6px; }
+.ask { font-size: 13px; color: var(--bad); font-weight: 500; }
+
+/* skills */
+.skills { display: grid; grid-template-columns: 220px 1fr; gap: 16px; align-items: start; }
+.skill-list { display: flex; flex-direction: column; gap: 2px; }
+.skill-item {
+  display: flex; align-items: center; gap: 6px; text-align: left; cursor: pointer;
+  padding: 6px 10px; border-radius: 6px; background: none; border: 1px solid transparent;
+}
+.skill-item:hover { background: var(--panel); border-color: var(--border); }
+.skill-item.sel { background: var(--accent-soft); }
+.dot-unsaved { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); margin-left: auto; }
+.form { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.form label { font-size: 12.5px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.form .code { min-height: 280px; height: 320px; border: 1px solid var(--border); border-radius: 6px; }
+.form-actions { display: flex; align-items: center; gap: 8px; }
+
+/* tools */
+.tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.tools.busy { opacity: .6; }
+.tool {
+  display: flex; align-items: center; gap: 9px; padding: 9px 12px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel);
+}
+.tool.on { border-color: var(--accent); background: var(--accent-soft); }
+.tool input { accent-color: var(--accent); margin: 0; }
+.tools-foot { margin-top: 10px; min-height: 20px; }
+
+/* tables */
+table { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+th { text-align: left; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); background: var(--panel-2); padding: 7px 12px; border-bottom: 1px solid var(--border); }
+td { padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: top; }
+tr:first-child td { border-top: none; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.cmd { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+td.detail { color: var(--muted); font-size: 12.5px; max-width: 520px; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.pill.pass { background: var(--ok-soft); color: var(--ok); }
+.pill.fail, .pill.error { background: var(--bad-soft); color: var(--bad); }
+.pill.timeout { background: var(--warn-soft); color: var(--warn); }
+.pill.running { background: var(--accent-soft); color: var(--accent); }
+
+/* history */
+.hist { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); overflow: hidden; }
+.commit { display: grid; grid-template-columns: 76px 1fr auto; gap: 12px; align-items: center; padding: 9px 14px; border-top: 1px solid var(--border); }
+.commit:first-child { border-top: none; }
+.commit .sha { color: var(--accent); }
+.commit .subj { word-break: break-word; }
+.commit .meta { font-size: 12px; color: var(--faint); }
+.commit .act { display: flex; gap: 6px; align-items: center; }
+.hist-msg { margin-bottom: 10px; min-height: 0; }
+
+/* toasts */
+.toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
+.toast {
+  max-width: 420px; padding: 10px 14px; border-radius: var(--radius);
+  background: var(--text); color: var(--bg); box-shadow: var(--shadow-lg); font-size: 13px;
+  border-left: 4px solid var(--warn);
+  opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s;
+}
+.toast.in { opacity: 1; transform: none; }
+.toast.link { cursor: pointer; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Team</div>
+  <div id="live" class="live"><span class="dot"></span><span class="lbl">connecting</span></div>
+  <div class="spacer"></div>
+  <div id="base" class="base"></div>
+</header>
+<section id="strip" class="strip"></section>
+<main class="main">
+  <nav id="list" class="list"></nav>
+  <section id="pane" class="pane"></section>
+</main>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<script>
+'use strict';
+
+// ---- escaping: every interpolated value is escaped unless wrapped in raw() ----
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function esc(v) { return String(v).replace(/[&<>"']/g, c => ESC[c]); }
+class Raw { constructor(s) { this.s = s; } }
+const raw = s => new Raw(s);
+function fmt(v) {
+  if (v instanceof Raw) return v.s;
+  if (Array.isArray(v)) return v.map(fmt).join('');
+  if (v === null || v === undefined || v === false) return '';
+  return esc(v);
+}
+function html(strings, ...vals) {
+  let out = strings[0];
+  for (let i = 0; i < vals.length; i++) out += fmt(vals[i]) + strings[i + 1];
+  return raw(out);
+}
+const $ = s => document.querySelector(s);
+const enc = encodeURIComponent;
+
+const TABS = [['overview', 'Overview'], ['instructions', 'Instructions'], ['skills', 'Skills'],
+  ['tools', 'Tools'], ['hooks', 'Hooks'], ['jobs', 'Jobs'], ['history', 'History']];
+const TAB_OF = { field: 'overview', instr: 'instructions', skill: 'skills', tool: 'tools', job: 'jobs', hist: 'history' };
+const HL_MS = 4000;
+const SKILL_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+// Overview rows. Editable fields are exactly those agents.set_field accepts.
+const FIELDS = [
+  { f: 'title', label: 'Title', kind: 'text' },
+  { f: 'does', label: 'Does', kind: 'area' },
+  { f: 'graded_by', label: 'Graded by', kind: 'text' },
+  { f: 'status', label: 'Status', kind: 'select', opts: () => ['active', 'planned'] },
+  { f: 'runs_on.model', label: 'Model', kind: 'text', mono: true },
+  { f: 'runs_on.harness', label: 'Harness', kind: 'ro' },
+  { f: 'budget.max_turns', label: 'Max turns', kind: 'int' },
+  { f: 'budget.run_budget_s', label: 'Run budget (s)', kind: 'int', suffix: v => dur(v) },
+  { f: 'escalation', label: 'Escalates to', kind: 'ro',
+    show: r => r.escalation ? [r.escalation.harness, r.escalation.model].filter(Boolean).join(' · ') : null },
+  { f: 'escalation.after_failures', label: 'Escalate after failures', kind: 'int' },
+  { f: 'hands_to', label: 'Hands to', kind: 'select',
+    opts: d => S.state.roles.map(r => r.name).filter(n => n !== d.name) },
+];
+
+const S = {
+  state: null, stateErr: null, detail: null, detailErr: null, dseq: 0,
+  sel: null, tab: 'overview', fp: null, live: null,
+  edit: null,        // {agent, field, value, base, saving}
+  drafts: {},        // "<agent>|instr" or "<agent>|skill:<name>" -> {text, base}
+  skillOpen: null, newSkill: null, ask: null, busy: null,
+  msgs: {},          // "<agent>|<key>" -> {ok, text}
+  hl: {},            // highlight key -> expiry (ms)
+  mine: new Set(),   // shas committed from this page
+};
+const K = k => S.sel + '|' + k;
+
+// ---- helpers ----
+function get(o, path) { return path.split('.').reduce((a, k) => (a == null ? undefined : a[k]), o); }
+function parseTs(s) {
+  if (!s) return null;
+  const t = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z');
+  return isNaN(t) ? null : t;
+}
+function dur(sec) {
+  if (sec == null || isNaN(sec)) return '';
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec + 's';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm';
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  if (sec < 86400) return m ? `${h}h ${m}m` : `${h}h`;
+  return `${Math.floor(sec / 86400)}d ${h % 24}h`;
+}
+function since(ts) { const t = parseTs(ts); return t == null ? '' : dur((Date.now() - t) / 1000); }
+function between(a, b) { const x = parseTs(a), y = parseTs(b); return x == null || y == null ? '' : dur((y - x) / 1000); }
+function shortModel(m) { return m ? String(m).split('/').pop() : '—'; }
+function frac(st) { return st && st.jobs ? `${st.passed}/${st.jobs}` : '0/0'; }
+function passLine(st, base) { return `${st && st.jobs ? `${st.passed}/${st.jobs}` : 'no jobs'} · base ${frac(base)}`; }
+function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+function roleOf(n) { return S.state ? S.state.roles.find(r => r.name === n) : null; }
+function dotClass(r) { return r.working_on && r.working_on.length ? 'working' : (r.status === 'active' ? 'active' : 'planned'); }
+function fmtVal(v) {
+  if (v === null || v === undefined || v === '') return html`<span class="muted">—</span>`;
+  if (Array.isArray(v)) return v.join(', ');
+  return String(v);
+}
+function msgHtml(m) { return m ? html`<span class="msg ${m.ok ? 'ok' : 'err'}">${m.text}</span>` : ''; }
+function setMsg(key, ok, text) {
+  S.msgs[key] = { ok, text };
+  if (ok) setTimeout(() => { if (S.msgs[key] && S.msgs[key].text === text) { delete S.msgs[key]; renderPane(); } }, 8000);
+}
+function hl(key) {
+  const t = S.hl[key];
+  if (!t) return '';
+  const left = t - Date.now();
+  if (left <= 0) { delete S.hl[key]; return ''; }
+  // Negative delay keeps the fade continuous across re-renders.
+  return raw(` data-hl style="animation-delay:-${HL_MS - left}ms"`);
+}
+function mark(key) { S.hl[key] = Date.now() + HL_MS; }
+function tabHl(tab) {
+  const now = Date.now();
+  return Object.keys(S.hl).some(k => S.hl[k] > now && TAB_OF[k.split(':')[0]] === tab);
+}
+function flat(o, p = '', out = {}) {
+  for (const [k, v] of Object.entries(o || {})) {
+    const key = p ? p + '.' + k : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) flat(v, key, out); else out[key] = v;
+  }
+  return out;
+}
+
+// "implement: add skill run-pytest (boss)" -> "boss changed implement: added skill run-pytest"
+const PAST = { add: 'added', update: 'updated', delete: 'deleted', revert: 'reverted', set: 'set' };
+function describe(subject, agent) {
+  const m = /^([\w.-]+): (.+?) \(([^()]+)\)$/.exec(subject || '');
+  if (!m) return `${agent} changed: ${subject}`;
+  const what = m[2].replace(/^(add|update|delete|revert|set)\b/, w => PAST[w]);
+  return `${m[3]} changed ${m[1]}: ${what}`;
+}
+
+// ---- API ----
+async function api(method, path, body) {
+  const opt = { method, headers: { Accept: 'application/json' } };
+  if (method !== 'GET') {
+    opt.headers['Content-Type'] = 'application/json';
+    if (body !== undefined) opt.body = JSON.stringify(body);
+  }
+  let r;
+  try { r = await fetch(path, opt); } catch (e) { throw new Error('server unreachable'); }
+  let data = null;
+  try { data = await r.json(); } catch (_) { /* non-JSON */ }
+  if (!r.ok) throw new Error((data && data.error) || `HTTP ${r.status}`);
+  return data;
+}
+
+async function loadState() {
+  let st;
+  try { st = await api('GET', '/api/state'); }
+  catch (e) { S.stateErr = e.message; renderStrip(); return; }
+  S.stateErr = null;
+  const prev = S.state;
+  S.state = st;
+  if (prev) {
+    const cfg = r => JSON.stringify([r.title, r.does, r.graded_by, r.status, r.runs_on, r.escalation, r.budget]);
+    const jobs = r => JSON.stringify([r.working_on, r.stats]);
+    const old = new Map(prev.roles.map(r => [r.name, r]));
+    for (const r of st.roles) {
+      const o = old.get(r.name);
+      if (!o) { mark('agent:' + r.name); toast(`new agent: ${r.name}`, r.name); continue; }
+      if (cfg(o) !== cfg(r)) {
+        mark('agent:' + r.name);
+        if (r.name !== S.sel) toast(`${r.name} changed`, r.name);
+      } else if (jobs(o) !== jobs(r)) {
+        mark('agent:' + r.name);
+      }
+    }
+  }
+  renderHeader(); renderStrip(); renderList();
+}
+
+async function loadDetail(name) {
+  const seq = ++S.dseq;
+  let d;
+  try { d = await api('GET', `/api/agents/${enc(name)}`); }
+  catch (e) {
+    if (seq === S.dseq) { S.detailErr = e.message; renderPane(); }
+    return;
+  }
+  if (seq !== S.dseq || S.sel !== name) return;
+  const prev = S.detail && S.detail.name === name ? S.detail : null;
+  S.detail = d; S.detailErr = null;
+  if (prev) diffDetail(prev, d);
+  pruneDrafts();
+  renderPane();
+}
+
+function diffDetail(p, d) {
+  const old = new Set(p.history.map(h => h.sha));
+  for (const h of d.history) {
+    if (old.has(h.sha)) continue;
+    mark('hist:' + h.sha);
+    if (!S.mine.has(h.sha)) toast(describe(h.subject, d.name));
+  }
+  const a = flat(p.role), b = flat(d.role);
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (!same(a[k], b[k])) { mark('field:' + k); mark('field:' + k.split('.')[0]); }
+  }
+  if ((p.instructions.text ?? '') !== (d.instructions.text ?? '')) mark('instr');
+  const ps = new Map(p.skills.map(s => [s.name, s.text]));
+  for (const s of d.skills) if (ps.get(s.name) !== s.text) mark('skill:' + s.name);
+  const pt = new Set(p.tools), dt = new Set(d.tools);
+  for (const t of d.available_tools) if (pt.has(t) !== dt.has(t)) mark('tool:' + t);
+  const pj = new Map(p.jobs.map(j => [j.id, j]));
+  for (const j of d.jobs) if (!same(pj.get(j.id), j)) mark('job:' + j.id);
+}
+
+// A draft with no unsaved edits follows the server.
+function pruneDrafts() {
+  for (const [k, dr] of Object.entries(S.drafts)) if (dr.text === dr.base) delete S.drafts[k];
+}
+function baseFor(dk) {
+  const d = S.detail, k = dk.slice(dk.indexOf('|') + 1);
+  if (k === 'instr') return d.instructions.text ?? '';
+  const s = d.skills.find(x => 'skill:' + x.name === k);
+  return s ? s.text : '';
+}
+function isDirty(dk) { const dr = S.drafts[dk]; return !!dr && dr.text !== dr.base; }
+
+async function refresh() {
+  await Promise.all([loadState(), S.sel ? loadDetail(S.sel) : null]);
+}
+
+// ---- rendering ----
+function renderAll() { renderHeader(); renderStrip(); renderList(); renderPane(); }
+
+function renderHeader() {
+  const live = $('#live');
+  live.className = 'live ' + (S.live ? 'on' : 'off');
+  live.querySelector('.lbl').textContent = S.live === null ? 'connecting' : (S.live ? 'live' : 'reconnecting');
+  const b = S.state && S.state.base;
+  $('#base').innerHTML = fmt(b ? html`<b>${b.passed}/${b.jobs}</b> passed` : '');
+}
+
+function renderStrip() {
+  const strip = $('#strip');
+  if (S.stateErr) { strip.innerHTML = fmt(html`<div class="banner">Can't load /api/state: ${S.stateErr}</div>`); return; }
+  const st = S.state;
+  if (!st) return;
+  const names = st.pipeline && st.pipeline.length ? st.pipeline : st.roles.map(r => r.name);
+  const parts = [];
+  names.forEach((n, i) => {
+    const r = roleOf(n) || { name: n, working_on: [] };
+    const wo = r.working_on || [];
+    const cls = ['stage', r.status === 'planned' && 'planned', n === S.sel && 'sel', wo.length && 'busy'].filter(Boolean).join(' ');
+    parts.push(html`<button class="${cls}" data-act="open" data-name="${n}"${hl('agent:' + n)}>
+      <div class="stage-head"><span class="sdot ${dotClass(r)}"></span><span class="stage-name">${n}</span>${r.status === 'planned' ? html`<span class="tag">planned</span>` : ''}</div>
+      <div class="stage-title">${r.title || ''}</div>
+      <div class="stage-jobs">${wo.length
+        ? wo.map(j => html`<div class="job-chip" title="attempt ${j.attempt}">job ${j.job_id} · ${j.target} · ${since(j.started)}</div>`)
+        : html`<div class="idle">idle</div>`}</div>
+    </button>`);
+    if (i < names.length - 1) parts.push(raw('<div class="arrow" aria-hidden="true"></div>'));
+  });
+  if (names.length > 1) parts.push(html`<div class="arrow" aria-hidden="true"></div><div class="loop" title="${names[names.length - 1]} hands back to ${names[0]}">↩ ${names[0]}</div>`);
+  strip.innerHTML = fmt(parts);
+}
+
+function renderList() {
+  const st = S.state;
+  if (!st) return;
+  const order = [...(st.pipeline || [])];
+  for (const r of st.roles) if (!order.includes(r.name)) order.push(r.name);
+  const items = order.map(n => {
+    const r = roleOf(n);
+    if (!r) return '';
+    const model = get(r, 'runs_on.model');
+    return html`<button class="agent${n === S.sel ? ' sel' : ''}${r.status === 'planned' ? ' planned' : ''}" data-act="open" data-name="${n}"${hl('agent:' + n)}>
+      <div class="agent-row"><span class="sdot ${dotClass(r)}" title="${r.status}"></span><span class="agent-name">${n}</span><span class="agent-model" title="${model || ''}">${shortModel(model)}</span></div>
+      <div class="agent-title">${r.title}</div>
+      <div class="agent-pass">${passLine(r.stats, st.base)}</div>
+    </button>`;
+  });
+  $('#list').innerHTML = fmt([html`<div class="list-head">Agents<span class="count">${order.length}</span></div>`, items]);
+}
+
+function renderPane() {
+  const pane = $('#pane');
+  const a = document.activeElement;
+  const focus = a && a.dataset && a.dataset.key
+    ? { key: a.dataset.key, s: a.selectionStart, e: a.selectionEnd } : null;
+  const scrolls = {};
+  pane.querySelectorAll('textarea[data-key]').forEach(t => { scrolls[t.dataset.key] = t.scrollTop; });
+  const body = $('#tabbody'), top = body ? body.scrollTop : 0;
+
+  pane.innerHTML = fmt(paneHtml());
+
+  const nb = $('#tabbody');
+  if (nb) nb.scrollTop = top;
+  pane.querySelectorAll('textarea[data-key]').forEach(t => {
+    if (scrolls[t.dataset.key] != null) t.scrollTop = scrolls[t.dataset.key];
+  });
+  if (focus) {
+    const el = pane.querySelector(`[data-key="${CSS.escape(focus.key)}"]`);
+    if (el) {
+      el.focus({ preventScroll: true });
+      try { if (focus.s != null) el.setSelectionRange(focus.s, focus.e); } catch (_) { /* not a text input */ }
+    }
+  }
+}
+
+function paneHtml() {
+  if (!S.sel) return html`<div class="empty">Pick an agent on the left.</div>`;
+  if (S.detailErr) return html`<div class="empty"><span class="msg err">${S.detailErr}</span></div>`;
+  const d = S.detail;
+  if (!d || d.name !== S.sel) return html`<div class="empty">Loading ${S.sel}…</div>`;
+  const r = d.role, model = get(r, 'runs_on.model');
+  const counts = { skills: d.skills.length, tools: d.tools.length, hooks: d.hooks.length, jobs: d.jobs.length };
+  const tabs = TABS.map(([k, label]) => html`<button class="tab${S.tab === k ? ' on' : ''}" role="tab" data-act="tab" data-tab="${k}">${label}${counts[k] != null ? html`<span class="n">${counts[k]}</span>` : ''}${tabHl(k) && S.tab !== k ? html`<span class="tab-dot"></span>` : ''}</button>`);
+  return html`<div class="pane-head">
+      <div class="pane-title"><span class="sdot ${dotClass({ status: r.status, working_on: d.working_on })}"></span><h1>${d.name}</h1><span class="pane-sub">${r.title || ''}</span></div>
+      <div class="pane-meta">
+        <span class="chip mono" title="${model || ''}">${shortModel(model)}</span>
+        <span class="chip">${get(r, 'runs_on.harness') || '—'}</span>
+        <span class="chip">${r.status || '—'}</span>
+        <span class="chip">${passLine(d.stats, d.base)}</span>
+        ${d.working_on.length ? html`<span class="chip busy">${d.working_on.length} in progress</span>` : ''}
+      </div>
+    </div>
+    <div class="tabs" role="tablist">${tabs}</div>
+    <div id="tabbody" class="tabbody">${RENDER[S.tab](d)}</div>`;
+}
+
+function fieldRow(F, d) {
+  const r = d.role;
+  const v = F.show ? F.show(r) : get(r, F.f);
+  const key = 'field:' + F.f, msg = S.msgs[K(key)];
+  const e = S.edit && S.edit.agent === d.name && S.edit.field === F.f ? S.edit : null;
+  let body;
+  if (e) {
+    const ek = 'edit:' + F.f;
+    if (F.kind === 'select') {
+      body = html`<select class="inp" data-key="${ek}" data-edit="1"${e.saving ? raw(' disabled') : ''}>${F.opts(d).map(o => html`<option value="${o}"${o === e.value ? raw(' selected') : ''}>${o}</option>`)}</select>`;
+    } else if (F.kind === 'area') {
+      body = html`<textarea class="inp" rows="3" data-key="${ek}" data-edit="1"${e.saving ? raw(' disabled') : ''}>${e.value}</textarea>`;
+    } else {
+      body = html`<input class="inp${F.kind === 'int' ? ' num' : ''}${F.mono ? ' mono' : ''}" data-key="${ek}" data-edit="1" value="${e.value}"${F.kind === 'int' ? raw(' inputmode="numeric"') : ''}${e.saving ? raw(' disabled') : ''}>`;
+    }
+    const elsewhere = !same(e.base, v);
+    body = html`<div class="edit-wrap">${body}<div class="edit-hint">${e.saving ? 'saving…' : 'Enter saves · Esc cancels'}${elsewhere ? html` · <span class="warn">changed elsewhere, now ${fmtVal(v)}</span>` : ''}</div></div>`;
+  } else if (F.kind === 'ro') {
+    body = html`<div class="val">${fmtVal(v)}</div>`;
+  } else {
+    body = html`<button class="val editable${F.mono ? ' mono' : ''}" data-act="edit" data-field="${F.f}" title="Click to edit">${fmtVal(v)}${F.suffix && v != null ? html`<span class="suffix">${F.suffix(v)}</span>` : ''}</button>`;
+  }
+  return html`<div class="field"${hl(key)}><div class="label">${F.label}${F.kind === 'ro' ? html`<span class="ro-tag">read-only</span>` : ''}</div><div class="fv">${body}${msgHtml(msg)}</div></div>`;
+}
+
+function overview(d) {
+  const wo = d.working_on.length ? html`<h3>In progress</h3><table><tr><th>Job</th><th>Target</th><th>Attempt</th><th>Running for</th></tr>${d.working_on.map(j => html`<tr><td class="num">${j.job_id}</td><td>${j.target}</td><td class="num">${j.attempt}</td><td class="num">${since(j.started)}</td></tr>`)}</table>` : '';
+  return html`<div class="fields">${FIELDS.map(F => fieldRow(F, d))}</div>${wo}`;
+}
+
+function editorBar(dk, path, server, extra) {
+  const dr = S.drafts[dk];
+  const elsewhere = dr && dr.text !== dr.base && dr.base !== (server ?? '');
+  return html`<div class="editor-bar"><span class="path mono">${path}</span>${extra}<span class="spacer"></span>
+    ${elsewhere ? html`<span class="warn">changed elsewhere</span><button class="btn ghost" data-act="theirs" data-dk="${dk}">Load theirs</button>` : ''}
+    <span class="unsaved">unsaved</span>${msgHtml(S.msgs[dk])}`;
+}
+
+function instructions(d) {
+  const ins = d.instructions, dk = K('instr'), dr = S.drafts[dk];
+  const text = dr ? dr.text : (ins.text ?? '');
+  const busy = S.busy === dk;
+  return html`<div class="editor${isDirty(dk) ? ' dirty' : ''}"${hl('instr')}>
+    ${editorBar(dk, ins.path, ins.text, ins.text == null ? html`<span class="tag">new file</span>` : '')}
+    <button class="btn primary" data-act="save-instr"${busy ? raw(' disabled') : ''}>${busy ? 'Saving…' : 'Save'}</button></div>
+    <textarea class="code" data-key="${dk}" data-draft="${dk}" spellcheck="false">${text}</textarea>
+  </div>`;
+}
+
+function skills(d) {
+  const list = d.skills.map(s => html`<button class="skill-item${S.skillOpen === s.name ? ' sel' : ''}" data-act="skill" data-skill="${s.name}"${hl('skill:' + s.name)}><span class="mono">${s.name}</span>${isDirty(K('skill:' + s.name)) ? html`<span class="dot-unsaved" title="unsaved"></span>` : ''}</button>`);
+  let main;
+  if (S.newSkill) main = newSkillForm(d);
+  else if (S.skillOpen) main = skillEditor(d, S.skillOpen);
+  else main = html`<div class="empty small">${d.skills.length ? 'Open a skill to edit it.' : 'No skills yet.'}</div>`;
+  return html`<div class="skills">
+    <div class="skill-list">${list.length ? list : html`<div class="muted small" style="padding:6px 10px">none</div>`}<button class="btn ghost full" data-act="new-skill">+ New skill</button></div>
+    <div class="skill-main">${main}</div>
+  </div>`;
+}
+
+function skillEditor(d, name) {
+  const s = d.skills.find(x => x.name === name), dk = K('skill:' + name), dr = S.drafts[dk];
+  if (!s && !dr) return html`<div class="empty small">${name} no longer exists.</div>`;
+  const text = dr ? dr.text : s.text;
+  const busy = S.busy === dk, ask = S.ask === 'del:' + name;
+  const path = s ? s.path : `roles/${d.name}/skills/${name}/SKILL.md`;
+  return html`<div class="editor${isDirty(dk) ? ' dirty' : ''}"${hl('skill:' + name)}>
+    ${editorBar(dk, path, s ? s.text : null, s ? '' : html`<span class="warn">deleted elsewhere</span>`)}
+    ${ask
+      ? html`<span class="ask">Delete ${name}?</span><button class="btn danger" data-act="del-skill" data-skill="${name}">Delete</button><button class="btn ghost" data-act="ask-cancel">Cancel</button>`
+      : s ? html`<button class="btn ghost danger-text" data-act="ask" data-ask="${'del:' + name}">Delete</button>` : ''}
+    <button class="btn primary" data-act="save-skill" data-skill="${name}"${busy ? raw(' disabled') : ''}>${busy ? 'Saving…' : 'Save'}</button></div>
+    <textarea class="code" data-key="${dk}" data-draft="${dk}" spellcheck="false">${text}</textarea>
+  </div>`;
+}
+
+function newSkillForm(d) {
+  const n = S.newSkill, busy = S.busy === K('new-skill');
+  return html`<div class="form">
+    <label>Name<input class="inp mono" data-key="ns:name" data-ns="name" value="${n.name}" placeholder="run-pytest" autocomplete="off"></label>
+    <label>SKILL.md<textarea class="code" data-key="ns:text" data-ns="text" spellcheck="false">${n.text}</textarea></label>
+    <div class="form-actions"><button class="btn primary" data-act="add-skill"${busy ? raw(' disabled') : ''}>${busy ? 'Adding…' : 'Add skill'}</button><button class="btn ghost" data-act="cancel-new">Cancel</button>${msgHtml(S.msgs[K('new-skill')])}</div>
+  </div>`;
+}
+
+function tools(d) {
+  const on = new Set(d.tools), harness = get(d.role, 'runs_on.harness'), busy = S.busy === K('tools');
+  return html`${harness !== 'hermes' ? html`<p class="note">${d.name} runs on ${harness || '—'}; Hermes toolsets apply to hermes workers only.</p>` : ''}
+    <div class="tools${busy ? ' busy' : ''}">${d.available_tools.map(t => html`<label class="tool${on.has(t) ? ' on' : ''}"${hl('tool:' + t)}><input type="checkbox" data-tool="${t}"${on.has(t) ? raw(' checked') : ''}${busy ? raw(' disabled') : ''}><span class="mono">${t}</span></label>`)}</div>
+    <div class="tools-foot">${msgHtml(S.msgs[K('tools')])}</div>`;
+}
+
+function hooks(d) {
+  if (!d.hooks.length) return html`<div class="empty small">No hooks.</div>`;
+  return html`<table><tr><th>Source</th><th>Event</th><th>Matcher</th><th>Command</th></tr>${d.hooks.map(h => html`<tr><td class="mono">${h.source}</td><td>${h.event}</td><td class="mono">${h.matcher || '*'}</td><td class="cmd">${h.command}</td></tr>`)}</table>`;
+}
+
+function jobs(d) {
+  if (!d.jobs.length) return html`<div class="empty small">No jobs in the ledger for ${d.name}.</div>`;
+  return html`<table><tr><th>Job</th><th>Target</th><th>Attempt</th><th>Outcome</th><th>Duration</th><th>Grader detail</th></tr>${d.jobs.map(j => {
+    const outcome = j.ended ? (j.outcome || '—') : 'running';
+    const took = j.ended ? between(j.started, j.ended) : since(j.started);
+    return html`<tr${hl('job:' + j.id)}><td class="num">${j.id}</td><td>${j.target}</td><td class="num">${j.attempt}</td><td><span class="pill ${outcome}">${outcome}</span></td><td class="num">${took}</td><td class="detail" title="${j.grader || ''}">${j.grader_detail || ''}</td></tr>`;
+  })}</table>`;
+}
+
+function historyTab(d) {
+  if (!d.history.length) return html`<div class="empty small">No commits yet.</div>`;
+  const busy = S.busy === K('hist');
+  return html`<div class="hist-msg">${msgHtml(S.msgs[K('hist')])}</div><div class="hist">${d.history.map(c => {
+    const ask = S.ask === 'rev:' + c.sha;
+    return html`<div class="commit"${hl('hist:' + c.sha)}>
+      <span class="sha mono" title="${c.sha}">${c.short}</span>
+      <div><div class="subj">${c.subject}</div><div class="meta" title="${c.date}">${c.author} · ${since(c.date)} ago</div></div>
+      <div class="act">${ask
+        ? html`<span class="ask">Revert ${c.short}?</span><button class="btn danger" data-act="revert" data-sha="${c.sha}"${busy ? raw(' disabled') : ''}>Revert</button><button class="btn ghost" data-act="ask-cancel">Cancel</button>`
+        : html`<button class="btn" data-act="ask" data-ask="${'rev:' + c.sha}">Revert</button>`}</div>
+    </div>`;
+  })}</div>`;
+}
+
+const RENDER = { overview, instructions, skills, tools, hooks, jobs, history: historyTab };
+
+// ---- actions ----
+function select(name) {
+  if (S.sel !== name) {
+    S.sel = name; S.detail = null; S.detailErr = null;
+    S.edit = null; S.skillOpen = null; S.newSkill = null; S.ask = null;
+    for (const k of Object.keys(S.hl)) if (!k.startsWith('agent:')) delete S.hl[k];
+  }
+  syncHash(); renderAll(); loadDetail(name);
+}
+function syncHash() {
+  if (S.sel) history.replaceState(null, '', `#${enc(S.sel)}/${S.tab}`);
+}
+function focusKey(k, selectAll) {
+  const el = document.querySelector(`[data-key="${CSS.escape(k)}"]`);
+  if (!el) return;
+  el.focus();
+  if (selectAll && el.select) el.select();
+}
+
+function startEdit(field) {
+  const d = S.detail, F = FIELDS.find(x => x.f === field);
+  const v = get(d.role, field);
+  let value = v == null ? '' : String(v);
+  if (F.kind === 'select' && !value) value = F.opts(d)[0] || '';
+  S.edit = { agent: d.name, field, value, base: v, saving: false };
+  delete S.msgs[K('field:' + field)];
+  renderPane();
+  focusKey('edit:' + field, F.kind === 'text' || F.kind === 'int');
+}
+
+async function commitEdit() {
+  const e = S.edit;
+  if (!e || e.saving) return;
+  const F = FIELDS.find(x => x.f === e.field), mk = K('field:' + e.field);
+  let value = e.value;
+  if (F.kind === 'int') {
+    const t = String(value).trim();
+    if (!/^\d+$/.test(t)) { setMsg(mk, false, 'must be a whole number'); renderPane(); return; }
+    value = Number(t);
+  } else if (F.kind !== 'select') {
+    value = String(value).trim();
+  }
+  if (same(value, e.base)) { S.edit = null; renderPane(); return; }
+  e.saving = true; delete S.msgs[mk]; renderPane();
+  try {
+    const res = await api('PATCH', `/api/agents/${enc(e.agent)}/role`, { field: e.field, value });
+    S.mine.add(res.sha);
+    if (S.edit === e) S.edit = null;
+    setMsg(mk, true, 'saved ' + res.sha.slice(0, 7));
+    await refresh();
+  } catch (err) {
+    e.saving = false;
+    setMsg(mk, false, err.message);
+    renderPane();
+    focusKey('edit:' + e.field);
+  }
+}
+
+// Runs one write; the result's sha is shown next to `mk`, an error inline there.
+async function write(mk, fn, onOk) {
+  S.busy = mk; delete S.msgs[mk]; renderPane();
+  try {
+    const res = await fn();
+    if (res && res.sha) { S.mine.add(res.sha); setMsg(mk, true, 'saved ' + res.sha.slice(0, 7)); }
+    S.busy = null;
+    if (onOk) onOk(res);
+    await refresh();
+  } catch (err) {
+    S.busy = null;
+    setMsg(mk, false, err.message);
+    renderPane();
+  }
+}
+
+function saveInstr() {
+  const d = S.detail, dk = K('instr'), dr = S.drafts[dk];
+  if (!dr) return;
+  const text = dr.text;
+  write(dk, () => api('PUT', `/api/agents/${enc(d.name)}/instructions`, { text }), () => {
+    // Saved text becomes the new base; further typing stays a draft.
+    if (S.drafts[dk]) S.drafts[dk].base = text;
+  });
+}
+
+function saveSkill(name) {
+  const d = S.detail, dk = K('skill:' + name), dr = S.drafts[dk];
+  if (!dr) return;
+  const text = dr.text;
+  write(dk, () => api('PUT', `/api/agents/${enc(d.name)}/skills/${enc(name)}`, { text }), () => {
+    if (S.drafts[dk]) S.drafts[dk].base = text;
+  });
+}
+
+function addSkill() {
+  const d = S.detail, n = S.newSkill, mk = K('new-skill');
+  if (!n) return;
+  const name = n.name.trim();
+  if (!SKILL_RE.test(name)) { setMsg(mk, false, 'name: lowercase letters, digits and dashes, starting with a letter or digit'); renderPane(); return; }
+  if (d.skills.some(s => s.name === name)) { setMsg(mk, false, `${name} already exists; open it to edit`); renderPane(); return; }
+  write(mk, () => api('PUT', `/api/agents/${enc(d.name)}/skills/${enc(name)}`, { text: n.text }), res => {
+    S.newSkill = null; S.skillOpen = name;
+    setMsg(K('skill:' + name), true, 'added ' + res.sha.slice(0, 7));
+  });
+}
+
+function deleteSkill(name) {
+  const d = S.detail;
+  S.ask = null;
+  write(K('hist'), () => api('DELETE', `/api/agents/${enc(d.name)}/skills/${enc(name)}`), () => {
+    delete S.drafts[K('skill:' + name)];
+    if (S.skillOpen === name) S.skillOpen = null;
+  });
+}
+
+function revert(sha) {
+  const d = S.detail;
+  S.ask = null;
+  write(K('hist'), () => api('POST', `/api/agents/${enc(d.name)}/revert`, { sha }));
+}
+
+function saveTools() {
+  const d = S.detail;
+  const value = d.available_tools.filter(t => {
+    const el = document.querySelector(`input[data-tool="${CSS.escape(t)}"]`);
+    return el && el.checked;
+  });
+  write(K('tools'), () => api('PATCH', `/api/agents/${enc(d.name)}/role`, { field: 'tools', value }));
+}
+
+// ---- toasts ----
+function toast(text, open) {
+  const box = $('#toasts');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = text;
+  if (open) { t.classList.add('link'); t.title = 'Open ' + open; t.addEventListener('click', () => select(open)); }
+  box.appendChild(t);
+  while (box.children.length > 4) box.firstChild.remove();
+  requestAnimationFrame(() => t.classList.add('in'));
+  setTimeout(() => { t.classList.remove('in'); setTimeout(() => t.remove(), 250); }, 6000);
+}
+
+// ---- events ----
+document.addEventListener('click', ev => {
+  const el = ev.target.closest('[data-act]');
+  if (!el) return;
+  const d = el.dataset;
+  switch (d.act) {
+    case 'open': select(d.name); break;
+    case 'tab': S.tab = d.tab; S.ask = null; syncHash(); renderPane(); break;
+    case 'edit': startEdit(d.field); break;
+    case 'save-instr': saveInstr(); break;
+    case 'theirs': delete S.drafts[d.dk]; renderPane(); break;
+    case 'skill': S.skillOpen = d.skill; S.newSkill = null; S.ask = null; renderPane(); break;
+    case 'new-skill': S.newSkill = { name: '', text: '' }; S.skillOpen = null; renderPane(); focusKey('ns:name'); break;
+    case 'cancel-new': S.newSkill = null; delete S.msgs[K('new-skill')]; renderPane(); break;
+    case 'add-skill': addSkill(); break;
+    case 'save-skill': saveSkill(d.skill); break;
+    case 'ask': S.ask = d.ask; renderPane(); break;
+    case 'ask-cancel': S.ask = null; renderPane(); break;
+    case 'del-skill': deleteSkill(d.skill); break;
+    case 'revert': revert(d.sha); break;
+  }
+});
+
+document.addEventListener('input', ev => {
+  const t = ev.target;
+  if (t.dataset.edit && S.edit) { S.edit.value = t.value; return; }
+  if (t.dataset.draft) {
+    const dk = t.dataset.draft;
+    const dr = S.drafts[dk] || (S.drafts[dk] = { base: baseFor(dk), text: t.value });
+    dr.text = t.value;
+    const ed = t.closest('.editor');
+    if (ed) ed.classList.toggle('dirty', dr.text !== dr.base);
+    return;
+  }
+  if (t.dataset.ns && S.newSkill) S.newSkill[t.dataset.ns] = t.value;
+});
+
+document.addEventListener('change', ev => {
+  const t = ev.target;
+  if (t.dataset.tool !== undefined) saveTools();
+  else if (t.tagName === 'SELECT' && t.dataset.edit) { S.edit.value = t.value; commitEdit(); }
+});
+
+document.addEventListener('keydown', ev => {
+  const t = ev.target;
+  if (t.dataset && t.dataset.edit) {
+    if (ev.key === 'Escape') { ev.preventDefault(); S.edit = null; renderPane(); }
+    else if (ev.key === 'Enter' && !ev.shiftKey && t.tagName !== 'SELECT') { ev.preventDefault(); commitEdit(); }
+    return;
+  }
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === 's') {
+    ev.preventDefault();
+    if (S.tab === 'instructions') saveInstr();
+    else if (S.tab === 'skills') { if (S.newSkill) addSkill(); else if (S.skillOpen) saveSkill(S.skillOpen); }
+    return;
+  }
+  if (ev.key === 'Escape' && S.ask) { S.ask = null; renderPane(); }
+});
+
+window.addEventListener('beforeunload', ev => {
+  if (Object.keys(S.drafts).some(isDirty)) { ev.preventDefault(); ev.returnValue = ''; }
+});
+
+function connect() {
+  const es = new EventSource('/api/events');
+  es.onopen = () => { S.live = true; renderHeader(); };
+  es.onerror = () => {
+    S.live = false; renderHeader();
+    // EventSource retries by itself unless the server refused outright.
+    if (es.readyState === EventSource.CLOSED) setTimeout(connect, 3000);
+  };
+  es.onmessage = ev => {
+    let fp;
+    try { fp = JSON.parse(ev.data).fingerprint; } catch (_) { return; }
+    if (!S.live) { S.live = true; renderHeader(); }
+    if (fp !== S.fp) { S.fp = fp; refresh(); }
+  };
+}
+
+async function boot() {
+  const [h, t] = decodeURIComponent(location.hash.slice(1)).split('/');
+  if (t && RENDER[t]) S.tab = t;
+  renderAll();
+  await loadState();
+  if (S.state) {
+    const names = S.state.roles.map(r => r.name);
+    const first = (S.state.pipeline && S.state.pipeline[0]) || names[0];
+    const pick = names.includes(h) ? h : first;
+    if (pick) select(pick);
+  }
+  connect();
+  // Keep "job 10 · team · 4m" current between events.
+  setInterval(renderStrip, 30000);
+}
+boot();
+</script>
+</body>
+</html>
