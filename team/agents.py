@@ -307,43 +307,6 @@ def detail(
     }
 
 
-def _validate_field(name: str, field: str, value: Any) -> None:
-    """Validate a field value for set_field. Raises AgentError on invalid."""
-    if field in ("title", "does", "graded_by"):
-        if not isinstance(value, str) or not value.strip():
-            raise AgentError(f"{field} must be a non-empty string")
-    elif field == "status":
-        if value not in VALID_STATUSES:
-            raise AgentError(f"status must be one of {sorted(VALID_STATUSES)}")
-    elif field == "runs_on.model":
-        if not isinstance(value, str) or not value.strip():
-            raise AgentError("runs_on.model must be a non-empty string")
-        # Check free model only if harness is hermes
-        # We need to read the current role to check harness
-    elif field == "budget.max_turns":
-        if not isinstance(value, int) or value <= 0:
-            raise AgentError("budget.max_turns must be an integer > 0")
-    elif field == "budget.run_budget_s":
-        if not isinstance(value, int) or value <= 0:
-            raise AgentError("budget.run_budget_s must be an integer > 0")
-    elif field == "escalation.after_failures":
-        if not isinstance(value, int) or value <= 0:
-            raise AgentError("escalation.after_failures must be an integer > 0")
-    elif field == "tools":
-        if not isinstance(value, list):
-            raise AgentError("tools must be a list")
-        for t in value:
-            if t not in TOOLSETS:
-                raise AgentError(f"unknown tool: {t}")
-    elif field == "hands_to":
-        if not isinstance(value, str) or not value.strip():
-            raise AgentError("hands_to must be a non-empty string")
-        if value not in all_names:
-            raise AgentError(f"hands_to must be an existing agent name")
-        if value == name:
-            raise AgentError("hands_to cannot point to itself")
-    else:
-        raise AgentError(f"unknown field: {field}")
 
 
 def set_field(
