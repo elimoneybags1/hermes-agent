@@ -35,6 +35,9 @@ def test_load_gives_defaults_without_a_file(repo):
     data = settings.load(repo)
     assert data["grading.default_check"] == "uv run pytest -q"
     assert data["escalation.claude"] is True
+    assert data["models.claude_cost"] == 0.3
+    assert data["models.minute_weight"] == 0.005
+    assert data["models.explore"] is True
     assert set(data) == set(settings.FIELDS)
 
 
@@ -50,6 +53,16 @@ def test_set_value_writes_toml_and_commits_only_that_file(repo):
     assert "README" in git(repo, "diff", "--cached", "--name-only")
 
 
+def test_set_float_value_writes_correctly(repo):
+    sha = settings.set_value(repo, "models.claude_cost", 0.5)
+    assert tomllib.loads((repo / "orchestration.toml").read_text())["models"]["claude_cost"] == 0.5
+    assert settings.load(repo)["models.claude_cost"] == 0.5
+
+    sha = settings.set_value(repo, "models.minute_weight", 0.01)
+    assert tomllib.loads((repo / "orchestration.toml").read_text())["models"]["minute_weight"] == 0.01
+    assert settings.load(repo)["models.minute_weight"] == 0.01
+
+
 @pytest.mark.parametrize("key,value", [
     ("loop.interval_s", 0),
     ("loop.interval_s", "60"),
@@ -57,6 +70,13 @@ def test_set_value_writes_toml_and_commits_only_that_file(repo):
     ("escalation.claude", "yes"),
     ("grading.default_check", "  "),
     ("nope.key", 1),
+    ("models.claude_cost", 0),
+    ("models.claude_cost", -0.1),
+    ("models.claude_cost", "0.3"),
+    ("models.minute_weight", 0),
+    ("models.minute_weight", -0.001),
+    ("models.minute_weight", "0.005"),
+    ("models.explore", "yes"),
 ])
 def test_set_value_refuses_bad_values(repo, key, value):
     with pytest.raises(AgentError):
@@ -68,11 +88,15 @@ def test_set_value_same_value_twice_is_no_change(repo):
     with pytest.raises(AgentError, match="no change"):
         settings.set_value(repo, "escalation.claude", False)
 
+    settings.set_value(repo, "models.claude_cost", 0.5)
+    with pytest.raises(AgentError, match="no change"):
+        settings.set_value(repo, "models.claude_cost", 0.5)
+
 
 def test_fields_lists_every_setting():
     keys = [f["key"] for f in settings.fields()]
     assert keys == list(settings.FIELDS)
-    assert {f["type"] for f in settings.fields()} <= {"int", "str", "bool"}
+    assert {f["type"] for f in settings.fields()} <= {"int", "str", "bool", "float"}
 
 
 def test_target_settings_and_set_target(repo, state):
