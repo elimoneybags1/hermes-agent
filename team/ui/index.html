@@ -338,8 +338,8 @@ const $ = s => document.querySelector(s);
 const enc = encodeURIComponent;
 
 const TABS = [['overview', 'Overview'], ['instructions', 'Instructions'], ['skills', 'Skills'],
-  ['tools', 'Tools'], ['hooks', 'Hooks'], ['jobs', 'Jobs'], ['history', 'History'], ['settings', 'Settings']];
-const TAB_OF = { field: 'overview', instr: 'instructions', skill: 'skills', tool: 'tools', job: 'jobs', hist: 'history', settings: 'settings' };
+  ['tools', 'Tools'], ['hooks', 'Hooks'], ['jobs', 'Jobs'], ['history', 'History']];
+const TAB_OF = { field: 'overview', instr: 'instructions', skill: 'skills', tool: 'tools', job: 'jobs', hist: 'history' };
 const HL_MS = 4000;
 const SKILL_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -360,18 +360,6 @@ const FIELDS = [
     opts: d => S.state.roles.map(r => r.name).filter(n => n !== d.name) },
 ];
 
-// Settings fields from team/settings.py FIELDS
-const SETTINGS_FIELDS = [
-  { f: 'loop.interval_s', label: 'Loop interval (s)', kind: 'int', section: 'loop' },
-  { f: 'loop.max_new_per_tick', label: 'Max new tasks per tick', kind: 'int', section: 'loop' },
-  { f: 'grading.default_check', label: 'Default check command', kind: 'text', section: 'grading' },
-  { f: 'grading.check_timeout_s', label: 'Check timeout (s)', kind: 'int', section: 'grading' },
-  { f: 'escalation.claude', label: 'Escalate to Claude Code', kind: 'bool', section: 'escalation' },
-  { f: 'escalation.claude_max_turns', label: 'Claude max turns', kind: 'int', section: 'escalation' },
-  { f: 'escalation.claude_timeout_s', label: 'Claude timeout (s)', kind: 'int', section: 'escalation' },
-  { f: 'ask.block_after_claude_fails', label: 'Block after Claude fails', kind: 'bool', section: 'ask' },
-];
-
 const SETTINGS_TABS = [['loop', 'Loop rules'], ['projects', 'Projects'], ['retries', 'Retries']];
 
 const S = {
@@ -384,7 +372,7 @@ const S = {
   hl: {},            // highlight key -> expiry (ms)
   mine: new Set(),   // shas committed from this page
   // Settings
-  settings: null, settingsErr: null, targets: [], targetsErr: null,
+  settings: null, settingsErr: null, settingsFields: [], targets: [], targetsErr: null,
   settingsTab: 'loop', // 'loop' | 'projects' | 'retries'
 };
 const K = k => S.sel + '|' + k;
@@ -536,6 +524,7 @@ async function loadSettings() {
   catch (e) { S.settingsErr = e.message; renderPane(); return; }
   S.settingsErr = null;
   S.settings = st.settings;
+  S.settingsFields = st.fields || [];
   S.targets = st.targets || [];
   S.targetsErr = null;
   renderPane();
@@ -836,9 +825,9 @@ function settingsView() {
 
 function settingsLoop() {
   const fieldsBySection = {};
-  for (const f of SETTINGS_FIELDS) {
-    if (!fieldsBySection[f.section]) fieldsBySection[f.section] = [];
-    fieldsBySection[f.section].push(f);
+  for (const f of S.settingsFields) {
+    if (!fieldsBySection[f.key.split('.')[0]]) fieldsBySection[f.key.split('.')[0]] = [];
+    fieldsBySection[f.key.split('.')[0]].push(f);
   }
 
   return html`<div class="fields">
@@ -853,25 +842,25 @@ function settingsLoop() {
 }
 
 function settingsFieldRow(f) {
-  const v = S.settings[f.f];
-  const defaultVal = SETTINGS_FIELDS.find(x => x.f === f.f);
-  const isDefault = defaultVal && v === defaultVal.default;
-  const key = 'setting:' + f.f;
+  // f = {key, type, default, help} from API
+  const v = S.settings[f.key];
+  const isDefault = v === f.default;
+  const key = 'setting:' + f.key;
   const msg = S.msgs[key];
   const busy = S.busy === key;
 
   let body;
-  if (f.kind === 'bool') {
-    body = html`<label class="tool${busy ? ' busy' : ''}"><input type="checkbox" ${v ? raw(' checked') : ''} ${busy ? raw(' disabled') : ''} data-act="save-setting" data-key="${f.f}"><span class="mono">${v ? 'true' : 'false'}</span></label>`;
-  } else if (f.kind === 'int') {
-    body = html`<input class="inp num" value="${v}" data-act="save-setting" data-key="${f.f}" inputmode="numeric" ${busy ? raw(' disabled') : ''}>`;
+  if (f.type === 'bool') {
+    body = html`<label class="tool${busy ? ' busy' : ''}"><input type="checkbox" ${v ? raw(' checked') : ''} ${busy ? raw(' disabled') : ''} data-act="save-setting" data-key="${f.key}"><span class="mono">${v ? 'true' : 'false'}</span></label>`;
+  } else if (f.type === 'int') {
+    body = html`<input class="inp num" value="${v}" data-act="save-setting" data-key="${f.key}" inputmode="numeric" ${busy ? raw(' disabled') : ''}>`;
   } else {
-    body = html`<input class="inp" value="${v}" data-act="save-setting" data-key="${f.f}" ${busy ? raw(' disabled') : ''}>`;
+    body = html`<input class="inp" value="${v}" data-act="save-setting" data-key="${f.key}" ${busy ? raw(' disabled') : ''}>`;
   }
 
-  const help = defaultVal ? html`<div class="small muted" style="margin-top:2px;">${defaultVal.help}${isDefault ? ' (default)' : ''}</div>` : '';
+  const help = html`<div class="small muted" style="margin-top:2px;">${f.help}${isDefault ? ' (default)' : ''}</div>`;
 
-  return html`<div class="field"${hl(key)}><div class="label">${f.label}</div><div class="fv">${body}${msgHtml(msg)}${help}</div></div>`;
+  return html`<div class="field"${hl(key)}><div class="label">${f.key.split('.').pop().replace(/_/g, ' ')}</div><div class="fv">${body}${msgHtml(msg)}${help}</div></div>`;
 }
 
 function settingsProjects() {
@@ -1078,11 +1067,10 @@ document.addEventListener('click', ev => {
     case 'save-setting': {
       const key = d.key;
       const input = el.tagName === 'INPUT' ? el : el.querySelector('input');
-      let value;
-      if (input.type === 'checkbox') value = input.checked;
-      else value = input.value;
-      if (SETTINGS_FIELDS.find(f => f.f === key)?.kind === 'int') value = Number(value);
-      saveSetting(key, value);
+      // Only checkboxes save on click; text/number inputs save on Enter via keydown
+      if (input.type === 'checkbox') {
+        saveSetting(key, input.checked);
+      }
       break;
     }
     case 'save-target': {
@@ -1137,6 +1125,25 @@ document.addEventListener('keydown', ev => {
     else if (ev.key === 'Enter' && !ev.shiftKey && t.tagName !== 'SELECT') { ev.preventDefault(); commitEdit(); }
     return;
   }
+  // Settings text/number inputs: Enter saves, Esc restores
+  if (t.dataset && t.dataset.act === 'save-setting' && (t.tagName === 'INPUT' && (t.type === 'text' || t.type === 'number'))) {
+    const key = t.dataset.key;
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      const f = S.settingsFields.find(x => x.key === key);
+      let value = t.value;
+      if (f && f.type === 'int') value = Number(value);
+      saveSetting(key, value);
+      return;
+    }
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      // Restore from server value
+      t.value = S.settings[key] ?? '';
+      t.blur();
+      return;
+    }
+  }
   if ((ev.metaKey || ev.ctrlKey) && ev.key === 's') {
     ev.preventDefault();
     if (S.tab === 'instructions') saveInstr();
@@ -1162,7 +1169,7 @@ function connect() {
     let fp;
     try { fp = JSON.parse(ev.data).fingerprint; } catch (_) { return; }
     if (!S.live) { S.live = true; renderHeader(); }
-    if (fp !== S.fp) { S.fp = fp; refresh(); }
+    if (fp !== S.fp) { S.fp = fp; refresh(); if (S.tab === 'settings') loadSettings(); }
   };
 }
 

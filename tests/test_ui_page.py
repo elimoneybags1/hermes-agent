@@ -47,7 +47,6 @@ def test_dark_theme_via_custom_properties(page):
         "/api/events",
         "/api/settings",
         "/api/targets/",
-        "/api/settings",
     ],
 )
 def test_references_api_path(page, path):
