@@ -60,3 +60,35 @@ fails closed on anything it cannot read.
   Team creates worktrees under `$TEAM_STATE/worktrees/` and passes
   `--workspace worktree:<path> --branch <branch>`.
 - Its board shows tasks, not agents.
+
+## Use kanban first (Eli, 2026-10-24)
+
+"This is an already built project: use most of what it has and build on top of
+it, instead of building it from scratch." Audit of `hermes kanban` v0.21 against
+what Team does today, and where each part moves:
+
+| Need | Kanban already has | Team today | Move to |
+|---|---|---|---|
+| Queue, boards, spawning, worktrees | boards, create, dispatch, `worktree:` workspaces | uses it | keep |
+| Dependencies between parts | `--parent`, `link`; a child is promoted only when its parents are done | planned its own `parts.depends_on` | **kanban links**; drop Team's |
+| Grading gate | `review` column: worker calls `kanban_request_review`; reviewer `complete`s or `request-changes` (back to the same task, comments in its context) | new task per attempt, grades `done` tasks | **Team is the reviewer**: grades tasks in `review` by code, then `complete` or comment + `request-changes`. One task per goal, its whole history in one place |
+| Retry limit | `failure_limit`, per-task `--max-retries` circuit | own attempt counter | kanban circuit for crashes/timeouts; Team counts review rounds for escalation |
+| Stuck/dead workers | `reclaim`, `heartbeat`, stale-lock reclaim (slow: 94 min seen) | own watchdog | keep Team's watchdog until kanban's reclaim is tuned (heartbeat interval) |
+| A lane per worker | assignee = profile; `assignees`, `stats` | one `team-worker` | **`team-<role>` profiles** |
+| Skills for a task | `--skill` (repeatable) | none | role's skills via `--skill` |
+| Model per task | `set-model`, `--model` | profile default | role's free model via `--model` (still gated by `is_free_model`) |
+| Splitting a goal | `--triage`, `specify`, `decompose` (aux LLM `kanban_decomposer` / `triage_specifier`; `free_only` set) | none | boss plans with Eli; `decompose` for the mechanical split, on a free model |
+| Waiting on Eli | `block --kind needs_input`, `unblock` | blocks on give-up | decisions block their task; answering unblocks it |
+| Recurring work | `schedule` (time), Hermes cron | planned `routines.toml` | **Hermes cron** creates the routine's goal; no Team scheduler |
+| Fan-out work | `swarm` (parallel workers → verifier → synthesizer) | none | research and audit goals |
+| Run history, logs | `runs`, `log`, `context`, `tail`, `watch` | ledger | both: kanban for what happened, ledger for outcomes and models |
+| Board UI | `hermes dashboard` | `team board` | keep |
+
+**What Team keeps, because kanban lacks it:** "done" decided by code (as the
+reviewer, above); the free-model gate and the Claude Code runner; the outcomes
+ledger with model, role version and grader; the planning conversation and the
+decisions inbox; the overseer; self-improvement against a replay set.
+
+**Settings this changes in `team-worker`:** `review_dispatch` stays false (Team
+reviews, not a model), `failure_limit` stays 2. `auxiliary.kanban_decomposer`
+must be pinned to a free model before `decompose` is used.

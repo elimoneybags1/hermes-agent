@@ -42,35 +42,60 @@ Per target, in the state dir (nothing is added to the target repo):
 - `$TEAM_STATE/targets/<name>/plan.md`: the narrative the boss writes and keeps
   current: goal, what done looks like for the whole, scope and out of scope,
   assumptions, risks.
-- Ledger table `parts`: id, target, name, does, done_when (text), check (command
-  or null: the target's check), depends_on (JSON list of part ids), status
-  (`draft|ready|building|done|dropped`), goal_id (the `goals` row once
-  released), created, updated.
-- Ledger table `decisions` (`docs/OVERSEER.md`) gains `part_id` (nullable): an
-  open decision on a part keeps it from being ready.
+- **Parts are kanban tasks** on the target's board (`docs/KANBAN.md`, "Use
+  kanban first"): created in `triage`, dependencies as kanban parent links, the
+  role as assignee, the role's skills as `--skill`. The body holds what it does
+  and its done-when. Kanban already holds, shows and orders them; Team adds no
+  parts table.
+- Ledger table `decisions` (`docs/OVERSEER.md`) gains `task_id` (nullable): an
+  open decision on a part blocks that task (`block --kind needs_input`);
+  answering it unblocks it.
 
 ## Readiness, decided by code
 
-`plan.ready(conn, part_id) -> (bool, reasons)`: a part is ready when it is
-`draft`, `done_when` is not empty, no open decision names it, and every part it
-depends on exists and is not `dropped`. It is **released** (a goal created for
-`team run`) only when every dependency is `done`, so it branches from a main
-that already has them. When `team run` lands a part's goal, the part becomes
-`done` and its dependents are released on the next tick.
+A part leaves `triage` (Team promotes it, and `team run` creates its goal on
+that task) when its body has a done-when, no open decision names it, and its
+role exists. Kanban itself holds a child until its parents are done, so a part
+always branches from a main that already has what it depends on.
+
+## New agents: the boss proposes them
+
+While planning (or when Eli asks: "make an agent for X"), the boss looks at the
+parts and asks whether the team has a worker suited to each. When a group of
+parts needs something the existing roles do badly or don't cover (database
+migrations, scraping, a UI kit, a specific API), it proposes an agent as a
+decision in the inbox: name, what it does, model, tools, first skills, how it is
+graded, where it sits in the lineup (`hands_to`, or as assignee for those parts).
+
+On yes, the boss creates it with `team.agents` (one commit per file, shown live
+in `team ui`), generates its `team-<name>` Hermes profile so it gets a lane on
+the board and Eli can chat with it, and assigns it those parts. It starts as
+`planned` and becomes `active` after its first graded pass. Agents useful to
+any project live in `roles/` in this repo; agents for one project live in
+`$TEAM_STATE/targets/<name>/roles/` (Decision 1) and are layered over the shared
+roster for that target only.
 
 ## Build (through `team goal team "..."` once `team run` lands)
 
 **A. Decisions** — as in `docs/OVERSEER.md` step A, with `part_id`.
 
-**B. Plan** — `team/plan.py`: `add_part(conn, target, name, does, done_when,
-check=None, depends_on=())`, `update_part(conn, part_id, **fields)`,
-`drop_part`, `ready`, `release(root, conn, target, part_id)` (creates the goal
-through `team/run.py` with a brief built from the part, `plan.md` and the
-decisions log), `release_ready(root, conn, target) -> list[int]`, `render(conn,
-target) -> str` (markdown: plan.md, then parts by status with their open
-decisions). `team run` calls `release_ready` each tick and marks parts `done`
-when their goal lands. CLI: `team plan <target>` prints `render`; `team plan
-<target> --release` releases now.
+**B0. `team run` on kanban's review column** — one kanban task per goal for its
+whole life: workers finish with `kanban_request_review`; Team grades tasks in
+`review` and calls `complete` (then lands) or comments the failure and calls
+`request-changes`; escalation counts review rounds. `team goal` and parts pass
+the role's profile, `--skill`s and `--parent` links. (`docs/KANBAN.md`.)
+
+**B. Plan** — `team/plan.py` over kanban: `add_part(target, title, does,
+done_when, role="implement", parents=())` (a triage task), `ready(conn, target,
+task_id) -> (bool, reasons)`, `release_ready(root, conn, target) -> list[str]`
+(promote and start a goal on each ready part), `render(conn, target) -> str`
+(plan.md, then the board's parts by column with their open decisions). `team
+run` calls `release_ready` each tick. CLI: `team plan <target>`.
+
+**B2. Agents** — `team agent new <name>` (and `team.agents.create`): role.toml,
+SOUL.md, first skills, grading line, status `planned`; `team agent profile
+<name>` generates `team-<name>` from the locked `team-worker` profile. The
+boss's skill covers proposing them.
 
 **C. The boss's planning skill** — `plugin/skills/plan/SKILL.md` (written by the
 boss: it is the boss's own procedure), and a pointer to it in `boss.md`.
