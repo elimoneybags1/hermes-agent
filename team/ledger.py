@@ -299,3 +299,22 @@ def active_goals(conn: sqlite3.Connection, target: str | None = None) -> list[di
 def get_goal(conn: sqlite3.Connection, goal_id: int) -> dict | None:
     row = conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
     return dict(row) if row else None
+
+
+def list_goals(
+    conn: sqlite3.Connection,
+    target: str | None = None,
+    all_goals: bool = False,
+) -> list[dict]:
+    """List goals, newest first. If all_goals is False, show only open (unfinished) goals."""
+    sql = "SELECT * FROM goals"
+    where, args = [], []
+    if not all_goals:
+        where.append("finished IS NULL")
+    if target is not None:
+        where.append("target = ?")
+        args.append(target)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY id DESC"
+    return [dict(row) for row in conn.execute(sql, args)]

@@ -66,7 +66,7 @@ def temp_ledger(tmp_path):
 class TestAgentNames:
     def test_agent_names_sorted(self, temp_repo):
         names = agents.agent_names(temp_repo)
-        assert names == ["boss", "implement", "review", "spec", "triage"]
+        assert names == ["boss", "implement", "review", "spec", "test"]
         assert names == sorted(names)
 
     def test_agent_names_missing_roles_dir(self, tmp_path):
@@ -79,14 +79,14 @@ class TestPipeline:
     def test_pipeline_order(self, temp_repo):
         roles = agents.load_roles(temp_repo)
         pipe = agents.pipeline(roles)
-        assert pipe == ["boss", "triage", "spec", "implement", "review"]
+        assert pipe == ["boss", "spec", "test", "implement", "review"]
 
     def test_pipeline_stops_on_missing(self, temp_repo):
-        # Modify triage to point to unknown
+        # Modify spec to point to unknown
         import tomllib
         import tomli_w
 
-        path = temp_repo / "roles" / "triage" / "role.toml"
+        path = temp_repo / "roles" / "spec" / "role.toml"
         with path.open("rb") as f:
             data = tomllib.load(f)
         data["hands_to"] = "unknown"
@@ -95,7 +95,7 @@ class TestPipeline:
 
         roles = agents.load_roles(temp_repo)
         pipe = agents.pipeline(roles)
-        assert pipe == ["boss", "triage"]
+        assert pipe == ["boss", "spec"]
 
     def test_pipeline_stops_on_loop(self, temp_repo):
         # Make review point back to spec (creating a loop)
@@ -111,7 +111,7 @@ class TestPipeline:
 
         roles = agents.load_roles(temp_repo)
         pipe = agents.pipeline(roles)
-        assert pipe == ["boss", "triage", "spec", "implement", "review"]
+        assert pipe == ["boss", "spec", "test", "implement", "review"]
 
 
 class TestDetail:
@@ -198,19 +198,19 @@ class TestSetField:
             agents.set_field(temp_repo, "implement", "status", "invalid")
 
     def test_set_runs_on_model_free_allowed(self, temp_repo):
-        # triage uses hermes, free model should be allowed
+        # test uses hermes, free model should be allowed
         sha = agents.set_field(
-            temp_repo, "triage", "runs_on.model", "gemini-2.5-flash"
+            temp_repo, "test", "runs_on.model", "gemini-2.5-flash"
         )
         import tomllib
-        with (temp_repo / "roles" / "triage" / "role.toml").open("rb") as f:
+        with (temp_repo / "roles" / "test" / "role.toml").open("rb") as f:
             data = tomllib.load(f)
         assert data["runs_on"]["model"] == "gemini-2.5-flash"
 
     def test_set_runs_on_model_paid_refused_on_hermes(self, temp_repo):
-        # triage uses hermes, paid model should be refused
+        # test uses hermes, paid model should be refused
         with pytest.raises(AgentError, match="not free"):
-            agents.set_field(temp_repo, "triage", "runs_on.model", "gpt-4")
+            agents.set_field(temp_repo, "test", "runs_on.model", "gpt-4")
 
     def test_set_runs_on_model_paid_allowed_on_claude_code(self, temp_repo):
         # boss uses claude-code, paid model should be allowed
@@ -494,12 +494,12 @@ class TestRevert:
     def test_revert_other_agents_commit_refused(self, temp_repo):
         # Change implement's title
         sha = agents.set_field(temp_repo, "implement", "title", "Title 1")
-        # Change triage's title
-        sha2 = agents.set_field(temp_repo, "triage", "title", "Title 1")
+        # Change test's title
+        sha2 = agents.set_field(temp_repo, "test", "title", "Title 1")
 
-        # Try to revert implement's commit as triage - should be refused
+        # Try to revert implement's commit as test - should be refused
         with pytest.raises(AgentError, match="does not belong to"):
-            agents.revert(temp_repo, "triage", sha)
+            agents.revert(temp_repo, "test", sha)
 
     def test_revert_commit_touching_other_files_refused(self, temp_repo):
         # Create a commit that touches two agents' files
@@ -507,8 +507,8 @@ class TestRevert:
         import tomllib
         import tomli_w
 
-        # Modify both implement and triage
-        for name in ["implement", "triage"]:
+        # Modify both implement and test
+        for name in ["implement", "test"]:
             path = temp_repo / "roles" / name / "role.toml"
             with path.open("rb") as f:
                 data = tomllib.load(f)
@@ -531,7 +531,7 @@ class TestRevert:
             text=True,
         ).stdout.strip()
 
-        # Try to revert as implement - should fail because commit touches triage too
+        # Try to revert as implement - should fail because commit touches test too
         with pytest.raises(AgentError, match="does not belong to"):
             agents.revert(temp_repo, "implement", sha)
 

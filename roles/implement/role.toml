@@ -1,10 +1,15 @@
 name = "implement"
 title = "Implement"
-does = "Writes the code for one job in its own git worktree until the spec's tests pass. After two failed free attempts the job escalates to a Claude crew agent."
-graded_by = "The target's test command passes in the worktree"
+does = "Builds one code task from the contract: only the files it owns, until the tests named for it pass, then commits."
+graded_by = "Touched only its files; its tests pass; it merges cleanly into the part's branch"
 status = "active"
 hands_to = "review"
-tools = ["terminal", "file", "todo", "skills"]
+tools = [
+    "terminal",
+    "file",
+    "todo",
+    "skills",
+]
 
 [runs_on]
 harness = "hermes"
@@ -18,3 +23,11 @@ after_failures = 2
 [budget]
 max_turns = 40
 run_budget_s = 900
+
+[models]
+candidates = [
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "poolside/laguna-s-2.1:free",
+    "cohere/north-mini-code:free",
+]
+pinned = ""

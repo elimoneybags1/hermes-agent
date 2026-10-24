@@ -22,6 +22,8 @@ REPO = Path(__file__).resolve().parent.parent
 
 ROLE_COLUMNS = ("name", "status", "runs_on.harness", "runs_on.model", "title")
 
+GOALS_COLUMNS = ("id", "target", "status", "attempt", "branch", "current_task", "goal")
+
 
 def _init(args: argparse.Namespace) -> int:
     path = ledger.db_path()
@@ -291,6 +293,32 @@ def _agent_sync(args: argparse.Namespace) -> int:
         return 0
 
 
+def _goals(args: argparse.Namespace) -> int:
+    path = ledger.db_path()
+    if not path.exists():
+        print(f"no ledger at {path}; run `team ledger init`", file=sys.stderr)
+        return 1
+    conn = ledger.connect(path)
+    goals = ledger.list_goals(conn, target=args.target, all_goals=args.all)
+    conn.close()
+    print("\t".join(GOALS_COLUMNS))
+    for goal in goals:
+        # Get the first line of the goal text
+        goal_text = goal.get("goal", "")
+        first_line = goal_text.split("\n")[0] if goal_text else ""
+        status = "open" if goal.get("finished") is None else goal.get("outcome", "")
+        print("\t".join([
+            str(goal.get("id", "")),
+            goal.get("target", ""),
+            status,
+            str(goal.get("attempt", "")),
+            goal.get("branch", ""),
+            goal.get("current_task", "") or "",
+            first_line,
+        ]))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -388,6 +416,11 @@ def main(argv: list[str] | None = None) -> int:
     agent_sync = agent_sub.add_parser("sync", help="sync agent profile(s) to Hermes")
     agent_sync.add_argument("name", nargs="?", default=None)
     agent_sync.set_defaults(func=_agent_sync)
+
+    goals_parser = commands.add_parser("goals", help="list goals from the ledger")
+    goals_parser.add_argument("target", nargs="?", help="filter by target name")
+    goals_parser.add_argument("--all", action="store_true", help="show all goals (including finished)")
+    goals_parser.set_defaults(func=_goals)
 
     args = parser.parse_args(argv)
     return args.func(args)
