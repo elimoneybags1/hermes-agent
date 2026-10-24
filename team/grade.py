@@ -23,11 +23,6 @@ def worktree_path(target: str, slug: str) -> Path:
     return state_dir() / "worktrees" / target / slug
 
 
-def worktree_path_for_test(target: str, slug: str, base: Path) -> Path:
-    """Return a test worktree path under a custom base directory."""
-    return base / "worktrees" / target / slug
-
-
 Runner = Callable[..., subprocess.CompletedProcess[Any]]
 
 
@@ -41,7 +36,6 @@ def create_worktree(
     slug: str,
     base: str = "main",
     runner: Runner = _default_runner,
-    base_path: Path | None = None,
 ) -> tuple[Path, str]:
     """Create a git worktree for the given target/slug.
 
@@ -51,7 +45,6 @@ def create_worktree(
         slug: Short identifier for this worktree.
         base: Base branch to branch from (default "main").
         runner: Injectable subprocess runner for tests.
-        base_path: Optional custom base path for worktrees (tests only).
 
     Returns:
         Tuple of (worktree path, branch name).
@@ -59,14 +52,8 @@ def create_worktree(
     Raises:
         GradeError: If the branch or path already exists.
     """
-    if runner is ...:
-        runner = _default_runner
-
     repo = Path(repo)
-    if base_path is not None:
-        path = worktree_path_for_test(target, slug, base_path)
-    else:
-        path = worktree_path(target, slug)
+    path = worktree_path(target, slug)
     branch = f"team/{slug}"
 
     # Check if branch already exists
@@ -113,9 +100,6 @@ def run_check(
         Tuple of (success, output_tail).
         On timeout, returns (False, "timeout after <n>s").
     """
-    if runner is ...:
-        runner = _default_runner
-
     worktree = Path(worktree)
     try:
         result = runner(
@@ -151,9 +135,6 @@ def has_commits(
     Returns:
         True if branch has commits not in base.
     """
-    if runner is ...:
-        runner = _default_runner
-
     repo = Path(repo)
     result = runner(
         ["git", "-C", str(repo), "rev-list", "--count", f"{base}..{branch}"],
@@ -190,9 +171,6 @@ def land(
         GradeError: If the repo has uncommitted changes, is not on main,
                    or the merge conflicts.
     """
-    if runner is ...:
-        runner = _default_runner
-
     repo = Path(repo)
 
     # Check for uncommitted changes (excluding untracked files)
@@ -254,18 +232,22 @@ def remove_worktree(
         path: Worktree path.
         branch: Branch name to delete.
         runner: Injectable subprocess runner for tests.
-    """
-    if runner is ...:
-        runner = _default_runner
 
+    Raises:
+        GradeError: If the worktree removal fails.
+    """
     repo = Path(repo)
     path = Path(path)
 
-    runner(
-        ["git", "worktree", "remove", "--force", str(path)],
+    result = runner(
+        ["git", "-C", str(repo), "worktree", "remove", "--force", str(path)],
         capture_output=True,
         text=True,
     )
+    if result.returncode != 0:
+        raise GradeError(f"git worktree remove failed: {result.stderr.strip()}")
+
+    # Branch delete may fail quietly if already gone - that's fine
     runner(
         ["git", "-C", str(repo), "branch", "-D", branch],
         capture_output=True,

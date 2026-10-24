@@ -51,32 +51,38 @@ class TestCreateWorktree:
         subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
         subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=repo, check=True)
 
-    def test_create_worktree_success(self, tmp_path):
+    def test_create_worktree_success(self, monkeypatch, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
 
+        # Set TEAM_STATE so worktree_path lands in tmp_path
+        monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+
         # Mock runner that says branch doesn't exist (returncode=128 for rev-parse --verify)
         runner = MockRunner({
-            ("git", "-C", str(repo), "rev-parse", "--verify", "team/slug"): 
+            ("git", "-C", str(repo), "rev-parse", "--verify", "team/slug"):
                 subprocess.CompletedProcess([], 128, stdout="", stderr=""),
-            ("git", "-C", str(repo), "worktree", "add", "-b", "team/slug", 
-             str(grade.worktree_path_for_test("target", "slug", tmp_path)), "main"):
+            ("git", "-C", str(repo), "worktree", "add", "-b", "team/slug",
+             str(grade.worktree_path("target", "slug")), "main"):
                 subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         })
 
-        path, branch = grade.create_worktree(repo, "target", "slug", runner=runner, base_path=tmp_path)
+        path, branch = grade.create_worktree(repo, "target", "slug", runner=runner)
 
         assert branch == "team/slug"
-        assert path == grade.worktree_path_for_test("target", "slug", tmp_path)
+        assert path == grade.worktree_path("target", "slug")
 
-    def test_create_worktree_real_git(self, tmp_path):
+    def test_create_worktree_real_git(self, monkeypatch, tmp_path):
         """Integration test with real git."""
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
 
-        path, branch = grade.create_worktree(repo, "target", "slug", base_path=tmp_path)
+        # Set TEAM_STATE so worktree_path lands in tmp_path
+        monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+
+        path, branch = grade.create_worktree(repo, "target", "slug")
 
         assert branch == "team/slug"
         assert path.exists()
@@ -88,56 +94,64 @@ class TestCreateWorktree:
         )
         assert branch in result.stdout
 
-    def test_create_worktree_branch_exists_raises(self, tmp_path):
+    def test_create_worktree_branch_exists_raises(self, monkeypatch, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
+
+        monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
 
         # Create the branch first
         subprocess.run(["git", "branch", "team/slug"], cwd=repo, check=True)
 
         with pytest.raises(grade.GradeError, match="already exists"):
-            grade.create_worktree(repo, "target", "slug", base_path=tmp_path)
+            grade.create_worktree(repo, "target", "slug")
 
-    def test_create_worktree_path_exists_raises(self, tmp_path):
+    def test_create_worktree_path_exists_raises(self, monkeypatch, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
 
-        # Create the path using the correct worktree_path_for_test
-        path = grade.worktree_path_for_test("target", "slug", tmp_path)
+        monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+
+        # Create the path using the correct worktree_path
+        path = grade.worktree_path("target", "slug")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.mkdir()
 
         with pytest.raises(grade.GradeError, match="already exists"):
-            grade.create_worktree(repo, "target", "slug", base_path=tmp_path)
+            grade.create_worktree(repo, "target", "slug")
 
-    def test_create_worktree_custom_base(self, tmp_path):
+    def test_create_worktree_custom_base(self, monkeypatch, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
+
+        monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
 
         # Create a develop branch
         subprocess.run(["git", "branch", "develop"], cwd=repo, check=True)
 
-        path, branch = grade.create_worktree(repo, "target", "slug", base="develop", base_path=tmp_path)
+        path, branch = grade.create_worktree(repo, "target", "slug", base="develop")
 
         assert branch == "team/slug"
         assert path.exists()
 
-    def test_create_worktree_uses_injected_runner(self, tmp_path):
+    def test_create_worktree_uses_injected_runner(self, monkeypatch, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
 
+        monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+
         runner = MockRunner({
-            ("git", "-C", str(repo), "rev-parse", "--verify", "team/slug"): 
+            ("git", "-C", str(repo), "rev-parse", "--verify", "team/slug"):
                 subprocess.CompletedProcess([], 128, stdout="", stderr=""),
-            ("git", "-C", str(repo), "worktree", "add", "-b", "team/slug", 
-             str(grade.worktree_path_for_test("target", "slug", tmp_path)), "main"):
+            ("git", "-C", str(repo), "worktree", "add", "-b", "team/slug",
+             str(grade.worktree_path("target", "slug")), "main"):
                 subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         })
-        grade.create_worktree(repo, "target", "slug", runner=runner, base_path=tmp_path)
+        grade.create_worktree(repo, "target", "slug", runner=runner)
 
         assert len(runner.calls) >= 2  # rev-parse + worktree add
         assert ["git", "-C", str(repo), "rev-parse", "--verify", "team/slug"] == runner.calls[0]["cmd"]
@@ -402,7 +416,7 @@ class TestRemoveWorktree:
         subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
         subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=repo, check=True)
 
-    def test_remove_worktree(self, tmp_path):
+    def test_remove_worktree_mocked(self, tmp_path):
         repo = tmp_path / "repo"
         repo.mkdir()
         self._init_repo(repo)
@@ -417,5 +431,48 @@ class TestRemoveWorktree:
         grade.remove_worktree(repo, path, "team/slug", runner=runner)
 
         assert len(runner.calls) == 2
-        assert runner.calls[0]["cmd"] == ["git", "worktree", "remove", "--force", str(path)]
+        assert runner.calls[0]["cmd"] == ["git", "-C", str(repo), "worktree", "remove", "--force", str(path)]
         assert runner.calls[1]["cmd"] == ["git", "-C", str(repo), "branch", "-D", "team/slug"]
+
+    def test_remove_worktree_real_git(self, monkeypatch, tmp_path):
+        """Integration test with real git - verifies worktree and branch removal."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+
+        monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+
+        # Create worktree via create_worktree
+        path, branch = grade.create_worktree(repo, "target", "slug")
+        assert path.exists()
+        
+        # Verify branch exists
+        result = subprocess.run(
+            ["git", "branch", "--list", branch], cwd=repo, capture_output=True, text=True
+        )
+        assert branch in result.stdout
+
+        # Now remove it
+        grade.remove_worktree(repo, path, branch)
+
+        # Path should be gone
+        assert not path.exists()
+        # Branch should be gone
+        result = subprocess.run(
+            ["git", "branch", "--list", branch], cwd=repo, capture_output=True, text=True
+        )
+        assert branch not in result.stdout
+
+    def test_remove_worktree_raises_on_failure(self, monkeypatch, tmp_path):
+        """Test that remove_worktree raises GradeError when worktree removal fails."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._init_repo(repo)
+
+        monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+
+        # Try to remove a non-existent worktree
+        path = tmp_path / "nonexistent"
+        
+        with pytest.raises(grade.GradeError, match="git worktree remove failed"):
+            grade.remove_worktree(repo, path, "team/slug")
