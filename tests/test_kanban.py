@@ -568,3 +568,118 @@ def test_ensure_board_creates_only_when_missing(tmp_path, monkeypatch):
         ["hermes", "-p", "team-worker", "kanban", "boards", "create", "demo"],
     ]
     assert calls[-1][1]["HERMES_KANBAN_HOME"] == str(tmp_path / "kanban")
+
+
+def test_reopen_review_success(tmp_path):
+    """reopen_review calls hermes with correct args."""
+    kanban_home = tmp_path / "kanban"
+    kanban_home.mkdir(parents=True)
+
+    captured_cmd = {}
+
+    def runner(cmd, **kwargs):
+        captured_cmd["argv"] = cmd
+        return FakeCompletedProcess(0, "", "")
+
+    with patch("team.kanban.state_dir") as mock_state_dir:
+        mock_state_dir.return_value = tmp_path / "state" / "team"
+
+        kanban.reopen_review(board="test", task_id="t_abc123", runner=runner)
+
+    argv = captured_cmd["argv"]
+    assert "reopen-review" in argv
+    assert "t_abc123" in argv
+    assert "--board" in argv
+    assert "test" in argv
+
+
+def test_complete_success(tmp_path):
+    """complete calls hermes with correct args."""
+    kanban_home = tmp_path / "kanban"
+    kanban_home.mkdir(parents=True)
+
+    captured_cmd = {}
+
+    def runner(cmd, **kwargs):
+        captured_cmd["argv"] = cmd
+        return FakeCompletedProcess(0, "", "")
+
+    with patch("team.kanban.state_dir") as mock_state_dir:
+        mock_state_dir.return_value = tmp_path / "state" / "team"
+
+        kanban.complete(board="test", task_id="t_abc123", result="done", runner=runner)
+
+    argv = captured_cmd["argv"]
+    assert "complete" in argv
+    assert "t_abc123" in argv
+    assert "--board" in argv
+    assert "test" in argv
+    assert "--result" in argv
+    assert "done" in argv
+
+
+def test_complete_without_result(tmp_path):
+    """complete works without a result."""
+    kanban_home = tmp_path / "kanban"
+    kanban_home.mkdir(parents=True)
+
+    captured_cmd = {}
+
+    def runner(cmd, **kwargs):
+        captured_cmd["argv"] = cmd
+        return FakeCompletedProcess(0, "", "")
+
+    with patch("team.kanban.state_dir") as mock_state_dir:
+        mock_state_dir.return_value = tmp_path / "state" / "team"
+
+        kanban.complete(board="test", task_id="t_abc123", runner=runner)
+
+    argv = captured_cmd["argv"]
+    assert "complete" in argv
+    assert "t_abc123" in argv
+    assert "--result" not in argv
+
+
+def test_session_for_task_uses_profile(tmp_path):
+    """session_for_task uses the specified profile to list sessions."""
+    state_dir = tmp_path / "state" / "team"
+    kanban_home = state_dir / "kanban"
+    kanban_home.mkdir(parents=True)
+
+    sessions_list = """Title                        Workspace          Last Active   ID
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+work kanban task t_abc1234 some task   —                  just now      20261024_150051_7ce33b"""
+
+    export_jsonl = json.dumps({
+        "model": "test-model",
+        "billing_provider": "test-provider",
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "estimated_cost_usd": 0.0,
+        "api_call_count": 1,
+    })
+
+    captured_cmds = []
+
+    def runner(cmd, **kwargs):
+        captured_cmds.append(cmd)
+        if "sessions" in cmd and "list" in cmd:
+            return FakeCompletedProcess(0, sessions_list, "")
+        if "sessions" in cmd and "export" in cmd:
+            return FakeCompletedProcess(0, export_jsonl, "")
+        return FakeCompletedProcess(1, "", "unexpected")
+
+    with patch("team.kanban.state_dir") as mock_state_dir:
+        mock_state_dir.return_value = state_dir
+
+        result = kanban.session_for_task(task_id="t_abc123456789", profile="team-implement", runner=runner)
+
+    assert result is not None
+    assert result["session_id"] == "20261024_150051_7ce33b"
+    # Check that the profile was used in both the list and export commands
+    list_cmd = captured_cmds[0]
+    export_cmd = captured_cmds[1]
+    assert "-p" in list_cmd
+    assert "team-implement" in list_cmd
+    assert "-p" in export_cmd
+    assert "team-implement" in export_cmd

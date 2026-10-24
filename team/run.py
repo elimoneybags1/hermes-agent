@@ -1,6 +1,6 @@
 """`team goal` and `team run`: the autonomous loop on Hermes kanban.
 
-Contract: docs/RUN.md, Round 2. Design: docs/KANBAN.md.
+Contract: docs/RUN.md, Round 3. Design: docs/KANBAN.md.
 
 A goal is one branch and one worktree. Each attempt is a ledger job: free
 attempts are kanban tasks on that branch, the last one may be Claude Code.
@@ -127,10 +127,17 @@ def _brief(goal: dict, attempt: int, failure: str | None) -> str:
         f"{goal['goal']}\n\n"
         f"You work in a git worktree on branch {goal['branch']}. Done means this "
         f"check passes there: `{goal['check_cmd']}`. Commit your work on this "
-        "branch: uncommitted work is lost and does not count."
+        "branch: uncommitted work is lost and does not count.\n\n"
+        "IMPORTANT: When you are done, call `kanban_request_review` with a summary "
+        "of what you did and the check's last line. Do NOT call `kanban_complete`."
     )
     if failure:
         text += f"\n\nAttempt {attempt - 1} failed. What it left:\n{_tail(failure)}"
+        if "merge conflict with main" in failure:
+            text += (
+                "\n\nMERGE CONFLICT WITH MAIN: run `git merge main` first, "
+                "resolve keeping both sides, run the check and commit the merge."
+            )
     return text
 
 
@@ -226,8 +233,12 @@ class Loop:
             return
 
         full = kanban.show_full(goal["target"], goal["current_task"], runner=self.runner)
-        status = full["task"].get("status")
-        if status == "done":
+        task = full["task"]
+        status = task.get("status")
+        if status == "review":
+            self._grade_review(goal, job)
+        elif status == "done":
+            # Worker marked done anyway - grade as before; on fail fall back to new task
             self._grade_free(goal, job)
         elif status == "running":
             self._watch(goal, job, full)
@@ -292,12 +303,9 @@ class Loop:
                 self.conn, job["id"],
                 provider=session.get("billing_provider") or "unknown",
                 model=session.get("model") or "unknown",
-                task_class=goal["role"],
-                tokens_in=session.get("input_tokens"),
-                tokens_out=session.get("output_tokens"),
-                latency_ms=None,
-                ok=problem is None,
-                error=problem,
+                task_class=goal["role"], tokens_in=session.get("input_tokens"),
+                tokens_out=session.get("output_tokens"), latency_ms=None,
+                ok=problem is None, error=problem,
             )
             if problem:
                 reason = f"refused as free: {problem}"
@@ -312,6 +320,50 @@ class Loop:
             self._land(goal)
         else:
             self._next_attempt(goal, detail)
+
+    def _grade_review(self, goal: dict, job: dict) -> None:
+        """Grade a task that the worker moved to review."""
+        task_id = goal["current_task"]
+        session = kanban.session_for_task(task_id, runner=self.runner)
+        if session is not None:
+            problem = _paid(session)
+            ledger.record_call(
+                self.conn, job["id"],
+                provider=session.get("billing_provider") or "unknown",
+                model=session.get("model") or "unknown",
+                task_class=goal["role"], tokens_in=session.get("input_tokens"),
+                tokens_out=session.get("output_tokens"), latency_ms=None,
+                ok=problem is None, error=problem,
+            )
+            if problem:
+                reason = f"refused as free: {problem}"
+                ledger.finish_job(self.conn, job["id"], "error", "free-gate", reason)
+                self._block(goal, reason)
+                ledger.finish_goal(self.conn, goal["id"], "error", reason)
+                return
+        ok, detail = self.grade(goal)
+        ledger.finish_job(self.conn, job["id"], "pass" if ok else "fail",
+                          goal["check_cmd"], detail)
+        if ok:
+            kanban.complete(goal["target"], task_id, result=f"passed: {detail[-200:]}", runner=self.runner)
+            self._land(goal)
+        else:
+            kanban.comment(goal["target"], task_id, f"FAILED: {detail}", runner=self.runner)
+            kanban.reopen_review(goal["target"], task_id, runner=self.runner)
+            # Do NOT create a new kanban task - the same task is reopened for the next attempt
+            # Just update the ledger for the next attempt
+            goal_updated = ledger.get_goal(self.conn, goal["id"])
+            if goal_updated is None:
+                return
+            role = role_info(self.root, goal_updated["role"])
+            nxt = goal_updated["attempt"] + 1
+            if nxt <= after_failures(role):
+                new_job = self._start_job(goal_updated, nxt, task_id)
+                ledger.update_goal(self.conn, goal_updated["id"], attempt=nxt, job_id=new_job)
+            elif nxt == after_failures(role) + 1 and self.cfg["escalation.claude"]:
+                self._claude_attempt(goal_updated, nxt, detail)
+            else:
+                self._give_up(goal_updated, f"all {goal_updated['attempt']} attempts failed", detail)
 
     # -- escalation ------------------------------------------------------------
 

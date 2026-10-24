@@ -227,16 +227,56 @@ def block(
         raise KanbanError(f"hermes kanban block failed", stderr_tail)
 
 
-def session_for_task(
+def reopen_review(
+    board: str,
     task_id: str,
     runner=subprocess.run,
+) -> None:
+    """Reopen a task from review back to ready for the implementer.
+
+    Uses `hermes kanban reopen-review <id>`.
+    """
+    args = ["--board", board, "reopen-review", task_id]
+    result = _run_kanban(args, runner=runner)
+    if result.returncode != 0:
+        stderr_tail = result.stderr[-500:] if result.stderr else "(no stderr)"
+        raise KanbanError(f"hermes kanban reopen-review failed", stderr_tail)
+
+
+def complete(
+    board: str,
+    task_id: str,
+    result: str | None = None,
+    runner=subprocess.run,
+) -> None:
+    """Complete a kanban task.
+
+    Uses `hermes kanban complete <id>`.
+    """
+    args = ["--board", board, "complete", task_id]
+    if result is not None:
+        args.extend(["--result", result])
+    result_obj = _run_kanban(args, runner=runner)
+    if result_obj.returncode != 0:
+        stderr_tail = result_obj.stderr[-500:] if result_obj.stderr else "(no stderr)"
+        raise KanbanError(f"hermes kanban complete failed", stderr_tail)
+
+
+def session_for_task(
+    task_id: str,
+    profile: str = "team-worker",
+    runner=subprocess.run,
 ) -> dict | None:
-    """Find the Hermes session for a task and return its metrics."""
+    """Find the Hermes session for a task and return its metrics.
+
+    Sessions live in the profile that ran the task (the task's assignee),
+    not always team-worker.
+    """
     # First, list sessions to find the one matching the task
     list_cmd = [
         "hermes",
         "-p",
-        "team-worker",
+        profile,
         "sessions",
         "list",
     ]
@@ -276,7 +316,7 @@ def session_for_task(
     export_cmd = [
         "hermes",
         "-p",
-        "team-worker",
+        profile,
         "sessions",
         "export",
         "/dev/stdout",
