@@ -54,6 +54,10 @@ target end to end before adding roles, targets or autonomy.
    until they are done, and brings Eli only real decisions. Kanban is the queue
    and runner in Team's own kanban home; Team keeps grading, the ledger,
    escalation and the model rule. Design: `docs/KANBAN.md`.
+6. **Plan, build, watch** (2026-10-24). Eli gives big goals to the boss, which
+   plans them with him until each part is ready to build (`docs/PLANNER.md`);
+   `team run` builds; an overseer watches and brings Eli decisions
+   (`docs/OVERSEER.md`). Planning is built first.
 
 Still open: overlap with `~/work/platform/ai` (gateway, router, agents, skills).
 Nobody has read it yet; it needs a session in `platform`.
