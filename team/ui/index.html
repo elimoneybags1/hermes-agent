@@ -307,6 +307,7 @@ td.detail { color: var(--muted); font-size: 12.5px; max-width: 520px; }
   <div id="live" class="live"><span class="dot"></span><span class="lbl">connecting</span></div>
   <div class="spacer"></div>
   <div id="base" class="base"></div>
+  <button class="btn" data-act="settings" title="Settings">Settings</button>
 </header>
 <section id="strip" class="strip"></section>
 <main class="main">
@@ -337,8 +338,8 @@ const $ = s => document.querySelector(s);
 const enc = encodeURIComponent;
 
 const TABS = [['overview', 'Overview'], ['instructions', 'Instructions'], ['skills', 'Skills'],
-  ['tools', 'Tools'], ['hooks', 'Hooks'], ['jobs', 'Jobs'], ['history', 'History']];
-const TAB_OF = { field: 'overview', instr: 'instructions', skill: 'skills', tool: 'tools', job: 'jobs', hist: 'history' };
+  ['tools', 'Tools'], ['hooks', 'Hooks'], ['jobs', 'Jobs'], ['history', 'History'], ['settings', 'Settings']];
+const TAB_OF = { field: 'overview', instr: 'instructions', skill: 'skills', tool: 'tools', job: 'jobs', hist: 'history', settings: 'settings' };
 const HL_MS = 4000;
 const SKILL_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -359,6 +360,20 @@ const FIELDS = [
     opts: d => S.state.roles.map(r => r.name).filter(n => n !== d.name) },
 ];
 
+// Settings fields from team/settings.py FIELDS
+const SETTINGS_FIELDS = [
+  { f: 'loop.interval_s', label: 'Loop interval (s)', kind: 'int', section: 'loop' },
+  { f: 'loop.max_new_per_tick', label: 'Max new tasks per tick', kind: 'int', section: 'loop' },
+  { f: 'grading.default_check', label: 'Default check command', kind: 'text', section: 'grading' },
+  { f: 'grading.check_timeout_s', label: 'Check timeout (s)', kind: 'int', section: 'grading' },
+  { f: 'escalation.claude', label: 'Escalate to Claude Code', kind: 'bool', section: 'escalation' },
+  { f: 'escalation.claude_max_turns', label: 'Claude max turns', kind: 'int', section: 'escalation' },
+  { f: 'escalation.claude_timeout_s', label: 'Claude timeout (s)', kind: 'int', section: 'escalation' },
+  { f: 'ask.block_after_claude_fails', label: 'Block after Claude fails', kind: 'bool', section: 'ask' },
+];
+
+const SETTINGS_TABS = [['loop', 'Loop rules'], ['projects', 'Projects'], ['retries', 'Retries']];
+
 const S = {
   state: null, stateErr: null, detail: null, detailErr: null, dseq: 0,
   sel: null, tab: 'overview', fp: null, live: null,
@@ -368,6 +383,9 @@ const S = {
   msgs: {},          // "<agent>|<key>" -> {ok, text}
   hl: {},            // highlight key -> expiry (ms)
   mine: new Set(),   // shas committed from this page
+  // Settings
+  settings: null, settingsErr: null, targets: [], targetsErr: null,
+  settingsTab: 'loop', // 'loop' | 'projects' | 'retries'
 };
 const K = k => S.sel + '|' + k;
 
@@ -511,6 +529,47 @@ function diffDetail(p, d) {
   for (const j of d.jobs) if (!same(pj.get(j.id), j)) mark('job:' + j.id);
 }
 
+// ---- Settings API ----
+async function loadSettings() {
+  let st;
+  try { st = await api('GET', '/api/settings'); }
+  catch (e) { S.settingsErr = e.message; renderPane(); return; }
+  S.settingsErr = null;
+  S.settings = st.settings;
+  S.targets = st.targets || [];
+  S.targetsErr = null;
+  renderPane();
+}
+
+async function saveSetting(key, value) {
+  const mk = 'setting:' + key;
+  S.busy = mk; delete S.msgs[mk]; renderPane();
+  try {
+    const res = await api('PATCH', '/api/settings', { key, value });
+    S.mine.add(res.sha);
+    setMsg(mk, true, 'saved ' + res.sha.slice(0, 7));
+    await loadSettings();
+  } catch (err) {
+    S.busy = null;
+    setMsg(mk, false, err.message);
+    renderPane();
+  }
+}
+
+async function saveTargetSetting(name, key, value) {
+  const mk = 'target:' + name + ':' + key;
+  S.busy = mk; delete S.msgs[mk]; renderPane();
+  try {
+    const res = await api('PATCH', `/api/targets/${enc(name)}`, { key, value });
+    setMsg(mk, true, 'saved');
+    await loadSettings();
+  } catch (err) {
+    S.busy = null;
+    setMsg(mk, false, err.message);
+    renderPane();
+  }
+}
+
 // A draft with no unsaved edits follows the server.
 function pruneDrafts() {
   for (const [k, dr] of Object.entries(S.drafts)) if (dr.text === dr.base) delete S.drafts[k];
@@ -606,6 +665,13 @@ function renderPane() {
 }
 
 function paneHtml() {
+  // Settings tab doesn't require a selected agent
+  if (S.tab === 'settings') {
+    if (S.settingsErr) return html`<div class="empty"><span class="msg err">Can't load settings: ${S.settingsErr}</span></div>`;
+    if (S.settings === null) return html`<div class="empty">Loading settings…</div>`;
+    return settingsView();
+  }
+
   if (!S.sel) return html`<div class="empty">Pick an agent on the left.</div>`;
   if (S.detailErr) return html`<div class="empty"><span class="msg err">${S.detailErr}</span></div>`;
   const d = S.detail;
@@ -749,7 +815,113 @@ function historyTab(d) {
   })}</div>`;
 }
 
-const RENDER = { overview, instructions, skills, tools, hooks, jobs, history: historyTab };
+// ---- Settings rendering ----
+function settingsView() {
+  if (S.settingsErr) return html`<div class="empty"><span class="msg err">Can't load settings: ${S.settingsErr}</span></div>`;
+  if (S.settings === null) return html`<div class="empty">Loading settings…</div>`;
+
+  const subTabs = SETTINGS_TABS.map(([k, label]) => html`<button class="tab${S.settingsTab === k ? ' on' : ''}" role="tab" data-act="settings-tab" data-tab="${k}">${label}</button>`);
+
+  let content;
+  if (S.settingsTab === 'loop') content = settingsLoop();
+  else if (S.settingsTab === 'projects') content = settingsProjects();
+  else content = settingsRetries();
+
+  return html`<div class="pane-head">
+      <div class="pane-title"><h1>Settings</h1><span class="pane-sub">Orchestration behaviour</span></div>
+    </div>
+    <div class="tabs" role="tablist">${subTabs}</div>
+    <div id="tabbody" class="tabbody">${content}</div>`;
+}
+
+function settingsLoop() {
+  const fieldsBySection = {};
+  for (const f of SETTINGS_FIELDS) {
+    if (!fieldsBySection[f.section]) fieldsBySection[f.section] = [];
+    fieldsBySection[f.section].push(f);
+  }
+
+  return html`<div class="fields">
+    ${Object.entries(fieldsBySection).map(([section, fields]) => html`
+      <div class="field" style="grid-column: 1 / -1;">
+        <div class="label"><span style="text-transform:uppercase;letter-spacing:.06em;font-size:11px;color:var(--faint);">${section}</span></div>
+        <div class="fv"></div>
+      </div>
+      ${fields.map(f => settingsFieldRow(f))}
+    `)}
+  </div>`;
+}
+
+function settingsFieldRow(f) {
+  const v = S.settings[f.f];
+  const defaultVal = SETTINGS_FIELDS.find(x => x.f === f.f);
+  const isDefault = defaultVal && v === defaultVal.default;
+  const key = 'setting:' + f.f;
+  const msg = S.msgs[key];
+  const busy = S.busy === key;
+
+  let body;
+  if (f.kind === 'bool') {
+    body = html`<label class="tool${busy ? ' busy' : ''}"><input type="checkbox" ${v ? raw(' checked') : ''} ${busy ? raw(' disabled') : ''} data-act="save-setting" data-key="${f.f}"><span class="mono">${v ? 'true' : 'false'}</span></label>`;
+  } else if (f.kind === 'int') {
+    body = html`<input class="inp num" value="${v}" data-act="save-setting" data-key="${f.f}" inputmode="numeric" ${busy ? raw(' disabled') : ''}>`;
+  } else {
+    body = html`<input class="inp" value="${v}" data-act="save-setting" data-key="${f.f}" ${busy ? raw(' disabled') : ''}>`;
+  }
+
+  const help = defaultVal ? html`<div class="small muted" style="margin-top:2px;">${defaultVal.help}${isDefault ? ' (default)' : ''}</div>` : '';
+
+  return html`<div class="field"${hl(key)}><div class="label">${f.label}</div><div class="fv">${body}${msgHtml(msg)}${help}</div></div>`;
+}
+
+function settingsProjects() {
+  if (S.targetsErr) return html`<div class="empty"><span class="msg err">Can't load targets: ${S.targetsErr}</span></div>`;
+  if (!S.targets.length) return html`<div class="empty small">No targets attached. Use <span class="mono">team target add</span> from the CLI.</div>`;
+
+  return html`<div style="display:flex;flex-direction:column;gap:12px;">
+    ${S.targets.map(t => settingsProjectCard(t))}
+  </div>`;
+}
+
+function settingsProjectCard(t) {
+  const checkVal = t.check ?? '';
+  const checkDefault = S.settings['grading.default_check'] || '';
+  const isDefaultCheck = t.check == null || t.check === '';
+  const enabledMsg = S.msgs['target:' + t.name + ':enabled'];
+  const checkMsg = S.msgs['target:' + t.name + ':check'];
+  const enabledBusy = S.busy === 'target:' + t.name + ':enabled';
+  const checkBusy = S.busy === 'target:' + t.name + ':check';
+
+  return html`<div style="border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);padding:16px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      <div class="chip mono" style="flex:1;">${t.name}</div>
+      <label class="tool${enabledBusy ? ' busy' : ''}"><input type="checkbox" ${t.enabled ? raw(' checked') : ''} ${enabledBusy ? raw(' disabled') : ''} data-act="save-target" data-name="${t.name}" data-key="enabled"><span class="mono">enabled</span></label>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">${t.path}</div>
+    <div style="display:grid;grid-template-columns:140px 1fr;gap:8px;align-items:center;">
+      <div class="label">Check command</div>
+      <div class="fv">
+        <input class="inp" value="${checkVal}" placeholder="${isDefaultCheck ? 'default: ' + checkDefault : ''}" data-act="save-target" data-name="${t.name}" data-key="check" ${checkBusy ? raw(' disabled') : ''}>
+        ${msgHtml(checkMsg)}
+        <div class="small muted">${isDefaultCheck ? 'Using default: ' + checkDefault : 'Custom check'}</div>
+      </div>
+    </div>
+    ${msgHtml(enabledMsg)}
+  </div>`;
+}
+
+function settingsRetries() {
+  if (!S.state) return html`<div class="empty">Loading agents…</div>`;
+  const roles = S.state.roles;
+  return html`<div class="fields">
+    ${roles.map(r => {
+      const after = r.escalation?.after_failures;
+      return html`<div class="field"><div class="label">${r.name} ${r.title ? html`<span class="muted">(${r.title})</span>` : ''}</div><div class="fv"><span class="val">${after != null ? after : '—'}</span> failure${after === 1 ? '' : 's'} before escalation <button class="btn ghost" data-act="open" data-name="${r.name}" style="font-size:12px;">Open Overview</button></div></div>`;
+    })}
+  </div>`;
+}
+
+const RENDER = { overview, instructions, skills, tools, hooks, jobs, history: historyTab, settings: settingsView };
 
 // ---- actions ----
 function select(name) {
@@ -901,6 +1073,28 @@ document.addEventListener('click', ev => {
   switch (d.act) {
     case 'open': select(d.name); break;
     case 'tab': S.tab = d.tab; S.ask = null; syncHash(); renderPane(); break;
+    case 'settings': S.tab = 'settings'; S.ask = null; S.sel = null; S.edit = null; S.skillOpen = null; S.newSkill = null; syncHash(); renderAll(); loadSettings(); break;
+    case 'settings-tab': S.settingsTab = d.tab; renderPane(); break;
+    case 'save-setting': {
+      const key = d.key;
+      const input = el.tagName === 'INPUT' ? el : el.querySelector('input');
+      let value;
+      if (input.type === 'checkbox') value = input.checked;
+      else value = input.value;
+      if (SETTINGS_FIELDS.find(f => f.f === key)?.kind === 'int') value = Number(value);
+      saveSetting(key, value);
+      break;
+    }
+    case 'save-target': {
+      const name = d.name;
+      const key = d.key;
+      const input = el;
+      let value;
+      if (input.type === 'checkbox') value = input.checked;
+      else value = input.value || null;
+      saveTargetSetting(name, key, value);
+      break;
+    }
     case 'edit': startEdit(d.field); break;
     case 'save-instr': saveInstr(); break;
     case 'theirs': delete S.drafts[d.dk]; renderPane(); break;
