@@ -162,3 +162,37 @@ the agent pane (the agent list and pipeline stay).
 - *Retries*: a read-only line per role with `escalation.after_failures` and a
   link that opens that agent's Overview.
 - Saves, errors and live highlights behave like the agent pane.
+
+## Creating agents and their profiles (Eli, 2026-10-24)
+
+Design: `docs/PLANNER.md`, "New agents". Code in `team/agents.py` and
+`team/profiles.py`; CLI `team agent ...`.
+
+- `agents.create(root, name, *, title, does, graded_by, model, tools,
+  hands_to=None, instructions, source="dashboard") -> str`: refuses an existing
+  name, a name not matching `^[a-z][a-z0-9-]{0,31}$`, a non-free model, tools
+  outside TOOLSETS, an unknown `hands_to`. Writes `roles/<name>/role.toml`
+  (status `planned`, harness `hermes`, budget 25 turns / 600 s,
+  `escalation.after_failures = 2`) and `roles/<name>/SOUL.md` in one commit:
+  `<name>: created (<source>)`.
+- `profiles.profile_name(role) -> "team-<role>"`; `profiles.sync(root, role,
+  runner=...)`: create the Hermes profile if missing with
+  `hermes profile create team-<role> --clone-from team-worker --no-alias
+  --description <does>`, then write into `~/.hermes/profiles/team-<role>/`:
+  `SOUL.md` from the role's instructions, the role's skills as
+  `skills/<skill>/SKILL.md` (replace the whole `skills/` dir of that profile),
+  and `model.default` in its config.yaml from `runs_on.model` (edit that one
+  key; keep every other key cloned from team-worker, which holds the free-only
+  settings). Refuse a non-free model. Never touch any profile not named
+  `team-*`. Returns what changed.
+- `profiles.sync_all(root)`: every hermes role with status `active` or `planned`.
+- CLI: `team agent new <name> --title ... --does ... --graded-by ... --model ...
+  [--tools a,b] [--hands-to x]` (instructions from `--instructions-file` or a
+  one-line default built from `does`); `team agent sync [<name>]`.
+- `team/free.py`'s `free-check` must accept `hermes -p team-<role> ...` like
+  `team-worker` (a `team-*` profile is cloned from the locked one).
+- UI: a **New agent** button over the agent list: a form with those fields;
+  `POST /api/agents {name, title, does, graded_by, model, tools, hands_to,
+  instructions}` → `{"sha"}`, then `profiles.sync` for it. Each agent's
+  Overview shows its profile (`team-<name>`, exists or not) and a **Sync
+  profile** button: `POST /api/agents/<name>/sync`.
