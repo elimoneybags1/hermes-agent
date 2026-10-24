@@ -103,20 +103,53 @@ def create_task(
     return _parse_json_output(result, "create")
 
 
+def show_full(
+    board: str,
+    task_id: str,
+    runner=subprocess.run,
+) -> dict:
+    """Show a kanban task as {"task": {...}, "runs": [...], ...}.
+
+    Accepts a bare task too, which then has no runs.
+    """
+    args = ["--board", board, "show", task_id, "--json"]
+    result = _run_kanban(args, runner=runner)
+    parsed = _parse_json_output(result, "show")
+    if isinstance(parsed, dict) and "task" in parsed:
+        return {**parsed, "runs": parsed.get("runs") or []}
+    return {"task": parsed or {}, "runs": []}
+
+
 def show(
     board: str,
     task_id: str,
     runner=subprocess.run,
 ) -> dict:
-    """Show a kanban task and return the parsed dict."""
-    args = ["--board", board, "show", task_id, "--json"]
-    result = _run_kanban(args, runner=runner)
-    parsed = _parse_json_output(result, "show")
+    """Show a kanban task and return the task dict."""
+    return show_full(board, task_id, runner=runner)["task"]
 
-    # Accept both {"task": {...}, "runs": [...]} and the task itself
-    if isinstance(parsed, dict) and "task" in parsed:
-        return parsed["task"]
-    return parsed
+
+def list_boards(runner=subprocess.run) -> list[dict]:
+    """Every board in Team's kanban home: `boards list --json`."""
+    result = _run_kanban(["boards", "list", "--json"], runner=runner)
+    parsed = _parse_json_output(result, "boards list")
+    return parsed if isinstance(parsed, list) else []
+
+
+def create_board(name: str, runner=subprocess.run) -> None:
+    """Create a board: `boards create <name>`."""
+    result = _run_kanban(["boards", "create", name], runner=runner)
+    if result.returncode != 0:
+        stderr_tail = result.stderr[-500:] if result.stderr else "(no stderr)"
+        raise KanbanError("hermes kanban boards create failed", stderr_tail)
+
+
+def ensure_board(name: str, runner=subprocess.run) -> bool:
+    """Create the board unless it exists; True when it was created."""
+    if any(b.get("slug") == name for b in list_boards(runner=runner)):
+        return False
+    create_board(name, runner=runner)
+    return True
 
 
 def list_tasks(
@@ -135,10 +168,16 @@ def list_tasks(
 
 def dispatch(
     board: str,
+    max_spawns: int | None = None,
     runner=subprocess.run,
 ) -> dict:
-    """Dispatch tasks and return the parsed result."""
+    """Dispatch tasks and return the parsed result.
+
+    `max_spawns` caps how many workers kanban starts in this pass (`--max`).
+    """
     args = ["--board", board, "dispatch", "--json"]
+    if max_spawns is not None:
+        args.extend(["--max", str(max_spawns)])
     result = _run_kanban(args, runner=runner)
     return _parse_json_output(result, "dispatch")
 

@@ -118,3 +118,16 @@ name first), argv, parsing of a success and an error payload, timeout.
   6. Each finished free attempt gets a `calls` row from `session_for_task`;
      refuse to record it as free (ledger error, block) if the model is not
      free or the cost is above zero.
+
+Learned from running kanban for real (2026-10-24), also part of the contract:
+
+- Kanban neither enforces `--max-runtime` nor notices a dead worker. Each
+  tick, for a tracked task kanban calls `running`, the latest run's
+  `worker_pid` and `started_at` (`show --json`, `runs[-1]`) are checked: a pid
+  that is gone, or a run older than the role's `budget.run_budget_s` + 300 s,
+  gets the pid terminated (if alive), the task blocked with the reason, and a
+  ledger error; the retry/escalation path then carries on.
+- Before grading, main is merged into the branch in the worktree, so the
+  check runs against current main. A conflict is a failed attempt listing the
+  conflicted files; the merge is aborted.
+- `dispatch` passes `--max <loop.max_new_per_tick>`; spawning stays kanban's.
