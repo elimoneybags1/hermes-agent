@@ -504,7 +504,7 @@ def revert(
 
 
 def fingerprint(root: Path, db: Path | sqlite3.Connection) -> str:
-    """Hash of all agent-defining state: mtimes/sizes under roles/, plugin/, .git/HEAD, .git/refs/heads/, ledger file + -wal."""
+    """Hash of all agent-defining state: mtimes/sizes under roles/, plugin/, .git/HEAD, .git/refs/heads/, ledger file + -wal, orchestration.toml, and target.json files."""
     # Get the ledger file path from the connection if needed
     if isinstance(db, sqlite3.Connection):
         # Get the database file path from the connection
@@ -547,6 +547,22 @@ def fingerprint(root: Path, db: Path | sqlite3.Connection) -> str:
             if path.is_file():
                 stat = path.stat()
                 rel = path.relative_to(root)
+                hasher.update(f"{rel}:{stat.st_mtime_ns}:{stat.st_size}".encode())
+
+    # orchestration.toml in repo root
+    orchestration = root / "orchestration.toml"
+    if orchestration.exists():
+        stat = orchestration.stat()
+        hasher.update(f"orchestration.toml:{stat.st_mtime_ns}:{stat.st_size}".encode())
+
+    # target.json files in $TEAM_STATE/targets/*/
+    targets_dir = ledger.state_dir() / "targets"
+    if targets_dir.exists():
+        for target_json in sorted(targets_dir.rglob("target.json")):
+            if target_json.is_file():
+                stat = target_json.stat()
+                # Use a path relative to the state dir for consistency
+                rel = target_json.relative_to(targets_dir.parent)
                 hasher.update(f"{rel}:{stat.st_mtime_ns}:{stat.st_size}".encode())
 
     # ledger file and -wal

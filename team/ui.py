@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from team import agents, dash, ledger
+from team import agents, dash, ledger, settings, targets
 from team.roles import load_roles
 
 DEFAULT_PORT = 7341
@@ -131,6 +131,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._state
         if method == "GET" and rest == ["events"]:
             return self._events
+        # Settings routes (before agents check)
+        if method == "GET" and rest == ["settings"]:
+            return self._settings
+        if method == "PATCH" and rest == ["settings"]:
+            return lambda: self._set_setting()
+        if len(rest) == 2 and rest[0] == "targets":
+            if method == "PATCH":
+                return lambda: self._set_target(rest[1])
+        # Agents routes
         if len(rest) < 2 or rest[0] != "agents":
             return None
         name, tail = rest[1], rest[2:]
@@ -222,6 +231,36 @@ class Handler(BaseHTTPRequestHandler):
     def _revert(self, name: str) -> None:
         sha = self._need_str(self._body(), "sha")
         self._write(agents.revert, name, sha)
+
+    # --- settings
+
+    def _settings(self) -> None:
+        target_names = [t["name"] for t in targets.list_targets()]
+        self._json(
+            200,
+            {
+                "settings": settings.load(self.server.root),
+                "fields": settings.fields(),
+                "targets": [settings.target_settings(n) for n in target_names],
+                "target_fields": [
+                    {"key": k, "type": t.__name__, "help": h}
+                    for k, (t, _, h) in settings.TARGET_FIELDS.items()
+                ],
+            },
+        )
+
+    def _set_setting(self) -> None:
+        body = self._body()
+        key = self._need_str(body, "key")
+        with self.server.write_lock:
+            sha = settings.set_value(self.server.root, key, self._need(body, "value"))
+        self._json(200, {"sha": sha})
+
+    def _set_target(self, name: str) -> None:
+        body = self._body()
+        key = self._need_str(body, "key")
+        result = settings.set_target(name, key, self._need(body, "value"))
+        self._json(200, result)
 
     # --- live events
 
