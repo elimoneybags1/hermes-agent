@@ -47,7 +47,7 @@ before relying on a version or a default.
 | [GEPA](https://github.com/gepa-ai/gepa) `optimize_anything` (MIT, v0.1.4) | Proposes changes to any text (prompt, `SKILL.md`, config) against our own evaluator; reads failure traces such as pytest output | **Adopt for the propose step.** Set its reflection model to a free one. Team still adopts one diff at a time, gated on the base pass rate |
 | [Hermes Agent Self-Evolution](https://github.com/NousResearch/hermes-agent-self-evolution) | Nous's DSPy+GEPA pipeline that evolves Hermes skills, with gates and an eval set drawn from past sessions | **Adopt the pattern.** It's the closest existing version of Team's loop; swap its PR step for our commit gate |
 | [DSPy](https://github.com/stanfordnlp/dspy) (MIT, 3.4.1) | Prompt programs plus optimizers | Only if a role becomes a DSPy program |
-| TensorZero | Gateway with feedback and A/B tests | **No.** The repo is archived (last release 2026.6.0, 2026-06-04) and needs Postgres. Copy its idea instead: a job is an episode, tests passed is a boolean metric |
+| TensorZero | Gateway with feedback and A/B tests | **No.** The repo is archived (last release 2026.6.0, 2026-06-04) and needs Postgres. Copy its idea instead: a job is an episode, tests passed is a boolean metric. Done in `docs/MODELS.md` (re-checked 2026-10-24: still archived) |
 | TextGrad | Gradient-style prompt edits | No: stale since 2025 |
 
 ## Evaluation and replay
