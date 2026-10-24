@@ -13,6 +13,8 @@ from pathlib import Path
 from team import ledger, targets, roles, dash
 from team.free import check_command
 from team import decisions
+from team import agents
+from team import profiles
 
 LIST_COLUMNS = ("id", "target", "role", "attempt", "started", "ended", "outcome", "grader")
 TARGET_COLUMNS = ("name", "path", "commit", "attached_at")
@@ -235,6 +237,60 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _agent_new(args: argparse.Namespace) -> int:
+    """Create a new agent."""
+    tools = args.tools.split(",") if args.tools else []
+    instructions = ""
+    if args.instructions_file:
+        instructions = Path(args.instructions_file).read_text()
+    else:
+        # Default from does
+        instructions = f"# {args.title}\n\n{args.does}\n"
+    
+    try:
+        sha = agents.create(
+            REPO,
+            args.name,
+            title=args.title,
+            does=args.does,
+            graded_by=args.graded_by,
+            model=args.model,
+            tools=tools,
+            hands_to=args.hands_to,
+            instructions=instructions,
+            source="cli",
+        )
+        print(f"Created agent {args.name}: {sha[:12]}")
+        
+        # Also sync the profile
+        result = profiles.sync(REPO, args.name)
+        print(f"Profile sync: {result}")
+        return 0
+    except agents.AgentError as e:
+        print(f"cannot create agent: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"cannot create agent: {e}", file=sys.stderr)
+        return 1
+
+
+def _agent_sync(args: argparse.Namespace) -> int:
+    """Sync agent profile(s) to Hermes."""
+    if args.name:
+        try:
+            result = profiles.sync(REPO, args.name)
+            print(f"{args.name}: {result}")
+            return 0
+        except Exception as e:
+            print(f"cannot sync {args.name}: {e}", file=sys.stderr)
+            return 1
+    else:
+        results = profiles.sync_all(REPO)
+        for r in results:
+            print(r)
+        return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -313,6 +369,25 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--once", action="store_true", help="one tick, then exit")
     run_parser.add_argument("--interval", type=int, help="seconds between ticks (default: settings)")
     run_parser.set_defaults(func=_run)
+
+    # agent command
+    agent_parser = commands.add_parser("agent", help="create and sync agents")
+    agent_sub = agent_parser.add_subparsers(dest="action", required=True)
+
+    agent_new = agent_sub.add_parser("new", help="create a new agent")
+    agent_new.add_argument("name")
+    agent_new.add_argument("--title", required=True)
+    agent_new.add_argument("--does", required=True)
+    agent_new.add_argument("--graded-by", required=True)
+    agent_new.add_argument("--model", required=True)
+    agent_new.add_argument("--tools", default="")
+    agent_new.add_argument("--hands-to", dest="hands_to", default=None)
+    agent_new.add_argument("--instructions-file", dest="instructions_file", default=None)
+    agent_new.set_defaults(func=_agent_new)
+
+    agent_sync = agent_sub.add_parser("sync", help="sync agent profile(s) to Hermes")
+    agent_sync.add_argument("name", nargs="?", default=None)
+    agent_sync.set_defaults(func=_agent_sync)
 
     args = parser.parse_args(argv)
     return args.func(args)
