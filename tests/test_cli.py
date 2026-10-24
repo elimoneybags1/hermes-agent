@@ -196,3 +196,77 @@ def test_existing_subcommand_still_works(state, capsys):
     result = cli.main(["ledger", "init"])
     assert result == 0
     assert (state / "team.db").exists()
+
+
+def test_goals_without_db_fails(state, capsys):
+    assert cli.main(["goals"]) == 1
+    assert "team ledger init" in capsys.readouterr().err
+
+
+def test_goals_shows_open_goals(state, capsys):
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    ledger.create_goal(conn, "team", "First goal", "implement", "team/branch1", "/tmp/wt1", "pytest")
+    ledger.create_goal(conn, "brain", "Second goal", "implement", "team/branch2", "/tmp/wt2", "pytest")
+    conn.close()
+    capsys.readouterr()
+
+    assert cli.main(["goals"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split("\t") == list(cli.GOALS_COLUMNS)
+    assert len(lines) == 3  # header + 2 goals
+    row1 = dict(zip(cli.GOALS_COLUMNS, lines[1].split("\t")))
+    row2 = dict(zip(cli.GOALS_COLUMNS, lines[2].split("\t")))
+    assert row1["target"] == "brain"
+    assert row1["status"] == "open"
+    assert row1["goal"] == "Second goal"
+    assert row2["target"] == "team"
+    assert row2["status"] == "open"
+    assert row2["goal"] == "First goal"
+
+
+def test_goals_all_shows_finished(state, capsys):
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    ledger.create_goal(conn, "team", "Open goal", "implement", "team/branch1", "/tmp/wt1", "pytest")
+    goal_id = ledger.create_goal(conn, "team", "Finished goal", "implement", "team/branch2", "/tmp/wt2", "pytest")
+    ledger.finish_goal(conn, goal_id, "pass", "done")
+    conn.close()
+    capsys.readouterr()
+
+    # --all shows both (newest first)
+    assert cli.main(["goals", "--all"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 3  # header + 2 goals
+    row1 = dict(zip(cli.GOALS_COLUMNS, lines[1].split("\t")))
+    row2 = dict(zip(cli.GOALS_COLUMNS, lines[2].split("\t")))
+    # newest first: Finished goal (id=2) then Open goal (id=1)
+    assert row1["status"] == "pass"
+    assert row1["goal"] == "Finished goal"
+    assert row2["status"] == "open"
+    assert row2["goal"] == "Open goal"
+
+    # default shows only open
+    capsys.readouterr()
+    assert cli.main(["goals"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 2  # header + 1 open goal
+    row = dict(zip(cli.GOALS_COLUMNS, lines[1].split("\t")))
+    assert row["status"] == "open"
+    assert row["goal"] == "Open goal"
+
+
+def test_goals_filters_by_target(state, capsys):
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    ledger.create_goal(conn, "team", "Team goal", "implement", "team/branch1", "/tmp/wt1", "pytest")
+    ledger.create_goal(conn, "brain", "Brain goal", "implement", "team/branch2", "/tmp/wt2", "pytest")
+    conn.close()
+    capsys.readouterr()
+
+    assert cli.main(["goals", "team"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 2  # header + 1 goal
+    row = dict(zip(cli.GOALS_COLUMNS, lines[1].split("\t")))
+    assert row["target"] == "team"
+    assert row["goal"] == "Team goal"
