@@ -27,8 +27,11 @@ target end to end before adding roles, targets or autonomy.
   that base rate. Changes land as git commits so they can be rolled back.
 - **Who may change what.** Free models may propose skill edits and routing changes.
   Code changes go through Claude via `crew` and wait for `crew accept`.
-- **Free tiers only for anything that runs unattended.** Same rule as `brain`: an
-  allowlist that fails closed. The proven implementation is
+- **Unattended work runs on free models, or on Claude Code through Eli's
+  subscription** (Eli, 2026-10-24). Claude Code is launched only by Team, with
+  the Anthropic API-key variables removed so it can never bill the API. Never a
+  paid API key, never the default Hermes profile. The free side is an
+  allowlist that fails closed, as in `brain`. The proven implementation is
   `~/work/brain/bigbrain/braincore/llm.py` (`FREE_POLICY`, `_assert_free`, `ranked`,
   cooldowns, usage ledger). Do not use LiteLLM as-is — its fallback chains will
   happily route to a paid provider.
@@ -46,6 +49,11 @@ target end to end before adding roles, targets or autonomy.
 3. **First target is Team itself.** Team is built by its own agents from the
    first job. Every change to this repo is a job that the ledger records.
 4. **Sandbox: crew worktrees only.** Docker via colima waits until a worker runs code.
+5. **Team works autonomously, on Hermes kanban** (2026-10-24). Each target gets
+   goals and recurring routines; Team splits, runs, grades, lands and escalates
+   until they are done, and brings Eli only real decisions. Kanban is the queue
+   and runner in Team's own kanban home; Team keeps grading, the ledger,
+   escalation and the model rule. Design: `docs/KANBAN.md`.
 
 Still open: overlap with `~/work/platform/ai` (gateway, router, agents, skills).
 Nobody has read it yet; it needs a session in `platform`.
