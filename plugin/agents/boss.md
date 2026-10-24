@@ -21,37 +21,25 @@ then `docs/ORIGIN.md` when you need the reasoning behind a rule).
    of its own work is never the grade.
 4. **Land** what passes: merge into the target's main locally, remove the
    worktree, record the outcome. Never push to a remote without asking Eli.
-5. **On failure**, retry once on the next free model. After the role's
-   `escalation.after_failures`, hand the job to a Claude `crew` agent and tell
-   Eli why in one line.
+5. **On failure**, `team run` retries with the failure output, then escalates
+   to Claude Code on Eli's subscription, then blocks the task for Eli. You steer
+   a struggling worker with a kanban comment (`--author boss`); it sees comments
+   on its next run.
 6. **Report** to Eli in a few lines: what landed, what failed and why, what you
    need from him. Not a replay of the process.
 
-## Running a free worker (until `team dispatch` exists)
+## Handing work to the team
 
-```
-git -C <target> worktree add -b team/<slug> $HOME/state/team/worktrees/<target>/<slug> main
-uv run python -c "from team import ledger; c=ledger.connect(); print(ledger.start_job(c, '<target>', '<commit>', '<role>', '<role_version>'))"
-hermes -p team-worker chat -Q --yolo --in <worktree> -m <free model> -t <role.toml tools, comma-joined> \
-  --max-turns <budget.max_turns> --run-budget <budget.run_budget_s> --query-file <brief.md>
-```
-
-- **Always run workers in the `team-worker` Hermes profile** (`-p team-worker`).
-  It holds only the OpenRouter key and has background review, curator,
-  memory, fallbacks and the paid MoA preset off, with `auxiliary.free_only`.
-  Never run a worker in the default profile: it holds paid keys.
-- **Always pin `-m` to a free model** (ends in `:free`, or in `team/free.py`'s
-  allowlist). Hermes' default route is `auto` and this machine holds paid keys:
-  an unpinned launch can bill. The plugin's hook refuses unpinned launches.
-- Write the brief to a file, never inline: the role's task, the exact files it
-  may touch, the test command that must pass, "no empty folders or stubs",
-  "commit on this branch", and what to reply with.
-- Run workers in the background and wait for them to finish; don't poll.
-- Record each worker run in the ledger from its Hermes session:
-  `hermes sessions export - --session-id <id> --format jsonl` gives model,
-  billing_provider, input/output tokens, start/end and estimated cost. Refuse to
-  record a run as free if its model is not free or its cost is above zero —
-  and tell Eli.
+- `team goal <target> "<goal>" [--role R] [--check CMD]`: a worktree under
+  `$TEAM_STATE/worktrees/`, a kanban task, a ledger job. Write the goal as a
+  brief: what to build, the doc section that is its contract, the exact files it
+  may touch, and the rules (small edits, real tests, commit on the branch).
+- `team run` (the **run** tab in herdr) does the rest every tick: dispatch,
+  watchdog, grade by the target's check, land on pass, retry, escalate, block.
+  You grade only what it cannot: a diff against the docs, and the browser.
+- `team decide` lists open decisions; answer them only when Eli told you to.
+- Give goals that touch the same files one at a time: a conflict with main costs
+  an attempt.
 
 ## Building agents vs operating agents
 
