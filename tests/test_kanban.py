@@ -524,3 +524,47 @@ def test_env_inheritance(tmp_path):
     env = captured_env["env"]
     assert env["HERMES_KANBAN_HOME"] == str(kanban_home)
     assert env["CUSTOM_VAR"] == "test_value"
+
+def _recorder(stdout=""):
+    calls = []
+
+    def runner(cmd, **kwargs):
+        calls.append((cmd, kwargs.get("env", {})))
+        return FakeCompletedProcess(0, stdout, "")
+
+    return runner, calls
+
+
+def test_dispatch_max_spawns():
+    runner, calls = _recorder("{}")
+    kanban.dispatch("demo", max_spawns=2, runner=runner)
+    assert calls[0][0] == ["hermes", "-p", "team-worker", "kanban", "--board", "demo",
+                           "dispatch", "--json", "--max", "2"]
+
+
+def test_show_full_keeps_runs_and_accepts_bare_task():
+    payload = {"task": {"id": "t_1", "status": "running"},
+               "runs": [{"id": 1, "worker_pid": 42, "started_at": 1792867727}]}
+    runner, _ = _recorder(json.dumps(payload))
+    full = kanban.show_full("demo", "t_1", runner=runner)
+    assert full["runs"][-1]["worker_pid"] == 42
+    assert kanban.show("demo", "t_1", runner=runner)["status"] == "running"
+
+    runner, _ = _recorder(json.dumps({"id": "t_1", "status": "done"}))
+    assert kanban.show_full("demo", "t_1", runner=runner) == {
+        "task": {"id": "t_1", "status": "done"}, "runs": []}
+
+
+def test_ensure_board_creates_only_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEAM_STATE", str(tmp_path))
+    boards = json.dumps([{"slug": "default"}, {"slug": "team"}])
+    runner, calls = _recorder(boards)
+    assert kanban.ensure_board("team", runner=runner) is False
+    assert kanban.ensure_board("demo", runner=runner) is True
+    argvs = [c[0] for c in calls]
+    assert argvs == [
+        ["hermes", "-p", "team-worker", "kanban", "boards", "list", "--json"],
+        ["hermes", "-p", "team-worker", "kanban", "boards", "list", "--json"],
+        ["hermes", "-p", "team-worker", "kanban", "boards", "create", "demo"],
+    ]
+    assert calls[-1][1]["HERMES_KANBAN_HOME"] == str(tmp_path / "kanban")
