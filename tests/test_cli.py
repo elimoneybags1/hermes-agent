@@ -57,6 +57,12 @@ def test_boss_argv():
     ]
 
 
+def test_board_argv_is_the_free_worker_profile():
+    argv = cli.board_argv(9129)
+    assert argv[:3] == ["hermes", "-p", "team-worker"]
+    assert argv[3:] == ["dashboard", "--isolated", "--port", "9129", "--no-open"]
+
+
 def test_boss_argv_no_extra():
     repo = Path("/fake/repo")
     argv = cli.boss_argv(repo, [])

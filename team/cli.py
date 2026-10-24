@@ -1,4 +1,4 @@
-"""Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`, `team ui`, `team free-check`."""
+"""Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`, `team ui`, `team board`, `team free-check`."""
 
 from __future__ import annotations
 
@@ -85,6 +85,22 @@ def _ui(args: argparse.Namespace) -> int:
     return ui.main(port=args.port, open_browser=not args.no_open)
 
 
+def board_argv(port: int) -> list[str]:
+    """The Hermes web dashboard on Team's own kanban home, as the free-only worker profile."""
+    return ["hermes", "-p", "team-worker", "dashboard", "--isolated", "--port", str(port), "--no-open"]
+
+
+def _board(args: argparse.Namespace) -> int:
+    hermes = shutil.which("hermes")
+    if hermes is None:
+        print("hermes not found on PATH", file=sys.stderr)
+        return 1
+    os.environ["HERMES_KANBAN_HOME"] = str(ledger.state_dir() / "kanban")
+    url = f"http://127.0.0.1:{args.port}/kanban?profile=team-worker"
+    print(f"Team board: {url}  (keep the profile on team-worker: it holds only free models)")
+    os.execvp(hermes, board_argv(args.port))
+
+
 def boss_argv(repo: Path, extra: list[str]) -> list[str]:
     """Build the argv for the boss agent."""
     plugin_dir = repo / "plugin"
@@ -165,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     ui_parser.add_argument("--port", type=int, default=7341)
     ui_parser.add_argument("--no-open", action="store_true", help="do not open the browser")
     ui_parser.set_defaults(func=_ui)
+    board_parser = commands.add_parser("board", help="Team's kanban board (Hermes dashboard) in the browser")
+    board_parser.add_argument("--port", type=int, default=9129)
+    board_parser.set_defaults(func=_board)
     commands.add_parser("free-check", help="check hermes command for free model compliance").set_defaults(func=_free_check)
 
     args = parser.parse_args(argv)
