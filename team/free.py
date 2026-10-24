@@ -38,10 +38,11 @@ READ_ONLY: frozenset[tuple[str, str]] = frozenset({
 # hermes options that take a value, top level and chat (`hermes chat --help`).
 # Missing one here makes the guard stricter, never looser: its value is then
 # read as a positional and refused.
-SHORT_VALUE = frozenset("mzqstrc")
+SHORT_VALUE = frozenset("mzqstrcp")
 LONG_VALUE: frozenset[str] = frozenset({
     "query", "query-file", "image", "toolsets", "reasoning", "skills", "resume",
     "in", "continue", "max-turns", "run-budget", "source", "usage-file",
+    "profile",
 })
 
 # Commands that only print or search: `grep hermes` names hermes, it does not
@@ -294,6 +295,7 @@ def _check_hermes(args: list[Word]) -> Optional[str]:
 
     models: list[str] = []
     providers: list[str] = []
+    profiles: list[str] = []
     seen_chat = False
     i = 0
     while i < len(args):
@@ -316,6 +318,8 @@ def _check_hermes(args: list[Word]) -> Optional[str]:
                 kind = "model"
             elif "provider".startswith(name):
                 kind = "provider"
+            elif "profile".startswith(name):
+                kind = "profile"
             takes_value = kind is not None or name in LONG_VALUE
             if eq:
                 value, takes_value = inline, False
@@ -323,7 +327,7 @@ def _check_hermes(args: list[Word]) -> Optional[str]:
             # A cluster such as -Qm X or -mX: the first value option takes the rest
             for j, ch in enumerate(text[1:], 1):
                 if ch in SHORT_VALUE:
-                    kind = "model" if ch == "m" else None
+                    kind = "model" if ch == "m" else ("profile" if ch == "p" else None)
                     if text[j + 1:]:
                         value = text[j + 1:]
                     else:
@@ -351,10 +355,15 @@ def _check_hermes(args: list[Word]) -> Optional[str]:
             models.append(value)
         elif kind == "provider" and value is not None:
             providers.append(value)
+        elif kind == "profile" and value is not None:
+            profiles.append(value)
         i += 1
 
-    if not models:
-        return "hermes chat requires explicit -m/--model with a free model"
+    # Allow team-* profiles (cloned from team-worker which holds free-only settings)
+    team_profile_allowed = any(p.startswith("team-") for p in profiles)
+
+    if not models and not team_profile_allowed:
+        return "hermes chat requires explicit -m/--model with a free model, or -p/--profile team-*"
     for model in models:
         if not is_free_model(model):
             return f"model '{model}' is not free (must end with :free or be in FREE_EXACT)"

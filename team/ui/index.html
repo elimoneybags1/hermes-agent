@@ -308,6 +308,7 @@ td.detail { color: var(--muted); font-size: 12.5px; max-width: 520px; }
   <div class="spacer"></div>
   <div id="base" class="base"></div>
   <button class="btn" data-act="settings" title="Settings">Settings</button>
+  <button class="btn" data-act="inbox" title="Inbox" id="inbox-btn">Inbox<span id="inbox-count" class="count" style="display:none;">0</span></button>
 </header>
 <section id="strip" class="strip"></section>
 <main class="main">
@@ -338,8 +339,9 @@ const $ = s => document.querySelector(s);
 const enc = encodeURIComponent;
 
 const TABS = [['overview', 'Overview'], ['instructions', 'Instructions'], ['skills', 'Skills'],
-  ['tools', 'Tools'], ['hooks', 'Hooks'], ['jobs', 'Jobs'], ['history', 'History']];
-const TAB_OF = { field: 'overview', instr: 'instructions', skill: 'skills', tool: 'tools', job: 'jobs', hist: 'history' };
+  ['tools', 'Tools'], ['hooks', 'Hooks'], ['jobs', 'Jobs'], ['history', 'History'],
+  ['inbox', 'Inbox'], ['settings', 'Settings']];
+const TAB_OF = { field: 'overview', instr: 'instructions', skill: 'skills', tool: 'tools', job: 'jobs', hist: 'history', inbox: 'inbox' };
 const HL_MS = 4000;
 const SKILL_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -374,6 +376,8 @@ const S = {
   // Settings
   settings: null, settingsErr: null, settingsFields: [], targets: [], targetsErr: null,
   settingsTab: 'loop', // 'loop' | 'projects' | 'retries'
+  // Inbox
+  inbox: null, inboxErr: null,
 };
 const K = k => S.sel + '|' + k;
 
@@ -571,6 +575,46 @@ function baseFor(dk) {
 }
 function isDirty(dk) { const dr = S.drafts[dk]; return !!dr && dr.text !== dr.base; }
 
+// ---- Inbox API ----
+async function loadInbox() {
+  let st;
+  try { st = await api('GET', '/api/decisions'); }
+  catch (e) { S.inboxErr = e.message; renderPane(); return; }
+  S.inboxErr = null;
+  S.inbox = st;
+  renderPane();
+}
+
+async function answerDecision(decisionId, answerText) {
+  const mk = 'decision:' + decisionId + ':answer';
+  S.busy = mk; delete S.msgs[mk]; renderPane();
+  try {
+    await api('POST', `/api/decisions/${decisionId}`, { answer: answerText });
+    S.mine.add('answer');
+    setMsg(mk, true, 'answered');
+    await loadInbox();
+  } catch (err) {
+    S.busy = null;
+    setMsg(mk, false, err.message);
+    renderPane();
+  }
+}
+
+async function dismissDecision(decisionId) {
+  const mk = 'decision:' + decisionId + ':dismiss';
+  S.busy = mk; delete S.msgs[mk]; renderPane();
+  try {
+    await api('POST', `/api/decisions/${decisionId}`, { dismiss: true });
+    S.mine.add('dismiss');
+    setMsg(mk, true, 'dismissed');
+    await loadInbox();
+  } catch (err) {
+    S.busy = null;
+    setMsg(mk, false, err.message);
+    renderPane();
+  }
+}
+
 async function refresh() {
   await Promise.all([loadState(), S.sel ? loadDetail(S.sel) : null]);
 }
@@ -584,6 +628,16 @@ function renderHeader() {
   live.querySelector('.lbl').textContent = S.live === null ? 'connecting' : (S.live ? 'live' : 'reconnecting');
   const b = S.state && S.state.base;
   $('#base').innerHTML = fmt(b ? html`<b>${b.passed}/${b.jobs}</b> passed` : '');
+  // Update inbox count
+  const inboxCount = $('#inbox-count');
+  const inboxBtn = $('#inbox-btn');
+  if (S.inbox && S.inbox.decisions) {
+    const count = S.inbox.decisions.length;
+    inboxCount.textContent = count;
+    inboxCount.style.display = count > 0 ? 'inline' : 'none';
+  } else {
+    inboxCount.style.display = 'none';
+  }
 }
 
 function renderStrip() {
@@ -654,11 +708,15 @@ function renderPane() {
 }
 
 function paneHtml() {
-  // Settings tab doesn't require a selected agent
+  // Settings and Inbox tabs don't require a selected agent
   if (S.tab === 'settings') {
     if (S.settingsErr) return html`<div class="empty"><span class="msg err">Can't load settings: ${S.settingsErr}</span></div>`;
     if (S.settings === null) return html`<div class="empty">Loading settings…</div>`;
     return settingsView();
+  }
+  if (S.tab === 'inbox') {
+    if (S.inbox === null) loadInbox();
+    return inbox();
   }
 
   if (!S.sel) return html`<div class="empty">Pick an agent on the left.</div>`;
@@ -666,7 +724,7 @@ function paneHtml() {
   const d = S.detail;
   if (!d || d.name !== S.sel) return html`<div class="empty">Loading ${S.sel}…</div>`;
   const r = d.role, model = get(r, 'runs_on.model');
-  const counts = { skills: d.skills.length, tools: d.tools.length, hooks: d.hooks.length, jobs: d.jobs.length };
+  const counts = { skills: d.skills.length, tools: d.tools.length, hooks: d.hooks.length, jobs: d.jobs.length, inbox: 0 };
   const tabs = TABS.map(([k, label]) => html`<button class="tab${S.tab === k ? ' on' : ''}" role="tab" data-act="tab" data-tab="${k}">${label}${counts[k] != null ? html`<span class="n">${counts[k]}</span>` : ''}${tabHl(k) && S.tab !== k ? html`<span class="tab-dot"></span>` : ''}</button>`);
   return html`<div class="pane-head">
       <div class="pane-title"><span class="sdot ${dotClass({ status: r.status, working_on: d.working_on })}"></span><h1>${d.name}</h1><span class="pane-sub">${r.title || ''}</span></div>
@@ -910,7 +968,44 @@ function settingsRetries() {
   </div>`;
 }
 
-const RENDER = { overview, instructions, skills, tools, hooks, jobs, history: historyTab, settings: settingsView };
+function inbox() {
+  // Inbox view doesn't require a selected agent
+  if (S.inboxErr) return html`<div class="empty"><span class="msg err">Can't load inbox: ${S.inboxErr}</span></div>`;
+  if (S.inbox === null) return html`<div class="empty">Loading inbox…</div>`;
+  const { decisions, reviews } = S.inbox;
+  if (!decisions.length) return html`<div class="empty small">No open decisions.</div>`;
+  
+  return html`<div style="display:flex;flex-direction:column;gap:16px;">
+    ${decisions.map(d => html`
+      <div style="border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);padding:16px;">
+        <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;">
+          <div class="chip mono" style="flex:1;">${d.target}</div>
+          <span class="small muted">#${d.id}</span>
+        </div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">${d.context}</div>
+        <h3 style="margin:0 0 12px;font-size:15px;">${d.question}</h3>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+          ${d.options.map((opt, i) => html`
+            <button class="btn${d.recommendation === opt ? ' primary' : ''}" 
+                    data-act="pick-option" 
+                    data-decision="${d.id}" 
+                    data-option="${esc(opt)}"
+                    style="font-size:12px;">
+              ${opt}${d.recommendation === opt ? html` <span class="mono" style="font-size:10px;">(recommended)</span>` : ''}
+            </button>
+          `)}
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input type="text" class="inp" placeholder="Free-text answer…" data-decision="${d.id}" data-act="answer-input" style="flex:1;min-width:200px;">
+          <button class="btn primary" data-act="answer" data-decision="${d.id}">Answer</button>
+          <button class="btn danger" data-act="dismiss" data-decision="${d.id}">Dismiss</button>
+        </div>
+      </div>
+    `)}
+  </div>`;
+}
+
+const RENDER = { overview, instructions, skills, tools, hooks, jobs, history: historyTab, settings: settingsView, inbox };
 
 // ---- actions ----
 function select(name) {
@@ -1063,6 +1158,7 @@ document.addEventListener('click', ev => {
     case 'open': select(d.name); break;
     case 'tab': S.tab = d.tab; S.ask = null; syncHash(); renderPane(); break;
     case 'settings': S.tab = 'settings'; S.ask = null; S.sel = null; S.edit = null; S.skillOpen = null; S.newSkill = null; syncHash(); renderAll(); loadSettings(); break;
+    case 'inbox': S.tab = 'inbox'; S.ask = null; S.sel = null; S.edit = null; S.skillOpen = null; S.newSkill = null; syncHash(); renderAll(); break;
     case 'settings-tab': S.settingsTab = d.tab; renderPane(); break;
     case 'save-setting': {
       const key = d.key;
@@ -1095,6 +1191,39 @@ document.addEventListener('click', ev => {
     case 'ask-cancel': S.ask = null; renderPane(); break;
     case 'del-skill': deleteSkill(d.skill); break;
     case 'revert': revert(d.sha); break;
+    case 'pick-option': {
+      const input = document.querySelector(`input[data-act="answer-input"][data-decision="${d.decision}"]`);
+      if (input) input.value = d.option;
+      break;
+    }
+    case 'answer': {
+      const input = document.querySelector(`input[data-act="answer-input"][data-decision="${d.decision}"]`);
+      const text = input ? input.value.trim() : '';
+      if (!text) { toast('Enter an answer or pick an option', null); break; }
+      answerDecision(d.decision, text);
+      break;
+    }
+    case 'dismiss': {
+      // Two-step dismiss: first click shows "Click again to dismiss", second click dismisses
+      const btn = el;
+      if (btn.dataset.confirming === 'true') {
+        dismissDecision(d.decision);
+      } else {
+        btn.dataset.confirming = 'true';
+        const originalText = btn.textContent;
+        btn.textContent = 'Click again to dismiss';
+        btn.classList.add('danger');
+        // Reset after 3 seconds
+        setTimeout(() => {
+          if (btn.dataset.confirming === 'true') {
+            btn.dataset.confirming = 'false';
+            btn.textContent = originalText;
+            btn.classList.remove('danger');
+          }
+        }, 3000);
+      }
+      break;
+    }
   }
 });
 
@@ -1169,7 +1298,7 @@ function connect() {
     let fp;
     try { fp = JSON.parse(ev.data).fingerprint; } catch (_) { return; }
     if (!S.live) { S.live = true; renderHeader(); }
-    if (fp !== S.fp) { S.fp = fp; refresh(); if (S.tab === 'settings') loadSettings(); }
+    if (fp !== S.fp) { S.fp = fp; refresh(); if (S.tab === 'settings') loadSettings(); if (S.tab === 'inbox') loadInbox(); }
   };
 }
 
