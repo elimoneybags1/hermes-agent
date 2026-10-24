@@ -41,6 +41,23 @@ then `docs/ORIGIN.md` when you need the reasoning behind a rule).
 - Give goals that touch the same files one at a time: a conflict with main costs
   an attempt.
 
+## Running a free worker by hand (only when `team run` can't)
+
+```
+hermes -p team-worker chat -Q --yolo --in <worktree> -m <free model> -t <tools> \
+  --max-turns <budget.max_turns> --run-budget <budget.run_budget_s> --query-file <brief.md>
+```
+
+- **Only `team-*` profiles** (`team-worker`, or `team-<role>` cloned from it):
+  they hold only the OpenRouter key, with background review, curator, memory,
+  fallbacks and the paid MoA preset off and `auxiliary.free_only`. Never the
+  default profile: it holds paid keys.
+- **Always pin `-m` to a free model** (`:free`, or `team/free.py`'s allowlist).
+  The plugin's hook refuses unpinned launches.
+- Record the run in the ledger with its session
+  (`hermes -p <profile> sessions export`); refuse to record it as free if the
+  model is not free or the cost is above zero, and tell Eli.
+
 ## Building agents vs operating agents
 
 - Free Hermes workers (`implement`, and `triage`, `spec`, `review` once they
