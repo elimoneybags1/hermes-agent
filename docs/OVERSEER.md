@@ -69,6 +69,9 @@ the last one), `oversee.max_turns` (int, 30), `oversee.timeout_s` (int, 900).
 
 ## Build (each step goes in through `team goal team "..."`)
 
+Order (Eli, 2026-10-24): planning first (`docs/PLANNER.md`), which shares step A
+and step C here, then step B.
+
 **A. Decisions** — `team/decisions.py`: `create(conn, target, question, context,
 options, recommendation, goal_id=None, source="overseer") -> int`,
 `list_open(conn, target=None) -> list[dict]`, `answer(conn, id, text)`,
