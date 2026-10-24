@@ -31,7 +31,7 @@ def test_init_creates_agreed_columns(conn):
 
     assert cols("jobs") == [
         "id", "target", "target_commit", "role", "role_version", "attempt",
-        "started", "ended", "outcome", "grader", "grader_detail",
+        "started", "ended", "outcome", "grader", "grader_detail", "task_ref",
     ]
     assert cols("calls") == [
         "id", "job_id", "provider", "model", "task_class", "tokens_in",
@@ -150,3 +150,39 @@ def test_list_jobs_filters_and_orders(conn):
     assert [j["id"] for j in ledger.list_jobs(conn, target="team")] == [c, a]
     assert [j["id"] for j in ledger.list_jobs(conn, target="team", role="profiler")] == [a]
     assert [j["id"] for j in ledger.list_jobs(conn, limit=1)] == [c]
+
+
+def test_init_adds_task_ref_to_old_ledger_keeping_rows(tmp_path):
+    c = ledger.connect(tmp_path / "old.db")
+    c.execute(
+        "CREATE TABLE jobs (id INTEGER PRIMARY KEY, target TEXT NOT NULL,"
+        " target_commit TEXT NOT NULL, role TEXT NOT NULL, role_version TEXT NOT NULL,"
+        " attempt INTEGER NOT NULL DEFAULT 1, started TEXT NOT NULL, ended TEXT,"
+        " outcome TEXT, grader TEXT, grader_detail TEXT)"
+    )
+    c.execute("INSERT INTO jobs (target, target_commit, role, role_version, started)"
+              " VALUES ('team', 'c', 'implement', 'v', 'then')")
+    ledger.init(c)
+    [old] = ledger.list_jobs(c)
+    assert old["target"] == "team" and old["task_ref"] is None
+    job = ledger.start_job(c, "team", "c", "implement", "v", task_ref="t_1")
+    ledger.set_task_ref(c, job, "claude:s1")
+    assert ledger.get_job(c, job)["task_ref"] == "claude:s1"
+    c.close()
+
+
+def test_goal_lifecycle(conn):
+    job = ledger.start_job(conn, "team", "c", "implement", "v", task_ref="t_1")
+    goal = ledger.create_goal(conn, "team", "do x", "implement", "team/x", "/wt/x", "pytest")
+    ledger.update_goal(conn, goal, attempt=2, current_task="t_1", job_id=job)
+    [active] = ledger.active_goals(conn, "team")
+    assert (active["attempt"], active["current_task"], active["job_id"]) == (2, "t_1", job)
+    assert ledger.active_goals(conn, "other") == []
+    with pytest.raises(ValueError):
+        ledger.update_goal(conn, goal, branch="nope")
+
+    ledger.finish_goal(conn, goal, "pass", "landed abc")
+    assert ledger.active_goals(conn) == []
+    assert ledger.get_goal(conn, goal)["detail"] == "landed abc"
+    with pytest.raises(LookupError):
+        ledger.finish_goal(conn, goal, "fail")

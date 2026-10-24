@@ -1,4 +1,5 @@
-"""Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`, `team ui`, `team board`, `team free-check`."""
+"""Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`, `team ui`, `team board`, `team free-check`,
+`team goal`, `team run`, `team decide`."""
 
 from __future__ import annotations
 
@@ -15,6 +16,8 @@ from team import decisions
 
 LIST_COLUMNS = ("id", "target", "role", "attempt", "started", "ended", "outcome", "grader")
 TARGET_COLUMNS = ("name", "path", "commit", "attached_at")
+REPO = Path(__file__).resolve().parent.parent
+
 ROLE_COLUMNS = ("name", "status", "runs_on.harness", "runs_on.model", "title")
 
 
@@ -151,8 +154,8 @@ def _decide_list(args: argparse.Namespace) -> int:
         print(f"    recommendation: {r['recommendation']}")
         if r["goal_id"] is not None:
             print(f"    goal_id: {r['goal_id']}")
-        if r["part_id"] is not None:
-            print(f"    part_id: {r['part_id']}")
+        if r["task_id"] is not None:
+            print(f"    task_id: {r['task_id']}")
         print(f"    source: {r['source']}")
     return 0
 
@@ -196,6 +199,39 @@ def _decide_dismiss(args: argparse.Namespace) -> int:
         return 1
     conn.close()
     print(f"dismissed decision {args.id}")
+    return 0
+
+
+def _goal(args: argparse.Namespace) -> int:
+    from team import grade, kanban, run
+    from team.agents import AgentError
+
+    conn = ledger.connect(ledger.db_path())
+    ledger.init(conn)
+    try:
+        goal = run.start_goal(REPO, conn, args.target, args.goal,
+                              role=args.role, check=args.check)
+    except (run.RunError, grade.GradeError, kanban.KanbanError, AgentError) as e:
+        print(f"cannot start goal: {e} {getattr(e, 'stderr', '')}".rstrip(), file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    print(f"goal {goal['id']}: task {goal['current_task']} on {goal['branch']}"
+          f" in {goal['worktree']}; check: {goal['check_cmd']}")
+    return 0
+
+
+def _run(args: argparse.Namespace) -> int:
+    from team import run
+
+    conn = ledger.connect(ledger.db_path())
+    ledger.init(conn)
+    try:
+        run.run_loop(REPO, conn, once=args.once, interval=args.interval)
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        conn.close()
     return 0
 
 
@@ -265,6 +301,18 @@ def main(argv: list[str] | None = None) -> int:
     dec_dis = dec_sub.add_parser("dismiss", help="dismiss a decision")
     dec_dis.add_argument("id", type=int, help="decision id")
     dec_dis.set_defaults(func=_decide_dismiss)
+
+    goal_parser = commands.add_parser("goal", help="hand Team a goal on a target (docs/RUN.md)")
+    goal_parser.add_argument("target")
+    goal_parser.add_argument("goal")
+    goal_parser.add_argument("--role", default="implement")
+    goal_parser.add_argument("--check", help="set the target's check first")
+    goal_parser.set_defaults(func=_goal)
+
+    run_parser = commands.add_parser("run", help="dispatch, grade, land, escalate: the autonomous loop")
+    run_parser.add_argument("--once", action="store_true", help="one tick, then exit")
+    run_parser.add_argument("--interval", type=int, help="seconds between ticks (default: settings)")
+    run_parser.set_defaults(func=_run)
 
     args = parser.parse_args(argv)
     return args.func(args)

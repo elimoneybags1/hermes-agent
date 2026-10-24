@@ -32,7 +32,7 @@ def create(
     recommendation: str,
     goal_id: int | None = None,
     source: str = "overseer",
-    part_id: int | None = None,
+    task_id: str | None = None,
 ) -> int:
     """Create a new decision and return its id."""
     with conn:
@@ -40,7 +40,7 @@ def create(
             """
             INSERT INTO decisions (
                 target, created, question, context, options, recommendation,
-                goal_id, source, status, part_id
+                goal_id, source, status, task_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
             """,
             (
@@ -52,7 +52,7 @@ def create(
                 recommendation,
                 goal_id,
                 source,
-                part_id,
+                task_id,
             ),
         )
     return cur.lastrowid

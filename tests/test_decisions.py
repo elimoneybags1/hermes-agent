@@ -29,7 +29,7 @@ def test_create_decision(conn):
         recommendation="yes",
         goal_id=5,
         source="overseer",
-        part_id=3,
+        task_id="t_3",
     )
     assert d_id == 1
 
@@ -42,15 +42,15 @@ def test_create_decision(conn):
     assert row["goal_id"] == 5
     assert row["source"] == "overseer"
     assert row["status"] == "open"
-    assert row["part_id"] == 3
+    assert row["task_id"] == "t_3"
     assert row["answer"] is None
     assert row["answered_at"] is None
 
 
 def test_list_open_decisions(conn):
     """List open decisions, optionally filtered by target."""
-    decisions.create(conn, "team", "Q1", "C", ["a", "b"], "a", goal_id=1, part_id=1)
-    decisions.create(conn, "brain", "Q2", "C", ["a", "b"], "a", part_id=2)
+    decisions.create(conn, "team", "Q1", "C", ["a", "b"], "a", goal_id=1, task_id="t_1")
+    decisions.create(conn, "brain", "Q2", "C", ["a", "b"], "a", task_id="t_2")
     decisions.create(conn, "team", "Q3", "C", ["a", "b"], "a")
 
     all_open = decisions.list_open(conn)
@@ -179,7 +179,7 @@ def test_paused_goals(conn):
 def test_init_migrates_old_decisions_table(monkeypatch, tmp_path):
     """init() adds missing columns to an old decisions table."""
     c = ledger.connect(tmp_path / "old.db")
-    # Create old schema without part_id and source
+    # Create old schema without task_id and source
     c.executescript("""
         CREATE TABLE jobs (id INTEGER PRIMARY KEY, target TEXT, target_commit TEXT,
             role TEXT, role_version TEXT, attempt INTEGER, started TEXT, ended TEXT,
@@ -198,21 +198,21 @@ def test_init_migrates_old_decisions_table(monkeypatch, tmp_path):
     ledger.init(c)  # idempotent
 
     cols = {r["name"] for r in c.execute("PRAGMA table_info(decisions)")}
-    assert "part_id" in cols
+    assert "task_id" in cols
     assert "source" in cols
 
     # Existing row preserved with default source
     row = c.execute("SELECT * FROM decisions WHERE id = 1").fetchone()
     assert row["target"] == "team"
     assert row["source"] == "overseer"
-    assert row["part_id"] is None
+    assert row["task_id"] is None
     c.close()
 
 
 def test_create_with_defaults(conn):
-    """create() uses default source='overseer' and no goal_id/part_id."""
+    """create() uses default source='overseer' and no goal_id/task_id."""
     d_id = decisions.create(conn, "team", "Q", "C", ["a", "b"], "a")
     row = conn.execute("SELECT * FROM decisions WHERE id = ?", (d_id,)).fetchone()
     assert row["source"] == "overseer"
     assert row["goal_id"] is None
-    assert row["part_id"] is None
+    assert row["task_id"] is None

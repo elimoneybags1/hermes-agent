@@ -216,7 +216,7 @@ def test_decide_list_shows_decisions(state, capsys):
     cli.main(["ledger", "init"])
     conn = ledger.connect()
     from team import decisions
-    d1 = decisions.create(conn, "team", "Use Rust?", "Perf", ["yes", "no"], "yes", goal_id=1, part_id=5, source="run")
+    d1 = decisions.create(conn, "team", "Use Rust?", "Perf", ["yes", "no"], "yes", goal_id=1, task_id=5, source="run")
     d2 = decisions.create(conn, "brain", "Use Go?", "Concurrency", ["yes", "no"], "no", source="overseer")
     conn.close()
 
@@ -228,7 +228,7 @@ def test_decide_list_shows_decisions(state, capsys):
     assert "recommendation: yes" in out
     assert "recommendation: no" in out
     assert "goal_id: 1" in out
-    assert "part_id: 5" in out
+    assert "task_id: 5" in out
     assert "source: run" in out
     assert "source: overseer" in out
 

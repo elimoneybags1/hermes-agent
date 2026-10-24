@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     ended         TEXT,
     outcome       TEXT CHECK (outcome IN ('pass', 'fail', 'error', 'timeout')),
     grader        TEXT,
-    grader_detail TEXT
+    grader_detail TEXT,
+    task_ref      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS calls (
@@ -56,11 +57,30 @@ CREATE TABLE IF NOT EXISTS decisions (
     status          TEXT NOT NULL CHECK (status IN ('open', 'answered', 'dismissed')),
     answer          TEXT,
     answered_at     TEXT,
-    part_id         INTEGER
+    task_id         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS calls_job_id ON calls(job_id);
 CREATE INDEX IF NOT EXISTS decisions_target_status ON decisions(target, status);
+
+CREATE TABLE IF NOT EXISTS goals (
+    id           INTEGER PRIMARY KEY,
+    target       TEXT NOT NULL,
+    goal         TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    branch       TEXT NOT NULL,
+    worktree     TEXT NOT NULL,
+    check_cmd    TEXT NOT NULL,
+    attempt      INTEGER NOT NULL DEFAULT 1,
+    current_task TEXT,
+    job_id       INTEGER REFERENCES jobs(id),
+    created      TEXT NOT NULL,
+    finished     TEXT,
+    outcome      TEXT CHECK (outcome IN ('pass', 'fail', 'error', 'timeout')),
+    detail       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS goals_target ON goals(target);
 """
 
 
@@ -89,22 +109,24 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
 
 
 def init(conn: sqlite3.Connection) -> None:
-    """Create the jobs and calls tables. Safe to run on an existing ledger.
+    """Create the jobs, calls and goals tables. Safe to run on an existing ledger.
 
-    A ledger made before calls.ts existed gets the column added in place;
-    its existing calls keep a NULL ts, since when they ran was never recorded.
-    Same for decisions table columns.
+    A ledger made before calls.ts, jobs.task_ref or a decisions column existed gets the column
+    added in place; existing rows keep NULL there, since it was never recorded.
     """
     with conn:
         conn.executescript(SCHEMA)
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(calls)")}
         if "ts" not in cols:
             conn.execute("ALTER TABLE calls ADD COLUMN ts TEXT")
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+        if "task_ref" not in cols:
+            conn.execute("ALTER TABLE jobs ADD COLUMN task_ref TEXT")
 
         # Ensure decisions table has all columns (migrate old ledgers)
         dec_cols = {r["name"] for r in conn.execute("PRAGMA table_info(decisions)")}
-        if "part_id" not in dec_cols:
-            conn.execute("ALTER TABLE decisions ADD COLUMN part_id INTEGER")
+        if "task_id" not in dec_cols:
+            conn.execute("ALTER TABLE decisions ADD COLUMN task_id TEXT")
         if "source" not in dec_cols:
             conn.execute("ALTER TABLE decisions ADD COLUMN source TEXT NOT NULL DEFAULT 'overseer'")
 
@@ -116,13 +138,17 @@ def start_job(
     role: str,
     role_version: str,
     attempt: int = 1,
+    task_ref: str | None = None,
 ) -> int:
-    """Record that a job has started and return its id."""
+    """Record that a job has started and return its id.
+
+    `task_ref` is the kanban task id, or `claude:<session>` for a Claude run.
+    """
     with conn:
         cur = conn.execute(
-            "INSERT INTO jobs (target, target_commit, role, role_version, attempt, started)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (target, target_commit, role, role_version, attempt, _now()),
+            "INSERT INTO jobs (target, target_commit, role, role_version, attempt,"
+            " started, task_ref) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (target, target_commit, role, role_version, attempt, _now(), task_ref),
         )
     return cur.lastrowid
 
@@ -193,3 +219,83 @@ def list_jobs(
         sql += " LIMIT ?"
         args.append(limit)
     return [dict(row) for row in conn.execute(sql, args)]
+
+
+def set_task_ref(conn: sqlite3.Connection, job_id: int, task_ref: str) -> None:
+    """Set a job's task_ref, once it is known (a Claude session id)."""
+    with conn:
+        conn.execute("UPDATE jobs SET task_ref = ? WHERE id = ?", (task_ref, job_id))
+
+
+def get_job(conn: sqlite3.Connection, job_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return dict(row) if row else None
+
+
+GOAL_FIELDS = ("attempt", "current_task", "job_id")
+
+
+def create_goal(
+    conn: sqlite3.Connection,
+    target: str,
+    goal: str,
+    role: str,
+    branch: str,
+    worktree: str,
+    check: str,
+) -> int:
+    """Start tracking a goal `team run` works on; returns its id."""
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO goals (target, goal, role, branch, worktree, check_cmd, created)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (target, goal, role, branch, worktree, check, _now()),
+        )
+    return cur.lastrowid
+
+
+def update_goal(conn: sqlite3.Connection, goal_id: int, **fields) -> None:
+    """Change a goal's attempt, current_task or job_id."""
+    bad = set(fields) - set(GOAL_FIELDS)
+    if bad:
+        raise ValueError(f"cannot update goal fields {sorted(bad)}")
+    if not fields:
+        return
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    with conn:
+        conn.execute(f"UPDATE goals SET {sets} WHERE id = ?", (*fields.values(), goal_id))
+
+
+def finish_goal(
+    conn: sqlite3.Connection,
+    goal_id: int,
+    outcome: str,
+    detail: str | None = None,
+) -> None:
+    """Mark a goal finished. A goal can only be finished once."""
+    if outcome not in OUTCOMES:
+        raise ValueError(f"outcome must be one of {OUTCOMES}, got {outcome!r}")
+    with conn:
+        cur = conn.execute(
+            "UPDATE goals SET finished = ?, outcome = ?, detail = ?"
+            " WHERE id = ? AND finished IS NULL",
+            (_now(), outcome, detail, goal_id),
+        )
+    if cur.rowcount != 1:
+        raise LookupError(f"no unfinished goal with id {goal_id}")
+
+
+def active_goals(conn: sqlite3.Connection, target: str | None = None) -> list[dict]:
+    """Goals not yet finished, oldest first."""
+    sql = "SELECT * FROM goals WHERE finished IS NULL"
+    args: list = []
+    if target is not None:
+        sql += " AND target = ?"
+        args.append(target)
+    sql += " ORDER BY id"
+    return [dict(row) for row in conn.execute(sql, args)]
+
+
+def get_goal(conn: sqlite3.Connection, goal_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+    return dict(row) if row else None
