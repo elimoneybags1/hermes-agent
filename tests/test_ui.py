@@ -190,7 +190,7 @@ class TestReads:
     def test_state_has_snapshot_and_pipeline(self, server):
         status, data = request(server, "GET", "/api/state")
         assert status == 200
-        assert data["pipeline"] == ["boss", "triage", "spec", "implement", "review"]
+        assert data["pipeline"] == ["boss", "spec", "test", "implement", "review"]
         assert data["base"] == {"jobs": 1, "passed": 1, "pass_rate": 1.0}
         implement = next(r for r in data["roles"] if r["name"] == "implement")
         assert [w["target"] for w in implement["working_on"]] == ["team"]
