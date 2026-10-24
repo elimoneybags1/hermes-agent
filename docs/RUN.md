@@ -131,3 +131,35 @@ Learned from running kanban for real (2026-10-24), also part of the contract:
   check runs against current main. A conflict is a failed attempt listing the
   conflicted files; the merge is aborted.
 - `dispatch` passes `--max <loop.max_new_per_tick>`; spawning stays kanban's.
+
+## Round 3: one kanban task per goal, Team as the reviewer
+
+Why: `docs/KANBAN.md`, "Use kanban first". Kanban v0.21 facts this relies on
+(checked in `hermes_cli/kanban_db.py`): a worker calls `kanban_request_review`
+to move its task to `review`; with `review_dispatch: false` nothing else
+touches it there; `hermes kanban reopen-review <id>` sends it back to
+`ready` under the implementer that requested review, and the worker's next run
+sees the task's comments in its context; `complete <id>` finishes it.
+
+- The brief tells the worker to finish with `kanban_request_review` (summary:
+  what it did and the check's last line), never `kanban_complete`.
+- Each tick, for each goal: task in `review` → grade (as now). Pass:
+  `kanban.complete`, land. Fail: `kanban.comment` with the failure tail, then
+  `kanban.reopen_review`; attempt + 1, a new ledger job with the same
+  `task_ref`. No new kanban task per attempt.
+- A task the worker marked `done` anyway is graded the same way; on a fail it
+  cannot be reopened, so fall back to a new task on the same branch (today's
+  path).
+- Escalation counts attempts as now: after the role's `after_failures`, the
+  Claude attempt runs in the worktree; its result is commented on the task;
+  pass → `complete` and land; fail → `block --kind needs_input`.
+- `team/kanban.py` gains `reopen_review(board, task_id)` and
+  `complete(board, task_id, result)`.
+- `kanban.session_for_task(task_id, profile=...)`: sessions live in the profile
+  that ran the task (the task's `assignee`), not always `team-worker`.
+- Tasks get the role's skills (`--skill`, from `roles/<role>/skills/` names
+  when that role's profile has them) and the role's free model (`--model`,
+  checked with `is_free_model`, refuse otherwise).
+- **One line per tick on stdout**, so the `run` tab shows what Team does:
+  `HH:MM:SS <target>: dispatched N; goal 3 review→grading; goal 3 pass, landed abc1234`
+  or `HH:MM:SS idle (2 goals running)`. Errors stay on stderr.

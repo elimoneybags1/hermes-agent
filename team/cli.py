@@ -1,5 +1,5 @@
 """Command line: `team ledger init|list`, `team attach`, `team targets`, `team roles`, `team dash`, `team ui`, `team board`, `team free-check`,
-`team goal`, `team run`."""
+`team goal`, `team run`, `team decide`."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 
 from team import ledger, targets, roles, dash
 from team.free import check_command
+from team import decisions
 
 LIST_COLUMNS = ("id", "target", "role", "attempt", "started", "ended", "outcome", "grader")
 TARGET_COLUMNS = ("name", "path", "commit", "attached_at")
@@ -137,6 +138,72 @@ def _free_check(args: argparse.Namespace) -> int:
     return 2
 
 
+def _decide_list(args: argparse.Namespace) -> int:
+    path = ledger.db_path()
+    if not path.exists():
+        print(f"no ledger at {path}; run `team ledger init`", file=sys.stderr)
+        return 1
+    conn = ledger.connect(path)
+    rows = decisions.list_open(conn, target=args.target)
+    conn.close()
+    if not rows:
+        print("no open decisions")
+        return 0
+    for r in rows:
+        opts = ", ".join(json.loads(r["options"]))
+        print(f"[{r['id']}] {r['target']} — {r['question']}")
+        print(f"    options: {opts}")
+        print(f"    recommendation: {r['recommendation']}")
+        if r["goal_id"] is not None:
+            print(f"    goal_id: {r['goal_id']}")
+        if r["task_id"] is not None:
+            print(f"    task_id: {r['task_id']}")
+        print(f"    source: {r['source']}")
+    return 0
+
+
+def _decide_answer(args: argparse.Namespace) -> int:
+    path = ledger.db_path()
+    if not path.exists():
+        print(f"no ledger at {path}; run `team ledger init`", file=sys.stderr)
+        return 1
+    conn = ledger.connect(path)
+    try:
+        decisions.answer(conn, args.id, args.answer)
+    except LookupError as e:
+        print(f"decision not found: {e}", file=sys.stderr)
+        conn.close()
+        return 1
+    except ValueError as e:
+        print(f"cannot answer: {e}", file=sys.stderr)
+        conn.close()
+        return 1
+    conn.close()
+    print(f"answered decision {args.id}")
+    return 0
+
+
+def _decide_dismiss(args: argparse.Namespace) -> int:
+    path = ledger.db_path()
+    if not path.exists():
+        print(f"no ledger at {path}; run `team ledger init`", file=sys.stderr)
+        return 1
+    conn = ledger.connect(path)
+    try:
+        decisions.dismiss(conn, args.id)
+    except LookupError as e:
+        print(f"decision not found: {e}", file=sys.stderr)
+        conn.close()
+        return 1
+    except ValueError as e:
+        print(f"cannot dismiss: {e}", file=sys.stderr)
+        conn.close()
+        return 1
+    conn.close()
+    print(f"dismissed decision {args.id}")
+    return 0
+
+
 def _goal(args: argparse.Namespace) -> int:
     from team import grade, kanban, run
     from team.agents import AgentError
@@ -249,6 +316,19 @@ def main(argv: list[str] | None = None) -> int:
     board_parser.add_argument("--port", type=int, default=9129)
     board_parser.set_defaults(func=_board)
     commands.add_parser("free-check", help="check hermes command for free model compliance").set_defaults(func=_free_check)
+
+    dec = commands.add_parser("decide", help="list, answer, or dismiss open decisions")
+    dec_sub = dec.add_subparsers(dest="action", required=True)
+    dec_list = dec_sub.add_parser("list", help="list open decisions")
+    dec_list.add_argument("--target", help="filter by target name")
+    dec_list.set_defaults(func=_decide_list)
+    dec_ans = dec_sub.add_parser("answer", help="answer a decision")
+    dec_ans.add_argument("id", type=int, help="decision id")
+    dec_ans.add_argument("answer", help="answer text")
+    dec_ans.set_defaults(func=_decide_answer)
+    dec_dis = dec_sub.add_parser("dismiss", help="dismiss a decision")
+    dec_dis.add_argument("id", type=int, help="decision id")
+    dec_dis.set_defaults(func=_decide_dismiss)
 
     goal_parser = commands.add_parser("goal", help="hand Team a goal on a target (docs/RUN.md)")
     goal_parser.add_argument("target")

@@ -78,7 +78,7 @@ def test_boss_argv_no_extra():
 def test_team_no_subcommand_execvp(monkeypatch, capsys):
     """Test that team with no subcommand calls os.execvp with the right argv and chdirs."""
     repo = Path("/fake/repo")
-    
+
     execvp_called = {}
     chdir_called = {}
 
@@ -93,7 +93,7 @@ def test_team_no_subcommand_execvp(monkeypatch, capsys):
     monkeypatch.setattr(os, "execvp", mock_execvp)
     monkeypatch.setattr(os, "chdir", mock_chdir)
     monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/claude")
-    
+
     # Mock the module's __file__ to control the repo path
     with patch("team.cli.__file__", "/fake/repo/team/cli.py"):
         with pytest.raises(SystemExit):
@@ -153,7 +153,7 @@ def test_team_help_exits_via_argparse(monkeypatch, capsys):
 
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["--help"])
-    
+
     assert excinfo.value.code == 0
     assert not execvp_called
 
@@ -172,7 +172,7 @@ def test_team_unknown_subcommand_exits_via_argparse(monkeypatch, capsys):
 
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["ledgr"])
-    
+
     assert excinfo.value.code == 2
     assert not execvp_called
 
@@ -270,3 +270,129 @@ def test_goals_filters_by_target(state, capsys):
     row = dict(zip(cli.GOALS_COLUMNS, lines[1].split("\t")))
     assert row["target"] == "team"
     assert row["goal"] == "Team goal"
+
+
+def test_decide_list_no_db(state, capsys):
+    """team decide list fails gracefully without ledger."""
+    assert cli.main(["decide", "list"]) == 1
+    assert "team ledger init" in capsys.readouterr().err
+
+
+def test_decide_list_empty(state, capsys):
+    """team decide list shows 'no open decisions' when empty."""
+    cli.main(["ledger", "init"])
+    assert cli.main(["decide", "list"]) == 0
+    assert "no open decisions" in capsys.readouterr().out
+
+
+def test_decide_list_shows_decisions(state, capsys):
+    """team decide list shows open decisions with details."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d1 = decisions.create(conn, "team", "Use Rust?", "Perf", ["yes", "no"], "yes", goal_id=1, task_id=5, source="run")
+    d2 = decisions.create(conn, "brain", "Use Go?", "Concurrency", ["yes", "no"], "no", source="overseer")
+    conn.close()
+
+    assert cli.main(["decide", "list"]) == 0
+    out = capsys.readouterr().out
+    # Newest first
+    assert out.index("Use Go?") < out.index("Use Rust?")
+    assert "options: yes, no" in out
+    assert "recommendation: yes" in out
+    assert "recommendation: no" in out
+    assert "goal_id: 1" in out
+    assert "task_id: 5" in out
+    assert "source: run" in out
+    assert "source: overseer" in out
+
+
+def test_decide_list_filter_target(state, capsys):
+    """team decide list --target filters by target."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    decisions.create(conn, "team", "Q1", "C", ["a", "b"], "a")
+    decisions.create(conn, "brain", "Q2", "C", ["a", "b"], "a")
+    conn.close()
+
+    assert cli.main(["decide", "list", "--target", "team"]) == 0
+    out = capsys.readouterr().out
+    assert "Q1" in out
+    assert "Q2" not in out
+
+
+def test_decide_answer(state, capsys):
+    """team decide answer answers a decision and updates DB and log."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d_id = decisions.create(conn, "team", "Use Rust?", "Perf", ["yes", "no"], "yes")
+    conn.close()
+
+    assert cli.main(["decide", "answer", str(d_id), "Yes, for the hot path."]) == 0
+    assert f"answered decision {d_id}" in capsys.readouterr().out
+
+    # Verify DB
+    conn = ledger.connect()
+    row = conn.execute("SELECT * FROM decisions WHERE id = ?", (d_id,)).fetchone()
+    assert row["status"] == "answered"
+    assert row["answer"] == "Yes, for the hot path."
+    conn.close()
+
+
+def test_decide_answer_nonexistent(state, capsys):
+    """team decide answer fails for nonexistent decision."""
+    cli.main(["ledger", "init"])
+    assert cli.main(["decide", "answer", "999", "answer"]) == 1
+    assert "decision not found" in capsys.readouterr().err
+
+
+def test_decide_answer_already_answered(state, capsys):
+    """team decide answer fails for already answered decision."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d_id = decisions.create(conn, "team", "Q", "C", ["a", "b"], "a")
+    decisions.answer(conn, d_id, "A")
+    conn.close()
+
+    assert cli.main(["decide", "answer", str(d_id), "B"]) == 1
+    assert "cannot answer" in capsys.readouterr().err
+
+
+def test_decide_dismiss(state, capsys):
+    """team decide dismiss dismisses a decision."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d_id = decisions.create(conn, "team", "Q", "C", ["a", "b"], "a")
+    conn.close()
+
+    assert cli.main(["decide", "dismiss", str(d_id)]) == 0
+    assert f"dismissed decision {d_id}" in capsys.readouterr().out
+
+    conn = ledger.connect()
+    row = conn.execute("SELECT * FROM decisions WHERE id = ?", (d_id,)).fetchone()
+    assert row["status"] == "dismissed"
+    conn.close()
+
+
+def test_decide_dismiss_nonexistent(state, capsys):
+    """team decide dismiss fails for nonexistent decision."""
+    cli.main(["ledger", "init"])
+    assert cli.main(["decide", "dismiss", "999"]) == 1
+    assert "decision not found" in capsys.readouterr().err
+
+
+def test_decide_dismiss_already_answered(state, capsys):
+    """team decide dismiss fails for already answered decision."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d_id = decisions.create(conn, "team", "Q", "C", ["a", "b"], "a")
+    decisions.answer(conn, d_id, "A")
+    conn.close()
+
+    assert cli.main(["decide", "dismiss", str(d_id)]) == 1
+    assert "cannot dismiss" in capsys.readouterr().err
