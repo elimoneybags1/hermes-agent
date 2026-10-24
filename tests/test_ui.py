@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import http.client
 import json
 import shutil
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from team import agents, cli, ledger, ui
+from team import agents, cli, ledger, ui, settings, targets
 
 REPO = Path(__file__).parent.parent
 
@@ -61,6 +62,49 @@ def index(tmp_path):
 
 @pytest.fixture
 def server(temp_repo, db, index):
+    srv = ui.make_server(temp_repo, db, port=0, index=index, poll_s=0.05, ping_s=0.2)
+    thread = threading.Thread(target=srv.serve_forever, args=(0.05,), daemon=True)
+    thread.start()
+    yield srv
+    srv.shutdown()
+    srv.server_close()
+    thread.join(timeout=5)
+
+
+@pytest.fixture
+def temp_team_state(tmp_path, monkeypatch):
+    """A temp TEAM_STATE directory with targets."""
+    state = tmp_path / "team_state"
+    state.mkdir()
+    # Create targets directory
+    targets_dir = state / "targets"
+    targets_dir.mkdir()
+    # Set TEAM_STATE for this test
+    monkeypatch.setenv("TEAM_STATE", str(state))
+    return state
+
+
+@pytest.fixture
+def temp_targets(temp_team_state):
+    """Create some test targets."""
+    targets_dir = temp_team_state / "targets"
+    # Target 1
+    t1 = targets_dir / "project1"
+    t1.mkdir()
+    (t1 / "target.json").write_text(
+        json.dumps({"name": "project1", "path": "/tmp/proj1", "check": "pytest", "enabled": True}, indent=2) + "\n"
+    )
+    # Target 2
+    t2 = targets_dir / "project2"
+    t2.mkdir()
+    (t2 / "target.json").write_text(
+        json.dumps({"name": "project2", "path": "/tmp/proj2", "check": "make test", "enabled": False}, indent=2) + "\n"
+    )
+    return temp_team_state
+
+
+@pytest.fixture
+def server_with_targets(temp_repo, db, index, temp_targets):
     srv = ui.make_server(temp_repo, db, port=0, index=index, poll_s=0.05, ping_s=0.2)
     thread = threading.Thread(target=srv.serve_forever, args=(0.05,), daemon=True)
     thread.start()
@@ -442,3 +486,124 @@ class TestCli:
         assert seen == {"port": 7341, "open_browser": True}
         assert cli.main(["ui", "--port", "9000", "--no-open"]) == 0
         assert seen == {"port": 9000, "open_browser": False}
+
+
+class TestSettings:
+    def test_get_settings(self, server_with_targets, temp_repo):
+        status, data = request(server_with_targets, "GET", "/api/settings")
+        assert status == 200
+        assert "settings" in data
+        assert "fields" in data
+        assert "targets" in data
+        assert "target_fields" in data
+        # Check settings has all FIELDS with defaults
+        for key in settings.FIELDS:
+            assert key in data["settings"]
+        # Check fields structure
+        for f in data["fields"]:
+            assert "key" in f
+            assert "type" in f
+            assert "default" in f
+            assert "help" in f
+        # Check targets list
+        assert len(data["targets"]) == 2
+        target_names = {t["name"] for t in data["targets"]}
+        assert target_names == {"project1", "project2"}
+        # Check target_fields structure
+        for f in data["target_fields"]:
+            assert "key" in f
+            assert "type" in f
+            assert "help" in f
+        assert {f["key"] for f in data["target_fields"]} == {"check", "enabled"}
+
+    def test_get_settings_no_targets(self, temp_repo, db, index, tmp_path, monkeypatch):
+        """Test settings when no targets are attached."""
+        empty_state = tmp_path / "empty_state"
+        empty_state.mkdir()
+        (empty_state / "targets").mkdir()
+        # Set TEAM_STATE to use our empty state dir
+        monkeypatch.setenv("TEAM_STATE", str(empty_state))
+        srv = ui.make_server(temp_repo, db, port=0, index=index, poll_s=0.05, ping_s=0.2)
+        thread = threading.Thread(target=srv.serve_forever, args=(0.05,), daemon=True)
+        thread.start()
+        try:
+            status, data = request(srv, "GET", "/api/settings")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+            thread.join(timeout=5)
+        assert status == 200
+        assert data["targets"] == []
+
+    def test_patch_setting_valid(self, server_with_targets, temp_repo):
+        # Change loop.interval_s
+        status, data = request(server_with_targets, "PATCH", "/api/settings", {"key": "loop.interval_s", "value": 120})
+        assert status == 200
+        assert "sha" in data
+        # Verify the change
+        status2, data2 = request(server_with_targets, "GET", "/api/settings")
+        assert status2 == 200
+        assert data2["settings"]["loop.interval_s"] == 120
+
+    def test_patch_setting_invalid_key(self, server_with_targets, temp_repo):
+        before = _git(temp_repo, "rev-parse", "HEAD")
+        status, data = request(server_with_targets, "PATCH", "/api/settings", {"key": "unknown.setting", "value": 1})
+        assert status == 400
+        assert "unknown setting" in data["error"]
+        assert _git(temp_repo, "rev-parse", "HEAD") == before
+
+    def test_patch_setting_bad_value_type(self, server_with_targets, temp_repo):
+        before = _git(temp_repo, "rev-parse", "HEAD")
+        status, data = request(server_with_targets, "PATCH", "/api/settings", {"key": "loop.interval_s", "value": "not a number"})
+        assert status == 400
+        assert "whole number" in data["error"] or "integer" in data["error"]
+        assert _git(temp_repo, "rev-parse", "HEAD") == before
+
+    def test_patch_setting_bool_value(self, server_with_targets, temp_repo):
+        status, data = request(server_with_targets, "PATCH", "/api/settings", {"key": "escalation.claude", "value": False})
+        assert status == 200
+        status2, data2 = request(server_with_targets, "GET", "/api/settings")
+        assert data2["settings"]["escalation.claude"] is False
+
+    def test_patch_setting_string_value(self, server_with_targets, temp_repo):
+        status, data = request(server_with_targets, "PATCH", "/api/settings", {"key": "grading.default_check", "value": "make test"})
+        assert status == 200
+        status2, data2 = request(server_with_targets, "GET", "/api/settings")
+        assert data2["settings"]["grading.default_check"] == "make test"
+
+    def test_patch_target_valid(self, server_with_targets, temp_repo):
+        # Change project1's check
+        status, data = request(server_with_targets, "PATCH", "/api/targets/project1", {"key": "check", "value": "pytest -x"})
+        assert status == 200
+        assert data["check"] == "pytest -x"
+        assert data["name"] == "project1"
+        # Verify persisted
+        status2, data2 = request(server_with_targets, "GET", "/api/settings")
+        project1 = next(t for t in data2["targets"] if t["name"] == "project1")
+        assert project1["check"] == "pytest -x"
+
+    def test_patch_target_enabled_toggle(self, server_with_targets, temp_repo):
+        status, data = request(server_with_targets, "PATCH", "/api/targets/project2", {"key": "enabled", "value": True})
+        assert status == 200
+        assert data["enabled"] is True
+
+    def test_patch_target_unknown(self, server_with_targets):
+        status, data = request(server_with_targets, "PATCH", "/api/targets/unknown", {"key": "check", "value": "x"})
+        assert status == 400
+        assert "unknown target" in data["error"]
+
+    def test_patch_target_bad_key(self, server_with_targets):
+        status, data = request(server_with_targets, "PATCH", "/api/targets/project1", {"key": "unknown", "value": "x"})
+        assert status == 400
+        assert "unknown target setting" in data["error"]
+
+    def test_patch_target_bad_value_type(self, server_with_targets):
+        status, data = request(server_with_targets, "PATCH", "/api/targets/project1", {"key": "enabled", "value": "not bool"})
+        assert status == 400
+        assert "true or false" in data["error"]
+
+    def test_patch_target_empty_check_clears(self, server_with_targets):
+        # Empty check should clear to None (use default)
+        status, data = request(server_with_targets, "PATCH", "/api/targets/project1", {"key": "check", "value": ""})
+        assert status == 200
+        assert data["check"] is None

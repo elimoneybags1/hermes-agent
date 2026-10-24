@@ -608,6 +608,39 @@ class TestFingerprint:
         fp2 = agents.fingerprint(temp_repo, temp_ledger)
         assert fp1 != fp2
 
+    def test_fingerprint_changes_after_orchestration_write(self, temp_repo, temp_ledger, tmp_path):
+        fp1 = agents.fingerprint(temp_repo, temp_ledger)
+        # Create orchestration.toml
+        (temp_repo / "orchestration.toml").write_text("loop.interval_s = 30\n")
+        # Stage and commit
+        subprocess.run(["git", "-C", str(temp_repo), "add", "orchestration.toml"], check=True)
+        subprocess.run(["git", "-C", str(temp_repo), "commit", "-m", "add orchestration"], check=True, capture_output=True)
+        fp2 = agents.fingerprint(temp_repo, temp_ledger)
+        assert fp1 != fp2
+
+    def test_fingerprint_changes_after_target_write(self, temp_repo, temp_ledger, tmp_path):
+        """Fingerprint changes when target.json is modified."""
+        from team import targets
+        # First create a target
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        # Need to set TEAM_STATE env var for targets module to use our temp dir
+        import os
+        old_state = os.environ.get("TEAM_STATE")
+        os.environ["TEAM_STATE"] = str(state_dir)
+        try:
+            t = targets.attach(temp_repo, "test-target")
+            fp1 = agents.fingerprint(temp_repo, temp_ledger)
+            # Modify target settings
+            targets._write({**t, "check": "pytest -x"})
+            fp2 = agents.fingerprint(temp_repo, temp_ledger)
+            assert fp1 != fp2
+        finally:
+            if old_state:
+                os.environ["TEAM_STATE"] = old_state
+            else:
+                os.environ.pop("TEAM_STATE", None)
+
 
 class TestDetailBossSpecific:
     def test_detail_boss_has_boss_md_path(self, temp_repo, temp_ledger):
