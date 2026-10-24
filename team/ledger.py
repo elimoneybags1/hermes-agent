@@ -43,7 +43,24 @@ CREATE TABLE IF NOT EXISTS calls (
     ts          TEXT
 );
 
+CREATE TABLE IF NOT EXISTS decisions (
+    id              INTEGER PRIMARY KEY,
+    target          TEXT NOT NULL,
+    created         TEXT NOT NULL,
+    question        TEXT NOT NULL,
+    context         TEXT NOT NULL,
+    options         TEXT NOT NULL,
+    recommendation  TEXT NOT NULL,
+    goal_id         INTEGER,
+    source          TEXT NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('open', 'answered', 'dismissed')),
+    answer          TEXT,
+    answered_at     TEXT,
+    part_id         INTEGER
+);
+
 CREATE INDEX IF NOT EXISTS calls_job_id ON calls(job_id);
+CREATE INDEX IF NOT EXISTS decisions_target_status ON decisions(target, status);
 """
 
 
@@ -76,12 +93,20 @@ def init(conn: sqlite3.Connection) -> None:
 
     A ledger made before calls.ts existed gets the column added in place;
     its existing calls keep a NULL ts, since when they ran was never recorded.
+    Same for decisions table columns.
     """
     with conn:
         conn.executescript(SCHEMA)
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(calls)")}
         if "ts" not in cols:
             conn.execute("ALTER TABLE calls ADD COLUMN ts TEXT")
+
+        # Ensure decisions table has all columns (migrate old ledgers)
+        dec_cols = {r["name"] for r in conn.execute("PRAGMA table_info(decisions)")}
+        if "part_id" not in dec_cols:
+            conn.execute("ALTER TABLE decisions ADD COLUMN part_id INTEGER")
+        if "source" not in dec_cols:
+            conn.execute("ALTER TABLE decisions ADD COLUMN source TEXT NOT NULL DEFAULT 'overseer'")
 
 
 def start_job(

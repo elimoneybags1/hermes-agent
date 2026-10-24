@@ -196,3 +196,129 @@ def test_existing_subcommand_still_works(state, capsys):
     result = cli.main(["ledger", "init"])
     assert result == 0
     assert (state / "team.db").exists()
+
+
+def test_decide_list_no_db(state, capsys):
+    """team decide list fails gracefully without ledger."""
+    assert cli.main(["decide", "list"]) == 1
+    assert "team ledger init" in capsys.readouterr().err
+
+
+def test_decide_list_empty(state, capsys):
+    """team decide list shows 'no open decisions' when empty."""
+    cli.main(["ledger", "init"])
+    assert cli.main(["decide", "list"]) == 0
+    assert "no open decisions" in capsys.readouterr().out
+
+
+def test_decide_list_shows_decisions(state, capsys):
+    """team decide list shows open decisions with details."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d1 = decisions.create(conn, "team", "Use Rust?", "Perf", ["yes", "no"], "yes", goal_id=1, part_id=5, source="run")
+    d2 = decisions.create(conn, "brain", "Use Go?", "Concurrency", ["yes", "no"], "no", source="overseer")
+    conn.close()
+
+    assert cli.main(["decide", "list"]) == 0
+    out = capsys.readouterr().out
+    # Newest first
+    assert out.index("Use Go?") < out.index("Use Rust?")
+    assert "options: yes, no" in out
+    assert "recommendation: yes" in out
+    assert "recommendation: no" in out
+    assert "goal_id: 1" in out
+    assert "part_id: 5" in out
+    assert "source: run" in out
+    assert "source: overseer" in out
+
+
+def test_decide_list_filter_target(state, capsys):
+    """team decide list --target filters by target."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    decisions.create(conn, "team", "Q1", "C", ["a", "b"], "a")
+    decisions.create(conn, "brain", "Q2", "C", ["a", "b"], "a")
+    conn.close()
+
+    assert cli.main(["decide", "list", "--target", "team"]) == 0
+    out = capsys.readouterr().out
+    assert "Q1" in out
+    assert "Q2" not in out
+
+
+def test_decide_answer(state, capsys):
+    """team decide answer answers a decision and updates DB and log."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d_id = decisions.create(conn, "team", "Use Rust?", "Perf", ["yes", "no"], "yes")
+    conn.close()
+
+    assert cli.main(["decide", "answer", str(d_id), "Yes, for the hot path."]) == 0
+    assert f"answered decision {d_id}" in capsys.readouterr().out
+
+    # Verify DB
+    conn = ledger.connect()
+    row = conn.execute("SELECT * FROM decisions WHERE id = ?", (d_id,)).fetchone()
+    assert row["status"] == "answered"
+    assert row["answer"] == "Yes, for the hot path."
+    conn.close()
+
+
+def test_decide_answer_nonexistent(state, capsys):
+    """team decide answer fails for nonexistent decision."""
+    cli.main(["ledger", "init"])
+    assert cli.main(["decide", "answer", "999", "answer"]) == 1
+    assert "decision not found" in capsys.readouterr().err
+
+
+def test_decide_answer_already_answered(state, capsys):
+    """team decide answer fails for already answered decision."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d_id = decisions.create(conn, "team", "Q", "C", ["a", "b"], "a")
+    decisions.answer(conn, d_id, "A")
+    conn.close()
+
+    assert cli.main(["decide", "answer", str(d_id), "B"]) == 1
+    assert "cannot answer" in capsys.readouterr().err
+
+
+def test_decide_dismiss(state, capsys):
+    """team decide dismiss dismisses a decision."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d_id = decisions.create(conn, "team", "Q", "C", ["a", "b"], "a")
+    conn.close()
+
+    assert cli.main(["decide", "dismiss", str(d_id)]) == 0
+    assert f"dismissed decision {d_id}" in capsys.readouterr().out
+
+    conn = ledger.connect()
+    row = conn.execute("SELECT * FROM decisions WHERE id = ?", (d_id,)).fetchone()
+    assert row["status"] == "dismissed"
+    conn.close()
+
+
+def test_decide_dismiss_nonexistent(state, capsys):
+    """team decide dismiss fails for nonexistent decision."""
+    cli.main(["ledger", "init"])
+    assert cli.main(["decide", "dismiss", "999"]) == 1
+    assert "decision not found" in capsys.readouterr().err
+
+
+def test_decide_dismiss_already_answered(state, capsys):
+    """team decide dismiss fails for already answered decision."""
+    cli.main(["ledger", "init"])
+    conn = ledger.connect()
+    from team import decisions
+    d_id = decisions.create(conn, "team", "Q", "C", ["a", "b"], "a")
+    decisions.answer(conn, d_id, "A")
+    conn.close()
+
+    assert cli.main(["decide", "dismiss", str(d_id)]) == 1
+    assert "cannot dismiss" in capsys.readouterr().err
