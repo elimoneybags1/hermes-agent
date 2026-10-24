@@ -113,9 +113,11 @@ def test_create_task_with_optional_args(monkeypatch, tmp_path):
     assert "--branch" in argv
     assert "team/test-branch" in argv
     assert "--max-runtime" in argv
-    assert "3600" in argv
-    assert "--skills" in argv
-    assert "skill1,skill2" in argv
+    assert "3600s" in argv
+    # skills are now repeated --skill flags
+    assert argv.count("--skill") == 2
+    assert "skill1" in argv
+    assert "skill2" in argv
     assert captured_cmd["env"]["HERMES_KANBAN_HOME"] == str(kanban_home)
 
 
@@ -327,10 +329,11 @@ def test_session_for_task_found(tmp_path):
     kanban_home = state_dir / "kanban"
     kanban_home.mkdir(parents=True)
 
-    sessions_list = json.dumps([
-        {"id": "sess_1", "title": "work kanban task t_abc1234 some task"},
-        {"id": "sess_2", "title": "other session"},
-    ])
+    # Real text table output from `hermes sessions list`
+    sessions_list = """Title                        Workspace          Last Active   ID
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+work kanban task t_abc1234 some task   —                  just now      20261024_150051_7ce33b
+other session                                    —                  5m ago        20261024_144848_173531"""
 
     export_jsonl = json.dumps({
         "model": "nvidia/nemotron-3-ultra",
@@ -350,7 +353,7 @@ def test_session_for_task_found(tmp_path):
         if "sessions" in cmd and "export" in cmd:
             call_count["export"] += 1
             assert "--session-id" in cmd
-            assert "sess_1" in cmd
+            assert "20261024_150051_7ce33b" in cmd
             assert "--format" in cmd
             assert "jsonl" in cmd
             return FakeCompletedProcess(0, export_jsonl, "")
@@ -362,7 +365,7 @@ def test_session_for_task_found(tmp_path):
         result = kanban.session_for_task(task_id="t_abc123456789", runner=runner)
 
     assert result is not None
-    assert result["session_id"] == "sess_1"
+    assert result["session_id"] == "20261024_150051_7ce33b"
     assert result["model"] == "nvidia/nemotron-3-ultra"
     assert result["billing_provider"] == "openrouter"
     assert result["input_tokens"] == 100
@@ -379,9 +382,9 @@ def test_session_for_task_not_found(tmp_path):
     kanban_home = state_dir / "kanban"
     kanban_home.mkdir(parents=True)
 
-    sessions_list = json.dumps([
-        {"id": "sess_1", "title": "work kanban task t_other123 some task"},
-    ])
+    sessions_list = """Title                        Workspace          Last Active   ID
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+work kanban task t_other123 some task   —                  just now      20261024_150051_7ce33b"""
 
     def runner(cmd, **kwargs):
         if "sessions" in cmd and "list" in cmd:
@@ -419,9 +422,9 @@ def test_session_for_task_export_failure(tmp_path):
     kanban_home = state_dir / "kanban"
     kanban_home.mkdir(parents=True)
 
-    sessions_list = json.dumps([
-        {"id": "sess_1", "title": "work kanban task t_abc123 some task"},
-    ])
+    sessions_list = """Title                        Workspace          Last Active   ID
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+work kanban task t_abc123 some task   —                  just now      20261024_150051_7ce33b"""
 
     def runner(cmd, **kwargs):
         if "sessions" in cmd and "list" in cmd:
@@ -444,9 +447,9 @@ def test_session_for_task_invalid_json(tmp_path):
     kanban_home = state_dir / "kanban"
     kanban_home.mkdir(parents=True)
 
-    sessions_list = json.dumps([
-        {"id": "sess_1", "title": "work kanban task t_abc123 some task"},
-    ])
+    sessions_list = """Title                        Workspace          Last Active   ID
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+work kanban task t_abc123 some task   —                  just now      20261024_150051_7ce33b"""
 
     def runner(cmd, **kwargs):
         if "sessions" in cmd and "list" in cmd:
@@ -469,9 +472,9 @@ def test_session_for_task_uses_first_nine_chars(tmp_path):
     kanban_home = state_dir / "kanban"
     kanban_home.mkdir(parents=True)
 
-    sessions_list = json.dumps([
-        {"id": "sess_1", "title": "work kanban task t_abc1234 some task"},
-    ])
+    sessions_list = """Title                        Workspace          Last Active   ID
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+work kanban task t_abc1234 some task   —                  just now      20261024_150051_7ce33b"""
 
     export_jsonl = json.dumps({
         "model": "test-model",
@@ -496,7 +499,7 @@ def test_session_for_task_uses_first_nine_chars(tmp_path):
         result = kanban.session_for_task(task_id="t_abc12345extra", runner=runner)
 
     assert result is not None
-    assert result["session_id"] == "sess_1"
+    assert result["session_id"] == "20261024_150051_7ce33b"
 
 
 def test_env_inheritance(tmp_path):

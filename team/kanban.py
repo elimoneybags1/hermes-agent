@@ -94,9 +94,10 @@ def create_task(
     if branch:
         args.extend(["--branch", branch])
     if max_runtime is not None:
-        args.extend(["--max-runtime", str(max_runtime)])
+        args.extend(["--max-runtime", f"{max_runtime}s"])
     if skills:
-        args.extend(["--skills", ",".join(skills)])
+        for skill in skills:
+            args.extend(["--skill", skill])
 
     result = _run_kanban(args, runner=runner)
     return _parse_json_output(result, "create")
@@ -159,7 +160,9 @@ def comment(
         "team",
     ]
     result = _run_kanban(args, runner=runner)
-    _parse_json_output(result, "comment")
+    if result.returncode != 0:
+        stderr_tail = result.stderr[-500:] if result.stderr else "(no stderr)"
+        raise KanbanError(f"hermes kanban comment failed", stderr_tail)
 
 
 def block(
@@ -180,7 +183,9 @@ def block(
         kind,
     ]
     result = _run_kanban(args, runner=runner)
-    _parse_json_output(result, "block")
+    if result.returncode != 0:
+        stderr_tail = result.stderr[-500:] if result.stderr else "(no stderr)"
+        raise KanbanError(f"hermes kanban block failed", stderr_tail)
 
 
 def session_for_task(
@@ -195,8 +200,6 @@ def session_for_task(
         "team-worker",
         "sessions",
         "list",
-        "--format",
-        "json",
     ]
     env = os.environ.copy()
     env["HERMES_KANBAN_HOME"] = str(_kanban_home())
@@ -205,23 +208,29 @@ def session_for_task(
     if list_result.returncode != 0:
         return None
 
-    try:
-        sessions = json.loads(list_result.stdout.strip() or "[]")
-    except json.JSONDecodeError:
-        return None
-
+    # Parse the text table output
+    # Format:
+    # Title                        Workspace          Last Active   ID
+    # ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+    # work kanban task t_d0a676d   —                  just now      20261024_150051_7ce33b
     task_prefix = f"work kanban task {task_id[:9]}"
-    matching_session = None
-    for session in sessions:
-        if session.get("title", "").startswith(task_prefix):
-            matching_session = session
+    matching_session_id = None
+    
+    for line in list_result.stdout.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("Title") or line.startswith("─"):
+            continue
+        # The ID is the last column (after the last space)
+        parts = line.rsplit(" ", 1)
+        if len(parts) != 2:
+            continue
+        title_part, session_id = parts
+        title_part = title_part.strip()
+        if title_part.startswith(task_prefix):
+            matching_session_id = session_id
             break
 
-    if not matching_session:
-        return None
-
-    session_id = matching_session.get("id")
-    if not session_id:
+    if not matching_session_id:
         return None
 
     # Export the session to get detailed metrics
@@ -233,7 +242,7 @@ def session_for_task(
         "export",
         "/dev/stdout",
         "--session-id",
-        session_id,
+        matching_session_id,
         "--format",
         "jsonl",
     ]
@@ -243,21 +252,27 @@ def session_for_task(
         return None
 
     try:
-        # JSONL: each line is a JSON object, take the last one (summary)
+        # JSONL: each line is a JSON object, take the first one that parses
         lines = export_result.stdout.strip().split("\n")
-        if not lines:
-            return None
-        last_line = lines[-1]
-        data = json.loads(last_line)
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+                # This is the session record with model, billing_provider, etc.
+                return {
+                    "session_id": matching_session_id,
+                    "model": data.get("model"),
+                    "billing_provider": data.get("billing_provider"),
+                    "input_tokens": data.get("input_tokens"),
+                    "output_tokens": data.get("output_tokens"),
+                    "estimated_cost_usd": data.get("estimated_cost_usd"),
+                    "api_call_count": data.get("api_call_count"),
+                }
+            except json.JSONDecodeError:
+                continue
     except (json.JSONDecodeError, IndexError):
         return None
 
-    return {
-        "session_id": session_id,
-        "model": data.get("model"),
-        "billing_provider": data.get("billing_provider"),
-        "input_tokens": data.get("input_tokens"),
-        "output_tokens": data.get("output_tokens"),
-        "estimated_cost_usd": data.get("estimated_cost_usd"),
-        "api_call_count": data.get("api_call_count"),
-    }
+    return None
