@@ -89,18 +89,32 @@ name first), argv, parsing of a success and an error payload, timeout.
   `worktree:<path>` and `--branch team/<slug>`, the role's assignee
   (`team-<role>` profile when it exists, else `team-worker`), `--max-runtime`
   from the role budget; a ledger job (attempt 1, task_ref). The check
-  defaults to the target's `check` in target.json, else `uv run pytest -q`.
-- `team run [--once] [--interval 60]`, each tick for every attached target:
+  is `settings.check_for(root, target)`; `--check` sets the target's check
+  first (`settings.set_target`).
+- All loop numbers come from `settings.load(root)` (`team/settings.py`),
+  read fresh each tick so a change in `team ui` applies on the next tick:
+  interval, check timeout, whether to escalate to Claude and its limits,
+  whether to block after Claude fails. Targets with `enabled: false` are
+  skipped. Each target's board is named after the target; create it on first
+  use (`hermes -p team-worker kanban boards create <name>`, via team.kanban).
+- `team run [--once] [--interval N]`, each tick for every attached target:
   1. `kanban.dispatch(board)`.
   2. For each task Team created that kanban reports `done`: if the branch has
      no commits, fail with "no commits". Else `run_check`. Pass: `land`,
      `remove_worktree`, ledger pass. Fail: ledger fail with the output tail.
   3. After a fail, attempt + 1: while attempts < the role's
-     `escalation.after_failures` + 1, a new kanban task on the same worktree
-     and branch, body = goal + failure output. Then one attempt with
-     `claude_run.run` in the worktree, graded the same way. If that fails,
-     `kanban.block(... "needs_input")` and stop: Eli decides.
+     `escalation.after_failures` + 1, a new kanban task on the same branch,
+     body = goal + failure output. Kanban removes a clean worktree when its
+     task completes, so grade and retry from the branch: recreate the
+     worktree with `git worktree add <path> <branch>` when it is missing.
+     Then, if `escalation.claude`, one attempt with `claude_run.run` in the
+     worktree, graded the same way. If that fails and
+     `ask.block_after_claude_fails`, block the last kanban task with
+     "needs_input" and stop: Eli decides.
   4. Blocked or crashed tasks: ledger error with kanban's reason.
-  5. Each finished free attempt gets a `calls` row from `session_for_task`;
+  5. Team's own record of what it is tracking (goal, target, role, branch,
+     worktree, attempt, current kanban task, job id) lives in a new ledger
+     table `goals`, so `team run` can restart at any time and carry on.
+  6. Each finished free attempt gets a `calls` row from `session_for_task`;
      refuse to record it as free (ledger error, block) if the model is not
      free or the cost is above zero.

@@ -130,3 +130,35 @@ Light and dark from `prefers-color-scheme`. Usable at 1100 px wide and above.
 - After a save, show the short sha; on 400, show the error inline next to the
   field. Never lose text being edited when a live reload arrives: an editor
   with unsaved changes keeps its text and shows "changed elsewhere" instead.
+
+## Settings (Eli, 2026-10-24)
+
+How the orchestration behaves, editable from the page. The data and its rules
+are in `team/settings.py` (read it): `orchestration.toml` in the repo for the
+loop's rules (each change is a commit), `target.json` in the state dir for
+each target (`check`, `enabled`; no commit). Retries before escalation stay
+per role (`escalation.after_failures`, on the agent's Overview).
+
+API (same Host and Content-Type rules as the rest):
+
+| Method, path | Body | Returns |
+|---|---|---|
+| `GET /api/settings` | | `{"settings": settings.load(root), "fields": settings.fields(), "targets": [settings.target_settings(n) for each attached target], "target_fields": [{"key","type","help"} for TARGET_FIELDS]}` |
+| `PATCH /api/settings` | `{"key": "...", "value": ...}` | `{"sha": "..."}` (settings.set_value, under the write lock) |
+| `PATCH /api/targets/<name>` | `{"key": "...", "value": ...}` | the target's settings (settings.set_target) |
+
+`settings.fingerprint` is not needed: `orchestration.toml` lives in the repo
+root, so add it to `agents.fingerprint`'s inputs, and the targets directory
+(`$TEAM_STATE/targets/*/target.json`) too, so the page updates live.
+
+Page: a **Settings** button in the header opens a settings view in place of
+the agent pane (the agent list and pipeline stay).
+- *Loop rules*: one row per field, grouped by section (loop, grading,
+  escalation, ask), label from the key, the help text under it, edited in
+  place like Overview fields: a checkbox for bool, a number input for int,
+  text for str. Show the default when the value equals it.
+- *Projects*: one card per target: name, path, `check` (editable text; empty
+  means the default check, shown as placeholder), `enabled` (toggle).
+- *Retries*: a read-only line per role with `escalation.after_failures` and a
+  link that opens that agent's Overview.
+- Saves, errors and live highlights behave like the agent pane.
