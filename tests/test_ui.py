@@ -607,3 +607,142 @@ class TestSettings:
         status, data = request(server_with_targets, "PATCH", "/api/targets/project1", {"key": "check", "value": ""})
         assert status == 200
         assert data["check"] is None
+
+
+class TestDecisions:
+    def test_get_decisions_empty(self, server):
+        status, data = request(server, "GET", "/api/decisions")
+        assert status == 200
+        assert data == {"decisions": [], "reviews": {}}
+
+    def test_get_decisions_with_data(self, server, db):
+        from team import decisions
+        conn = ledger.connect(db)
+        try:
+            d1 = decisions.create(conn, "team", "Use Rust?", "Performance", ["yes", "no"], "yes", goal_id=1)
+            d2 = decisions.create(conn, "brain", "Use Go?", "Concurrency", ["yes", "no"], "no")
+        finally:
+            conn.close()
+
+        status, data = request(server, "GET", "/api/decisions")
+        assert status == 200
+        assert "decisions" in data
+        assert "reviews" in data
+        assert data["reviews"] == {}
+        assert len(data["decisions"]) == 2
+        # Decisions come newest first
+        assert data["decisions"][0]["id"] == d2
+        assert data["decisions"][1]["id"] == d1
+        # Check options are parsed
+        for d in data["decisions"]:
+            assert isinstance(d["options"], list)
+            assert d["options"] == ["yes", "no"]
+
+    def test_post_decision_answer(self, server, db, tmp_path, monkeypatch):
+        from team import decisions
+        # Create a temp TEAM_STATE for decisions.md
+        state = tmp_path / "team_state"
+        state.mkdir()
+        (state / "targets").mkdir()
+        monkeypatch.setenv("TEAM_STATE", str(state))
+
+        conn = ledger.connect(db)
+        try:
+            d_id = decisions.create(conn, "team", "Use Rust?", "Performance", ["yes", "no"], "yes")
+        finally:
+            conn.close()
+
+        status, data = request(server, "POST", f"/api/decisions/{d_id}", {"answer": "Yes, we will use Rust"})
+        assert status == 200
+        assert data == {"ok": True}
+
+        # Verify decision was answered
+        conn = ledger.connect(db)
+        try:
+            row = conn.execute("SELECT * FROM decisions WHERE id = ?", (d_id,)).fetchone()
+            assert row["status"] == "answered"
+            assert row["answer"] == "Yes, we will use Rust"
+            assert row["answered_at"] is not None
+        finally:
+            conn.close()
+
+        # Verify decisions.md was created
+        log_path = state / "targets" / "team" / "decisions.md"
+        assert log_path.exists()
+        content = log_path.read_text()
+        assert "Use Rust?" in content
+        assert "Yes, we will use Rust" in content
+
+    def test_post_decision_dismiss(self, server, db):
+        from team import decisions
+        conn = ledger.connect(db)
+        try:
+            d_id = decisions.create(conn, "team", "Use Rust?", "Performance", ["yes", "no"], "yes")
+        finally:
+            conn.close()
+
+        status, data = request(server, "POST", f"/api/decisions/{d_id}", {"dismiss": True})
+        assert status == 200
+        assert data == {"ok": True}
+
+        # Verify decision was dismissed
+        conn = ledger.connect(db)
+        try:
+            row = conn.execute("SELECT * FROM decisions WHERE id = ?", (d_id,)).fetchone()
+            assert row["status"] == "dismissed"
+            assert row["answered_at"] is not None
+        finally:
+            conn.close()
+
+    def test_post_decision_invalid_id(self, server):
+        status, data = request(server, "POST", "/api/decisions/not-a-number", {"answer": "x"})
+        assert status == 400
+        assert data == {"error": "invalid decision id"}
+
+    def test_post_decision_missing_body(self, server, db):
+        from team import decisions
+        conn = ledger.connect(db)
+        try:
+            d_id = decisions.create(conn, "team", "Use Rust?", "Performance", ["yes", "no"], "yes")
+        finally:
+            conn.close()
+
+        status, data = request(server, "POST", f"/api/decisions/{d_id}", {})
+        assert status == 400
+        assert "body must contain" in data["error"]
+
+    def test_post_decision_bad_answer_type(self, server, db):
+        from team import decisions
+        conn = ledger.connect(db)
+        try:
+            d_id = decisions.create(conn, "team", "Use Rust?", "Performance", ["yes", "no"], "yes")
+        finally:
+            conn.close()
+
+        status, data = request(server, "POST", f"/api/decisions/{d_id}", {"answer": 123})
+        assert status == 400
+        assert data == {"error": "answer must be a string"}
+
+    def test_host_check_on_decisions(self, server):
+        # GET
+        status, data = request(server, "GET", "/api/decisions", headers={"Host": "evil.example"})
+        assert status == 403
+        # POST
+        status, data = request(server, "POST", "/api/decisions/1", {"answer": "x"}, headers={"Host": "evil.example"})
+        assert status == 403
+
+    def test_content_type_check_on_decisions(self, server, db):
+        from team import decisions
+        conn = ledger.connect(db)
+        try:
+            d_id = decisions.create(conn, "team", "Use Rust?", "Performance", ["yes", "no"], "yes")
+        finally:
+            conn.close()
+
+        for ctype in [None, "text/plain", "application/x-www-form-urlencoded"]:
+            headers = {"Content-Type": ctype} if ctype else {}
+            status, data = request(
+                server, "POST", f"/api/decisions/{d_id}", {"answer": "x"}, headers, json_type=False
+            )
+            assert status == 415
+            assert "error" in data
