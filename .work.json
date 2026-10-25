@@ -12,7 +12,8 @@
         },
         {
           "label": "deck",
-          "cwd": ""
+          "cwd": "",
+          "command": "uv run team deck"
         },
         {
           "label": "shell",

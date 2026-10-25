@@ -14,6 +14,7 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
+from textual.events import Key
 from textual.screen import Screen
 from textual.widgets import (
     Button,
@@ -33,7 +34,6 @@ from textual.worker import Worker, get_current_worker
 from team import ledger
 from team.dash import snapshot
 from team.roles import load_roles
-
 
 REFRESH_INTERVAL = 2.0
 
@@ -123,10 +123,10 @@ class TeamDeck(App):
     """
 
     BINDINGS = [
-        Binding("1", "switch_tab('pipeline')", "Pipeline", show=True),
-        Binding("2", "switch_tab('inbox')", "Inbox", show=True),
-        Binding("3", "switch_tab('agents')", "Agents", show=True),
-        Binding("4", "switch_tab('log')", "Log", show=True),
+        Binding("f1", "switch_tab('pipeline')", "Pipeline", show=True),
+        Binding("f2", "switch_tab('inbox')", "Inbox", show=True),
+        Binding("f3", "switch_tab('agents')", "Agents", show=True),
+        Binding("f4", "switch_tab('log')", "Log", show=True),
         Binding("g", "new_goal", "New Goal", show=True),
         Binding("q", "quit", "Quit", show=True),
     ]
@@ -148,30 +148,16 @@ class TeamDeck(App):
                     yield Static("", id="header-stats")
                 with Vertical(id="header-right"):
                     yield Static("", id="header-decisions")
-        yield TabbedContent(
-            TabPane(
-                "Pipeline",
-                Static("", id="pipeline-strip"),
-                DataTable(id="pipeline-table"),
-                id="pipeline-tab",
-            ),
-            TabPane(
-                "Inbox",
-                ListView(id="inbox-list"),
-                id="inbox-tab",
-            ),
-            TabPane(
-                "Agents",
-                DataTable(id="agents-table"),
-                id="agents-tab",
-            ),
-            TabPane(
-                "Log",
-                DataTable(id="log-table"),
-                id="log-tab",
-            ),
-            id="tabs",
-        )
+        with TabbedContent(id="tabs"):
+            with TabPane("Pipeline", id="pipeline-tab"):
+                yield Static("", id="pipeline-strip")
+                yield DataTable(id="pipeline-table")
+            with TabPane("Inbox", id="inbox-tab"):
+                yield ListView(id="inbox-list")
+            with TabPane("Agents", id="agents-tab"):
+                yield DataTable(id="agents-table")
+            with TabPane("Log", id="log-tab"):
+                yield DataTable(id="log-table")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -216,7 +202,7 @@ class TeamDeck(App):
                     break
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-        self.call_from_thread(self._update_run_status, is_running)
+        self._update_run_status(is_running)
 
     def _update_run_status(self, is_running: bool) -> None:
         status_widget = self.query_one("#header-title", Static)
@@ -352,7 +338,10 @@ class TeamDeck(App):
                         f"  Context: {d['context']}\n"
                         f"  Options: {opt_str}"
                     )
-                    list_view.append(ListItem(Static(item_text, classes="decision-item")))
+                    item = ListItem(Static(item_text, classes="decision-item"))
+                    item.decision_id = d["id"]  # Store decision ID on the item
+                    item.options = options  # Store options for answering
+                    list_view.append(item)
             finally:
                 conn.close()
 
@@ -408,24 +397,422 @@ class TeamDeck(App):
         except Exception:
             return "?"
 
-    # Actions
-    def action_switch_tab(self, tab_id: str) -> None:
-        """Switch to a tab by id."""
+    # Key event handling
+    def on_key(self, event: Key) -> None:
+        """Handle key events for tab-specific actions."""
         tabs = self.query_one("#tabs", TabbedContent)
-        tabs.active = tab_id
+        active_tab = tabs.active
+        
+        if active_tab == "inbox-tab":
+            self._handle_inbox_keys(event)
+        elif active_tab == "pipeline-tab":
+            self._handle_pipeline_keys(event)
+        elif active_tab == "agents-tab":
+            self._handle_agents_keys(event)
 
-    def action_new_goal(self) -> None:
-        """Show new goal form."""
-        self.push_screen(NewGoalScreen(self._roles))
+    def _handle_inbox_keys(self, event: Key) -> None:
+        """Handle key presses in the Inbox tab."""
+        list_view = self.query_one("#inbox-list", ListView)
+        if not list_view.children:
+            return
+        
+        highlighted = list_view.highlighted_child
+        if highlighted is None:
+            return
+        
+        decision_id = getattr(highlighted, "decision_id", None)
+        if decision_id is None:
+            return
+        
+        options = getattr(highlighted, "options", [])
+        
+        # 1-9: answer with that option
+        if event.key.isdigit() and event.key != "0":
+            idx = int(event.key) - 1
+            if 0 <= idx < len(options):
+                self._answer_decision(decision_id, options[idx])
+                event.prevent_default()
+                return
+        
+        # a: free answer
+        if event.key == "a":
+            self._free_answer_decision(decision_id)
+            event.prevent_default()
+            return
+        
+        # d: dismiss with y/n confirm
+        if event.key == "d":
+            self._dismiss_decision(decision_id)
+            event.prevent_default()
+            return
 
-    def action_quit(self) -> None:
-        self._stop_refresh.set()
-        self.exit()
+    def _handle_pipeline_keys(self, event: Key) -> None:
+        """Handle key presses in the Pipeline tab."""
+        if event.key == "enter":
+            table = self.query_one("#pipeline-table", DataTable)
+            if table.cursor_row is not None:
+                row_key = table.get_row_at(table.cursor_row)
+                if row_key:
+                    goal_id = int(row_key[0])  # First column is ID
+                    self._show_goal_detail(goal_id)
+                    event.prevent_default()
+            return
+        
+        if event.key == "escape":
+            # Go back from detail view (if we're in one)
+            self._go_back_from_detail()
+            event.prevent_default()
+            return
 
-    def on_unmount(self) -> None:
-        self._stop_refresh.set()
-        if self._run_checker:
-            self._run_checker.cancel()
+    def _handle_agents_keys(self, event: Key) -> None:
+        """Handle key presses in the Agents tab."""
+        table = self.query_one("#agents-table", DataTable)
+        if table.cursor_row is None:
+            return
+        
+        row_key = table.get_row_at(table.cursor_row)
+        if not row_key:
+            return
+        
+        role_name = row_key[0]  # First column is Name
+        
+        # c: open chat in new herdr pane
+        if event.key == "c":
+            self._open_agent_chat(role_name)
+            event.prevent_default()
+            return
+        
+        # e: open team ui in browser at agent overview
+        if event.key == "e":
+            self._open_agent_ui(role_name)
+            event.prevent_default()
+            return
+
+    def _answer_decision(self, decision_id: int, answer: str) -> None:
+        """Answer a decision with a predefined option."""
+        conn = self._get_ledger_conn()
+        if conn is not None:
+            try:
+                from team import decisions
+                decisions.answer(conn, decision_id, answer)
+                self.notify(f"Answered decision {decision_id}: {answer}")
+                self._refresh_ui()
+            except Exception as e:
+                self.notify(f"Failed to answer: {e}", severity="error")
+            finally:
+                conn.close()
+
+    def _free_answer_decision(self, decision_id: int) -> None:
+        """Show input for free-form answer."""
+        self.push_screen(FreeAnswerScreen(decision_id))
+
+    def _dismiss_decision(self, decision_id: int) -> None:
+        """Dismiss a decision with confirmation."""
+        self.push_screen(DismissConfirmScreen(decision_id))
+
+    def _show_goal_detail(self, goal_id: int) -> None:
+        """Show detailed view of a goal."""
+        conn = self._get_ledger_conn()
+        if conn is None:
+            return
+        try:
+            goal = conn.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+            if goal:
+                self.push_screen(GoalDetailScreen(goal))
+        finally:
+            conn.close()
+
+    def _go_back_from_detail(self) -> None:
+        """Go back from a detail screen."""
+        # The screen stack handles this with pop_screen
+        pass
+
+    def _open_agent_chat(self, role_name: str) -> None:
+        """Open a chat with an agent in a new herdr pane."""
+        if role_name == "boss":
+            self.notify("Boss is the left pane", severity="warning")
+            return
+        
+        import subprocess
+        import json
+        import os
+        from pathlib import Path
+        
+        pane_id = os.environ.get("HERDR_PANE_ID")
+        if not pane_id:
+            self.notify("Not in a herdr pane", severity="error")
+            return
+        
+        try:
+            # Split pane to the right
+            result = subprocess.run(
+                [
+                    "herdr", "pane", "split", pane_id,
+                    "--direction", "right",
+                    "--cwd", str(Path.home()),
+                    "--no-focus"
+                ],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            # Parse the new pane ID from JSON output
+            output = result.stdout.strip()
+            new_pane_id = None
+            try:
+                data = json.loads(output)
+                if "result" in data and "pane" in data["result"]:
+                    new_pane_id = data["result"]["pane"]["pane_id"]
+                elif "pane_id" in data:
+                    new_pane_id = data["pane_id"]
+            except json.JSONDecodeError:
+                # Try root_pane format
+                new_pane_id = output
+            
+            if new_pane_id:
+                # Send hermes command to the new pane
+                subprocess.run(
+                    ["herdr", "pane", "send-text", new_pane_id, f"hermes -p team-{role_name} chat"],
+                    check=True
+                )
+                subprocess.run(
+                    ["herdr", "pane", "send-keys", new_pane_id, "enter"],
+                    check=True
+                )
+                self.notify(f"Opened chat for {role_name} in pane {new_pane_id}")
+            else:
+                self.notify("Failed to parse new pane ID", severity="error")
+        except subprocess.CalledProcessError as e:
+            self.notify(f"Failed to open chat: {e}", severity="error")
+        except Exception as e:
+            self.notify(f"Error: {e}", severity="error")
+
+    def _open_agent_ui(self, role_name: str) -> None:
+        """Open team UI in browser at agent overview."""
+        import subprocess
+        url = f"http://127.0.0.1:7341/#{role_name}/overview"
+        try:
+            subprocess.run(["open", url], check=True)
+            self.notify(f"Opened {role_name} in browser")
+        except subprocess.CalledProcessError:
+            self.notify("Failed to open browser", severity="error")
+
+
+class FreeAnswerScreen(Screen):
+    """Screen for free-form answer to a decision."""
+
+    CSS = """
+    FreeAnswerScreen {
+        align: center middle;
+    }
+    #answer-form {
+        width: 80;
+        height: auto;
+        padding: 2;
+        border: solid $primary;
+        background: $surface;
+    }
+    #answer-form Label {
+        margin-top: 1;
+    }
+    #answer-form Input {
+        margin-bottom: 1;
+    }
+    #answer-form #buttons {
+        margin-top: 1;
+        layout: horizontal;
+    }
+    #answer-form Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, decision_id: int) -> None:
+        super().__init__()
+        self.decision_id = decision_id
+
+    def compose(self) -> ComposeResult:
+        with Container(id="answer-form"):
+            yield Label("Free Answer")
+            yield Input(placeholder="Your answer", id="answer-input")
+            with Horizontal(id="buttons"):
+                yield Button("Submit", variant="primary", id="submit-btn")
+                yield Button("Cancel", variant="default", id="cancel-btn")
+
+    @on(Button.Pressed, "#submit-btn")
+    def submit_answer(self) -> None:
+        answer = self.query_one("#answer-input", Input).value
+        if not answer:
+            self.notify("Answer cannot be empty", severity="error")
+            return
+        
+        conn = self.app._get_ledger_conn()
+        if conn is not None:
+            try:
+                from team import decisions
+                decisions.answer(conn, self.decision_id, answer)
+                self.app.notify(f"Answered decision {self.decision_id}")
+                self.app._refresh_ui()
+            except Exception as e:
+                self.app.notify(f"Failed to answer: {e}", severity="error")
+            finally:
+                conn.close()
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#cancel-btn")
+    def cancel(self) -> None:
+        self.app.pop_screen()
+
+
+class DismissConfirmScreen(Screen):
+    """Screen for confirming decision dismissal."""
+
+    CSS = """
+    DismissConfirmScreen {
+        align: center middle;
+    }
+    #confirm-form {
+        width: 60;
+        height: auto;
+        padding: 2;
+        border: solid $primary;
+        background: $surface;
+    }
+    #confirm-form Label {
+        margin-bottom: 1;
+    }
+    #confirm-form #buttons {
+        margin-top: 1;
+        layout: horizontal;
+    }
+    #confirm-form Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, decision_id: int) -> None:
+        super().__init__()
+        self.decision_id = decision_id
+
+    def compose(self) -> ComposeResult:
+        with Container(id="confirm-form"):
+            yield Label(f"Dismiss decision {self.decision_id}? (y/n)")
+            with Horizontal(id="buttons"):
+                yield Button("Yes", variant="error", id="yes-btn")
+                yield Button("No", variant="default", id="no-btn")
+
+    @on(Button.Pressed, "#yes-btn")
+    def confirm_dismiss(self) -> None:
+        conn = self.app._get_ledger_conn()
+        if conn is not None:
+            try:
+                from team import decisions
+                decisions.dismiss(conn, self.decision_id)
+                self.app.notify(f"Dismissed decision {self.decision_id}")
+                self.app._refresh_ui()
+            except Exception as e:
+                self.app.notify(f"Failed to dismiss: {e}", severity="error")
+            finally:
+                conn.close()
+        self.app.pop_screen()
+
+    @on(Button.Pressed, "#no-btn")
+    def cancel(self) -> None:
+        self.app.pop_screen()
+
+
+class GoalDetailScreen(Screen):
+    """Screen showing detailed view of a goal."""
+
+    CSS = """
+    GoalDetailScreen {
+        align: center middle;
+    }
+    #detail-container {
+        width: 90%;
+        height: 90%;
+        padding: 2;
+        border: solid $primary;
+        background: $surface;
+        layout: vertical;
+    }
+    #detail-header {
+        margin-bottom: 1;
+        text-style: bold;
+    }
+    #detail-content {
+        height: 1fr;
+        overflow-y: auto;
+    }
+    #detail-footer {
+        margin-top: 1;
+        layout: horizontal;
+    }
+    #detail-footer Button {
+        margin-right: 1;
+    }
+    """
+
+    def __init__(self, goal: dict) -> None:
+        super().__init__()
+        self.goal = goal
+
+    def compose(self) -> ComposeResult:
+        with Container(id="detail-container"):
+            yield Label(f"Goal #{self.goal['id']} — {self.goal['target']} / {self.goal['role']}", id="detail-header")
+            with Container(id="detail-content"):
+                yield Static(self._build_detail_text())
+            with Horizontal(id="detail-footer"):
+                yield Button("Close", variant="primary", id="close-btn")
+
+    def _build_detail_text(self) -> str:
+        lines = [
+            f"Goal: {self.goal['goal']}",
+            f"Branch: {self.goal['branch']}",
+            f"Worktree: {self.goal['worktree']}",
+            f"Check: {self.goal['check_cmd']}",
+            f"Attempt: {self.goal['attempt']}",
+            f"Created: {self.goal['created']}",
+            "",
+            "=== Attempts (Jobs) ===",
+        ]
+        
+        # Fetch jobs for this goal
+        conn = self.app._get_ledger_conn()
+        if conn is not None:
+            try:
+                jobs = conn.execute(
+                    "SELECT * FROM jobs WHERE task_ref LIKE ? ORDER BY id",
+                    (f"%goal:{self.goal['id']}%",)
+                ).fetchall()
+                if not jobs:
+                    # Also try by target/role
+                    jobs = conn.execute(
+                        "SELECT * FROM jobs WHERE target = ? AND role = ? ORDER BY id",
+                        (self.goal['target'], self.goal['role'])
+                    ).fetchall()
+                
+                for job in jobs:
+                    lines.append(f"Job #{job['id']}: {job['outcome'] or 'running'} (attempt {job['attempt']})")
+                    lines.append(f"  Model: {job.get('role_version', 'unknown')}")
+                    lines.append(f"  Started: {job['started']}")
+                    if job['ended']:
+                        lines.append(f"  Ended: {job['ended']}")
+                    if job['grader']:
+                        lines.append(f"  Grader: {job['grader']}")
+                    if job['grader_detail']:
+                        detail = job['grader_detail'][:200]
+                        lines.append(f"  Detail: {detail}")
+                    lines.append("")
+            finally:
+                conn.close()
+        
+        return "\n".join(lines)
+
+    @on(Button.Pressed, "#close-btn")
+    def close(self) -> None:
+        self.app.pop_screen()
 
 
 class NewGoalScreen(Screen):
@@ -488,6 +875,26 @@ class NewGoalScreen(Screen):
     @on(Button.Pressed, "#cancel-btn")
     def cancel(self) -> None:
         self.app.pop_screen()
+
+
+# Actions (these belong to TeamDeck, not NewGoalScreen)
+    def action_switch_tab(self, tab_id: str) -> None:
+        """Switch to a tab by id."""
+        tabs = self.query_one("#tabs", TabbedContent)
+        tabs.active = tab_id
+
+    def action_new_goal(self) -> None:
+        """Show new goal form."""
+        self.push_screen(NewGoalScreen(self._roles))
+
+    def action_quit(self) -> None:
+        self._stop_refresh.set()
+        self.exit()
+
+    def on_unmount(self) -> None:
+        self._stop_refresh.set()
+        if self._run_checker:
+            self._run_checker.cancel()
 
 
 def main() -> int:
