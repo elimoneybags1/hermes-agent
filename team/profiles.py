@@ -88,37 +88,54 @@ def _write_model_default(profile: str, model: str) -> None:
 
 
 def _write_lean_profile_config(profile: str, role_tools: list[str]) -> None:
-    """Write lean profile configuration: toolsets, skills, compression."""
+    """Write lean profile configuration: platform_toolsets, disabled_toolsets, skills, compression."""
     import yaml
-    
+
     config_path = _hermes_profile_dir(profile) / "config.yaml"
     data = {}
     if config_path.exists():
         with config_path.open() as f:
             data = yaml.safe_load(f) or {}
-    
-    # 1. toolsets: role's tools + kanban (for kanban_request_review)
-    toolsets = list(role_tools) + ["kanban"]
-    data["toolsets"] = toolsets
-    
-    # 2. skills: disable project discovery, keep only role's skills
+
+    # Remove any top-level 'toolsets' key (Hermes ignores it)
+    data.pop("toolsets", None)
+
+    # 1. platform_toolsets.cli = role's tools (sorted)
+    if "platform_toolsets" not in data:
+        data["platform_toolsets"] = {}
+    data["platform_toolsets"]["cli"] = sorted(role_tools)
+
+    # 2. agent.disabled_toolsets = every built-in toolset not in the role's tools
+    # Built-in toolsets from Hermes (hermes_cli/tools_config.py)
+    BUILTIN_TOOLSETS = [
+        "web", "browser", "code_execution", "vision", "image_gen", "tts",
+        "memory", "session_search", "clarify", "delegation", "cronjob",
+        "computer_use", "video", "video_gen", "x_search", "stt",
+        "homeassistant", "spotify", "yuanbao", "context_engine",
+    ]
+    role_tools_set = set(role_tools)
+    disabled = [ts for ts in BUILTIN_TOOLSETS if ts not in role_tools_set]
+    if "agent" not in data:
+        data["agent"] = {}
+    data["agent"]["disabled_toolsets"] = disabled
+
+    # 3. skills: disable project discovery
     if "skills" not in data:
         data["skills"] = {}
     data["skills"]["project_discovery"] = False
-    # Note: we already replace the skills/ dir with only the role's skills
-    # The bundled skills folders remain in ~/.hermes/skills/ but won't be discovered
-    # because project_discovery is false and we don't add them to trusted_project_dirs
-    
-    # 3. compression.threshold_tokens: 60000
+
+    # 4. compression.threshold_tokens: 60000
     if "compression" not in data:
         data["compression"] = {}
     data["compression"]["threshold_tokens"] = 60000
-    
-    # 4. Disable coding posture (auto-selects full coding toolset in code workspaces)
+
+    # 5. Disable coding posture (auto-selects full coding toolset in code workspaces)
     data["coding_context"] = "off"
-    
+
+    # 6. Keep auxiliary.free_only and fallback_providers untouched (they persist from load)
+
     with config_path.open("w") as f:
-        yaml.dump(data, f)
+        yaml.safe_dump(data, f, sort_keys=False)
 
 
 def _get_role_skills(root: Path, role: str) -> list[dict[str, Any]]:
