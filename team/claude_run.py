@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from team import claude_roles
+
 SCRUB = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -36,44 +38,34 @@ def _build_cmd(
     tools: list[str] | None = None,
     model: str | None = None,
     json_schema: dict | None = None,
-    allowed_files: list[str] | None = None,
-    check: str | None = None,
-    decision_file: str | None = None,
+    plugin: Path | None = None,
+    agent: str | None = None,
+    settings: Path | None = None,
 ) -> list[str]:
-    """Build the claude -p command with all options."""
+    """Build the claude -p command line.
+
+    With `settings` (build mode) Eli's user settings, plugins and MCP servers
+    are left out; that file carries what must stay (docs/RUN.md).
+    """
     cmd = [
-        "claude",
-        "-p",
-        brief,
-        "--output-format",
-        "json",
-        "--max-turns",
-        str(max_turns),
+        "claude", "-p", brief,
+        "--output-format", "json",
+        "--max-turns", str(max_turns),
         "--dangerously-skip-permissions",
     ]
-    
-    if tools:
-        cmd.extend(["--allowed-tools", ",".join(tools)])
-    
+    if settings:
+        cmd += ["--setting-sources", "project,local", "--settings", str(settings),
+                "--strict-mcp-config"]
+    if plugin:
+        cmd += ["--plugin-dir", str(plugin)]
+    if agent:
+        cmd += ["--agent", agent]
+    if tools is not None:
+        cmd += ["--tools", ",".join(tools)]
     if model:
-        cmd.extend(["--model", model])
-    
+        cmd += ["--model", model]
     if json_schema:
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(json_schema, f)
-            schema_path = f.name
-        cmd.extend(["--output-format", "json", "--schema", schema_path])
-    
-    if allowed_files:
-        cmd.extend(["--allowed-files", ":".join(allowed_files)])
-    
-    if check:
-        cmd.extend(["--check", check])
-    
-    if decision_file:
-        cmd.extend(["--decision-file", decision_file])
-    
+        cmd += ["--json-schema", json.dumps(json_schema)]
     return cmd
 
 
@@ -84,36 +76,58 @@ def run(
     max_turns: int = 60,
     timeout_s: int = 1800,
     runner: Any = subprocess.run,
+    role: str | None = None,
+    root: Path | None = None,
     tools: list[str] | None = None,
     model: str | None = None,
     json_schema: dict | None = None,
     allowed_files: list[str] | None = None,
     check: str | None = None,
-    decision_file: str | None = None,
+    decision_file: Path | str | None = None,
 ) -> dict[str, Any]:
     """Run claude -p with the given brief in the worktree.
 
-    Returns a dict with: ok, result, session_id, num_turns, duration_ms, usage.
-    Missing keys are None. ok is False on error, non-zero exit, or non-JSON output.
+    With `role` (and Team's `root`), Claude runs in build mode: the role's
+    plugin and agent, its tools unless `tools` is given, Team's settings, and
+    the gates set by `check` and `allowed_files`.
+
+    Returns a dict with: ok, result, structured, session_id, num_turns,
+    duration_ms, usage. Missing keys are None. ok is False on error, non-zero
+    exit, or non-JSON output.
     """
     worktree = Path(worktree)
+    plugin = agent = settings = None
+    if role:
+        root = Path(root) if root else Path(__file__).resolve().parent.parent
+        plugin = claude_roles.generate_plugin(root, role)
+        agent = claude_roles.agent_name(role)
+        settings = claude_roles.settings_file()
+        if tools is None:
+            tools = claude_roles.role_tools(root, role)
     cmd = _build_cmd(
         brief,
         max_turns=max_turns,
         tools=tools,
         model=model,
         json_schema=json_schema,
-        allowed_files=allowed_files,
-        check=check,
-        decision_file=decision_file,
+        plugin=plugin,
+        agent=agent,
+        settings=settings,
     )
     env = clean_env()
+    if check:
+        env["TEAM_CHECK"] = check
+    if allowed_files:
+        env["TEAM_ALLOWED_FILES"] = ":".join(allowed_files)
+    if decision_file:
+        env["TEAM_DECISION_FILE"] = str(decision_file)
     start = time.monotonic()
     try:
         proc = runner(
             cmd,
             cwd=worktree,
             env=env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=timeout_s,
@@ -127,6 +141,7 @@ def run(
             "num_turns": None,
             "duration_ms": duration_ms,
             "usage": None,
+            "structured": None,
         }
 
     duration_ms = int((time.monotonic() - start) * 1000)
@@ -139,6 +154,7 @@ def run(
             "num_turns": None,
             "duration_ms": duration_ms,
             "usage": None,
+            "structured": None,
         }
 
     try:
@@ -151,14 +167,16 @@ def run(
             "num_turns": None,
             "duration_ms": duration_ms,
             "usage": None,
+            "structured": None,
         }
 
     is_error = data.get("is_error", False)
     return {
         "ok": not is_error,
-        "result": data.get("result") if not is_error else data.get("result"),
+        "result": data.get("result"),
         "session_id": data.get("session_id"),
         "num_turns": data.get("num_turns"),
         "duration_ms": duration_ms,
         "usage": data.get("usage"),
+        "structured": data.get("structured_output"),
     }

@@ -477,14 +477,17 @@ def test_hook_pretool_exists():
     assert args.func(args) == 0
 
 
-def test_hook_stop_returns_zero_on_valid_input(monkeypatch, capsys):
-    """team hook stop returns 0 on valid JSON input."""
+def test_hook_stop_returns_zero_on_valid_input(monkeypatch, capsys, tmp_path):
+    """team hook stop returns 0 in a clean worktree with no check set."""
     import json
     import io
+    import subprocess
     import sys
-    
-    # Mock stdin with valid JSON
-    payload = {"tool_name": "Bash", "tool_input": {"command": "echo hello"}}
+
+    subprocess.run(["git", "init", "-q", str(tmp_path / "wt")], check=True)
+    monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+    monkeypatch.delenv("TEAM_CHECK", raising=False)
+    payload = {"session_id": "s", "cwd": str(tmp_path / "wt")}
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
     
     result = cli.main(["hook", "stop"])
@@ -536,7 +539,7 @@ def test_hook_pretool_allows_matching_file(monkeypatch, capsys):
     import sys
     
     monkeypatch.setenv("TEAM_ALLOWED_FILES", "src/**:tests/**")
-    payload = {"tool_name": "Edit", "tool_input": {"file_path": "/home/user/src/main.py"}}
+    payload = {"tool_name": "Edit", "cwd": "/home/user", "tool_input": {"file_path": "/home/user/src/main.py"}}
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
     
     result = cli.main(["hook", "pretool"])
@@ -550,12 +553,12 @@ def test_hook_pretool_blocks_non_matching_file(monkeypatch, capsys):
     import sys
     
     monkeypatch.setenv("TEAM_ALLOWED_FILES", "src/**:tests/**")
-    payload = {"tool_name": "Edit", "tool_input": {"file_path": "/home/user/config.json"}}
+    payload = {"tool_name": "Edit", "cwd": "/home/user", "tool_input": {"file_path": "/home/user/config.json"}}
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
     
     result = cli.main(["hook", "pretool"])
     assert result == 2
-    assert "Edit blocked" in capsys.readouterr().err
+    assert "not one of this task's files" in capsys.readouterr().err
 
 
 def test_hook_pretool_blocks_when_no_file_path(monkeypatch, capsys):

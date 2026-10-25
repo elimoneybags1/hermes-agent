@@ -366,6 +366,29 @@ def test_escalates_to_claude_after_free_attempts_and_lands(env, monkeypatch):
     assert env.fake.blocked == {}
     claude_call = env.conn.execute("SELECT * FROM calls WHERE job_id = ?", (jobs[2]["id"],)).fetchone()
     assert (claude_call["provider"], claude_call["tokens_in"]) == ("claude-code-subscription", 9)
+    cmd = next(c for c in env.fake.calls if c[0] == "claude")
+    assert cmd[cmd.index("--agent") + 1] == "team-implement:implement"
+    assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
+    assert "kanban_request_review" not in cmd[2]
+    assert env.fake.claude_env["TEAM_CHECK"] == CHECK
+
+
+def test_claude_decision_goes_to_eli(env):
+    def claude(cwd):
+        Path(env.fake.claude_env["TEAM_DECISION_FILE"]).write_text(json.dumps({
+            "question": "Store results in SQLite or JSON?", "context": "no store yet",
+            "options": ["SQLite", "JSON"], "recommendation": "SQLite"}))
+        return {"is_error": False, "result": "asked", "session_id": "s3"}
+
+    env.fake.claude = claude
+    g = env.goal()
+    fail_free_attempts(env, g)
+
+    row = env.conn.execute("SELECT * FROM decisions WHERE goal_id = ?", (g["id"],)).fetchone()
+    assert (row["question"], row["source"], row["status"]) == ("Store results in SQLite or JSON?", "claude", "open")
+    assert json.loads(row["options"]) == ["SQLite", "JSON"]
+    assert env.jobs()[2]["outcome"] == "fail"
+    assert "decision" in env.get(g["id"])["detail"]
 
 
 def test_claude_failure_blocks_the_last_task_for_eli(env):

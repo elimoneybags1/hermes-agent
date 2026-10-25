@@ -153,97 +153,57 @@ def test_run_passes_custom_timeout():
     assert result["result"] == "timeout after 900s"
 
 
-def test_build_cmd_with_tools():
-    """Test _build_cmd includes --allowed-tools."""
-    cmd = claude_run._build_cmd("brief", max_turns=5, tools=["Read", "Write", "Bash"])
-    assert "--allowed-tools" in cmd
-    idx = cmd.index("--allowed-tools")
-    assert cmd[idx + 1] == "Read,Write,Bash"
+def test_build_cmd_options():
+    schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+    cmd = claude_run._build_cmd("brief", tools=["Read", "Bash"], model="opus", json_schema=schema)
+    assert cmd[cmd.index("--tools") + 1] == "Read,Bash"
+    assert cmd[cmd.index("--model") + 1] == "opus"
+    assert json.loads(cmd[cmd.index("--json-schema") + 1]) == schema
 
 
-def test_build_cmd_with_model():
-    """Test _build_cmd includes --model."""
-    cmd = claude_run._build_cmd("brief", model="claude-3-opus")
-    assert "--model" in cmd
-    idx = cmd.index("--model")
-    assert cmd[idx + 1] == "claude-3-opus"
+def test_build_cmd_empty_tools_means_no_tools():
+    cmd = claude_run._build_cmd("brief", tools=[])
+    assert cmd[cmd.index("--tools") + 1] == ""
 
 
-def test_build_cmd_with_json_schema():
-    """Test _build_cmd includes --schema with temp file."""
-    schema = {"type": "object", "properties": {"result": {"type": "string"}}}
-    cmd = claude_run._build_cmd("brief", json_schema=schema)
-    assert "--schema" in cmd
-    idx = cmd.index("--schema")
-    schema_path = cmd[idx + 1]
-    assert schema_path.endswith(".json")
-    # Verify the file contains the schema
-    with open(schema_path) as f:
-        loaded = json.load(f)
-    assert loaded == schema
+def _role_root(tmp: Path) -> Path:
+    role = tmp / "repo" / "roles" / "implement"
+    role.mkdir(parents=True)
+    (role / "role.toml").write_text('name = "implement"\ndoes = "Builds code."\ntools = ["terminal", "file"]\n')
+    (role / "SOUL.md").write_text("You implement.")
+    return tmp / "repo"
 
 
-def test_build_cmd_with_allowed_files():
-    """Test _build_cmd includes --allowed-files."""
-    cmd = claude_run._build_cmd("brief", allowed_files=["src/**", "tests/**"])
-    assert "--allowed-files" in cmd
-    idx = cmd.index("--allowed-files")
-    assert cmd[idx + 1] == "src/**:tests/**"
+def test_run_with_role_is_build_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+    root = _role_root(tmp_path)
+    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, json.dumps(
+        {"is_error": False, "result": "{}", "structured_output": {"a": 1}})))
+
+    result = claude_run.run(tmp_path, "brief", runner=fake_runner, role="implement", root=root,
+                            check="pytest -q", allowed_files=["a.py", "tests/*"],
+                            decision_file=tmp_path / "d.json")
+
+    assert result["structured"] == {"a": 1}
+    cmd = fake_runner.call_args.args[0]
+    env = fake_runner.call_args.kwargs["env"]
+    state = tmp_path / "state" / "claude"
+    assert cmd[cmd.index("--plugin-dir") + 1] == str(state / "implement")
+    assert cmd[cmd.index("--agent") + 1] == "team-implement:implement"
+    assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
+    assert cmd[cmd.index("--settings") + 1] == str(state / "settings.json")
+    assert "--strict-mcp-config" in cmd
+    assert cmd[cmd.index("--tools") + 1] == "Bash,Read,Edit,Write,Glob,Grep"
+    assert env["TEAM_CHECK"] == "pytest -q"
+    assert env["TEAM_ALLOWED_FILES"] == "a.py:tests/*"
+    assert env["TEAM_DECISION_FILE"] == str(tmp_path / "d.json")
+    for k in claude_run.SCRUB:
+        assert k not in env
 
 
-def test_build_cmd_with_check():
-    """Test _build_cmd includes --check."""
-    cmd = claude_run._build_cmd("brief", check="pytest")
-    assert "--check" in cmd
-    idx = cmd.index("--check")
-    assert cmd[idx + 1] == "pytest"
-
-
-def test_build_cmd_with_decision_file():
-    """Test _build_cmd includes --decision-file."""
-    cmd = claude_run._build_cmd("brief", decision_file="/tmp/decision.json")
-    assert "--decision-file" in cmd
-    idx = cmd.index("--decision-file")
-    assert cmd[idx + 1] == "/tmp/decision.json"
-
-
-def test_run_passes_tools():
-    """Test run() passes tools to _build_cmd."""
-    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
-    claude_run.run(Path("/tmp/wt"), "brief", tools=["Read", "Write"], runner=fake_runner)
-    args, _ = fake_runner.call_args
-    assert "--allowed-tools" in args[0]
-
-
-def test_run_passes_model():
-    """Test run() passes model to _build_cmd."""
-    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
-    claude_run.run(Path("/tmp/wt"), "brief", model="test-model", runner=fake_runner)
-    args, _ = fake_runner.call_args
-    assert "--model" in args[0]
-    idx = args[0].index("--model")
-    assert args[0][idx + 1] == "test-model"
-
-
-def test_run_passes_allowed_files():
-    """Test run() passes allowed_files to _build_cmd."""
-    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
-    claude_run.run(Path("/tmp/wt"), "brief", allowed_files=["src/**"], runner=fake_runner)
-    args, _ = fake_runner.call_args
-    assert "--allowed-files" in args[0]
-
-
-def test_run_passes_check():
-    """Test run() passes check to _build_cmd."""
-    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
-    claude_run.run(Path("/tmp/wt"), "brief", check="make test", runner=fake_runner)
-    args, _ = fake_runner.call_args
-    assert "--check" in args[0]
-
-
-def test_run_passes_decision_file():
-    """Test run() passes decision_file to _build_cmd."""
-    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
-    claude_run.run(Path("/tmp/wt"), "brief", decision_file="/tmp/decision.json", runner=fake_runner)
-    args, _ = fake_runner.call_args
-    assert "--decision-file" in args[0]
+def test_run_without_role_loads_no_team_setup():
+    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, json.dumps({"is_error": False})))
+    claude_run.run(Path("/tmp/wt"), "brief", runner=fake_runner)
+    cmd = fake_runner.call_args.args[0]
+    for flag in ("--plugin-dir", "--agent", "--settings", "--tools"):
+        assert flag not in cmd

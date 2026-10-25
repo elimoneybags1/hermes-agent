@@ -15,6 +15,7 @@ of them for real.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import signal
@@ -27,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from team import claude_run, grade, kanban, ledger, settings, targets
+from team import claude_roles, claude_run, decisions, grade, kanban, ledger, settings, targets
 from team.free import is_free_model
 from team.roles import load_roles
 
@@ -139,15 +140,18 @@ def _free_slug(repo: Path, target: str, base: str, runner: Runner) -> str:
     raise RunError(f"no free slug for {base!r}")
 
 
-def _brief(goal: dict, attempt: int, failure: str | None) -> str:
+def _brief(goal: dict, attempt: int, failure: str | None, claude: bool = False) -> str:
     text = (
         f"{goal['goal']}\n\n"
         f"You work in a git worktree on branch {goal['branch']}. Done means this "
         f"check passes there: `{goal['check_cmd']}`. Commit your work on this "
-        "branch: uncommitted work is lost and does not count.\n\n"
-        "IMPORTANT: When you are done, call `kanban_request_review` with a summary "
-        "of what you did and the check's last line. Do NOT call `kanban_complete`."
+        "branch: uncommitted work is lost and does not count."
     )
+    if not claude:
+        text += (
+            "\n\nIMPORTANT: When you are done, call `kanban_request_review` with a summary "
+            "of what you did and the check's last line. Do NOT call `kanban_complete`."
+        )
     if failure:
         text += f"\n\nAttempt {attempt - 1} failed. What it left:\n{_tail(failure)}"
         if "merge conflict with main" in failure:
@@ -573,11 +577,18 @@ class Loop:
         self._ensure_worktree(goal)
         job = self._start_job(goal, attempt, "claude:")
         ledger.update_goal(self.conn, goal["id"], attempt=attempt, job_id=job)
+        decision_file = claude_roles.claude_dir() / "decisions" / f"goal-{goal['id']}-{attempt}.json"
+        decision_file.parent.mkdir(parents=True, exist_ok=True)
+        decision_file.unlink(missing_ok=True)
         result = claude_run.run(
-            goal["worktree"], _brief(goal, attempt, failure),
+            goal["worktree"], _brief(goal, attempt, failure, claude=True),
             max_turns=self.cfg["escalation.claude_max_turns"],
             timeout_s=self.cfg["escalation.claude_timeout_s"],
             runner=self.runner,
+            role=goal["role"],
+            root=self.root,
+            check=goal["check_cmd"],
+            decision_file=decision_file,
         )
         ledger.set_task_ref(self.conn, job, f"claude:{result.get('session_id') or 'unknown'}")
         usage = result.get("usage") or {}
@@ -587,6 +598,11 @@ class Loop:
             tokens_out=usage.get("output_tokens"), latency_ms=result.get("duration_ms"),
             ok=bool(result["ok"]), error=None if result["ok"] else _tail(str(result["result"]), 500),
         )
+        asked = self._claude_decision(goal, decision_file)
+        if asked:
+            ledger.finish_job(self.conn, job, "fail", "claude", f"asked Eli: decision {asked}")
+            self._give_up(goal, f"Claude needs a decision from Eli (decision {asked})", None)
+            return
         if not result["ok"]:
             detail = f"claude run failed: {result['result']}"
             ledger.finish_job(self.conn, job, "error", "claude", detail)
@@ -604,6 +620,22 @@ class Loop:
             kanban.comment(goal["target"], goal["current_task"], f"CLAUDE FAILED CHECK: {_tail(detail)}", runner=self.runner)
             kanban.block(goal["target"], goal["current_task"], "Claude attempt failed check", kind="needs_input", runner=self.runner)
             self._give_up(goal, "the Claude attempt failed too", detail)
+
+    def _claude_decision(self, goal: dict, path: Path) -> int | None:
+        """A decision Claude wrote to $TEAM_DECISION_FILE goes to Eli's inbox."""
+        if not path.exists():
+            return None
+        try:
+            d = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            d = {"question": path.read_text().strip()}
+        if not isinstance(d, dict) or not d.get("question"):
+            return None
+        return decisions.create(
+            self.conn, goal["target"], str(d["question"]), str(d.get("context") or ""),
+            [str(o) for o in d.get("options") or []], str(d.get("recommendation") or ""),
+            goal_id=goal["id"], source="claude",
+        )
 
     def _give_up(self, goal: dict, why: str, detail: str | None) -> None:
         """Stop working on the goal; block its last kanban task so Eli decides."""

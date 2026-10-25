@@ -210,8 +210,39 @@ vars above. API-key variables stay scrubbed. Result adds `structured` (the
 parsed schema output) and the usage block as returned (input, output,
 cache_creation_input_tokens, cache_read_input_tokens).
 
-Interactive settings: check (and record here) whether the user's
-`~/.claude/CLAUDE.md` loads in `claude -p`; if it does, the build rules above
-override its "ask before assuming" for build sessions. The user's settings.json
-deny rules (they protect secrets) must stay in force: do not pass
-`--setting-sources` that drops `user`.
+### Isolation from Eli's own Claude setup (built 2026-10-25, job 60)
+
+Checked against Claude Code 2.1.310 with real runs:
+- `~/.claude/CLAUDE.md` **does** load in `claude -p`, even with
+  `--setting-sources project,local`. The `claudeMdExcludes` setting removes it.
+- `--setting-sources project,local` drops Eli's plugins (hookify,
+  claude-md-management, cowork, anthropic-skills) and his user hooks.
+  Claude Code's bundled skills (`verify`, `debug`, `simplify`, ...) still
+  load; they are part of the binary.
+- `--bare` would drop everything but refuses subscription login (API key
+  only), so it is not used.
+
+So every build-mode run gets `--setting-sources project,local --settings
+$TEAM_STATE/claude/settings.json --strict-mcp-config`. `claude_roles.settings_file()`
+rewrites that file each run from Eli's `~/.claude/settings.json`, keeping only
+what protects him: `permissions.deny` and his `PreToolUse` hooks
+(confine-to-project). It also sets `claudeMdExcludes` to his global CLAUDE.md. The target's
+own CLAUDE.md and `.claude/settings.json` still load: they are the project's
+rules.
+
+A real run in a scratch repo (`implement` role, `TEAM_ALLOWED_FILES=a.py`, a
+check) showed:
+- the edit to `b.py` was refused by `team hook pretool`;
+- the read of `.env` was refused by Eli's deny rule;
+- `a.py` was edited, the check passed, and the work was committed;
+- no MCP servers, and only Team's role plugin loaded.
+
+The hook commands use Team's own interpreter (`<python> -m team hook ...`), so
+they work without `team` on PATH. Claude runs with stdin closed.
+
+`team run` uses build mode for every Claude attempt. The goal's role selects
+the plugin and tools, and the goal's check becomes `TEAM_CHECK`. The brief
+leaves out the kanban instructions that only Hermes workers can follow. A
+decision Claude writes to `$TEAM_DECISION_FILE` (under
+`$TEAM_STATE/claude/decisions/`) goes to Eli's inbox (source `claude`). The
+goal then stops, with the decision id in its detail.

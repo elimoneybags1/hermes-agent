@@ -18,6 +18,7 @@ from team import profiles
 from team import deck
 from team import claude_roles
 from team import claude_run
+from team import settings
 
 LIST_COLUMNS = ("id", "target", "role", "attempt", "started", "ended", "outcome", "grader")
 TARGET_COLUMNS = ("name", "path", "commit", "attached_at")
@@ -209,59 +210,31 @@ def _decide_dismiss(args: argparse.Namespace) -> int:
     return 0
 
 
-def _hook_stop(args: argparse.Namespace) -> int:
-    """Claude Code Stop hook - validates the agent's output."""
-    # Read the JSON payload from stdin
+def _hook(gate) -> int:
+    """Run a build-mode hook gate on Claude Code's payload; exit 2 refuses."""
     import json
+    import os
+
     try:
         payload = json.load(sys.stdin)
     except json.JSONDecodeError:
         return 0
-    
-    # The Stop hook fires when the agent finishes
-    # We can use this to validate output, run checks, etc.
-    # For now, just exit successfully
+    reason = gate(payload, dict(os.environ))
+    if reason:
+        print(reason, file=sys.stderr)
+        return 2
     return 0
 
 
+def _hook_stop(args: argparse.Namespace) -> int:
+    """Stop hook: refuse to finish while the worktree is dirty or the check fails."""
+    timeout = settings.load(REPO)["grading.check_timeout_s"]
+    return _hook(lambda p, env: claude_roles.stop_gate(p, env, check_timeout_s=timeout))
+
+
 def _hook_pretool(args: argparse.Namespace) -> int:
-    """Claude Code PreToolUse hook - enforces edit gates (TEAM_ALLOWED_FILES)."""
-    import json
-    import os
-    import sys
-    from pathlib import Path
-    
-    try:
-        payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        return 0
-    
-    tool_name = payload.get("tool_name")
-    if tool_name not in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
-        return 0
-    
-    # Check TEAM_ALLOWED_FILES gate
-    allowed_files_env = os.environ.get("TEAM_ALLOWED_FILES")
-    if not allowed_files_env:
-        return 0  # No gate configured
-    
-    allowed_patterns = allowed_files_env.split(":")
-    tool_input = payload.get("tool_input", {})
-    file_path = tool_input.get("file_path")
-    
-    if not file_path:
-        return 0
-    
-    # Check if file_path matches any allowed pattern
-    # Use Path.match which supports ** for recursive matching
-    p = Path(file_path)
-    for pattern in allowed_patterns:
-        if p.match(pattern):
-            return 0
-    
-    # File not allowed
-    print(f"Edit blocked: {file_path} not in TEAM_ALLOWED_FILES", file=sys.stderr)
-    return 2
+    """PreToolUse hook: refuse edits outside TEAM_ALLOWED_FILES."""
+    return _hook(claude_roles.edit_gate)
 
 
 def _goal(args: argparse.Namespace) -> int:
