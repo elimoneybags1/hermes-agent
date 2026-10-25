@@ -57,3 +57,9 @@ def test_references_api_path(page, path):
 @pytest.mark.parametrize("method", ["GET", "PATCH", "PUT", "DELETE", "POST"])
 def test_uses_each_method(page, method):
     assert f"'{method}'" in page
+
+
+def test_inbox_count_element(page):
+    """Inbox button has a count span element."""
+    assert 'id="inbox-count"' in page
+    assert 'id="inbox-btn"' in page
