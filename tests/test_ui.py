@@ -699,6 +699,46 @@ class TestDecisions:
         assert status == 400
         assert data == {"error": "invalid decision id"}
 
+    def test_post_decision_unknown_id_404(self, server):
+        """Unknown decision id returns 404."""
+        status, data = request(server, "POST", "/api/decisions/9999", {"answer": "x"})
+        assert status == 404
+        assert "error" in data
+
+    def test_post_decision_not_open_409(self, server, db):
+        """Decision that is not open returns 409."""
+        from team import decisions
+        conn = ledger.connect(db)
+        try:
+            d_id = decisions.create(conn, "team", "Use Rust?", "Performance", ["yes", "no"], "yes")
+            # Answer it first
+            decisions.answer(conn, d_id, "Yes, we will use Rust")
+        finally:
+            conn.close()
+
+        status, data = request(server, "POST", f"/api/decisions/{d_id}", {"answer": "No"})
+        assert status == 409
+        assert "not open" in data["error"]
+
+    def test_post_decision_empty_answer_400(self, server, db):
+        """Empty or whitespace answer returns 400."""
+        from team import decisions
+        conn = ledger.connect(db)
+        try:
+            d_id = decisions.create(conn, "team", "Use Rust?", "Performance", ["yes", "no"], "yes")
+        finally:
+            conn.close()
+
+        # Empty string
+        status, data = request(server, "POST", f"/api/decisions/{d_id}", {"answer": ""})
+        assert status == 400
+        assert data == {"error": "answer must not be empty"}
+
+        # Whitespace only
+        status, data = request(server, "POST", f"/api/decisions/{d_id}", {"answer": "   "})
+        assert status == 400
+        assert data == {"error": "answer must not be empty"}
+
     def test_post_decision_missing_body(self, server, db):
         from team import decisions
         conn = ledger.connect(db)
