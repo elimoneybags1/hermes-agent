@@ -2,12 +2,21 @@
 
 check_command() reads a shell command the way the shell will split it and
 refuses any hermes call that could reach a model other than a pinned free one.
-A hermes call is allowed only as:
 
-  hermes sessions list|export ...      no model is called
-  hermes fallback list ...
+With a last -p/--profile of team-*:
   hermes [chat] ... -m <free model>    every -m/--model free, every --provider
                                        in FREE_PROVIDERS, nothing else positional
+  hermes kanban ...                     all subcommands allowed
+  hermes sessions ...                   all subcommands allowed
+  hermes dashboard                      no model is called
+  hermes skills list                    no model is called
+  hermes profile list|describe          no model is called
+
+Without -p (the default profile, which holds paid keys):
+  hermes sessions list|export ...       no model is called
+  hermes fallback list ...
+  hermes profile list                   no model is called
+  hermes kanban list|show               read-only subcommands only
 
 Anything it cannot read for certain is refused. Reading is static, so it does
 not see hermes run from a script file, from another language (python -c with a
@@ -28,12 +37,33 @@ FREE_EXACT: frozenset[str] = frozenset({
 # only free models.
 FREE_PROVIDERS: frozenset[str] = frozenset()
 
-# The only hermes calls that run without a model
+# The only hermes calls that run without a model (for default profile)
 READ_ONLY: frozenset[tuple[str, str]] = frozenset({
     ("sessions", "list"),
     ("sessions", "export"),
     ("fallback", "list"),
+    ("profile", "list"),
+    ("kanban", "list"),
+    ("kanban", "show"),
 })
+
+# Allowed subcommands for team-* profiles (beyond chat with free model)
+TEAM_READ_ONLY: frozenset[str] = frozenset({
+    "kanban",
+    "sessions",
+    "dashboard",
+    "skills",
+    "profile",
+})
+
+# Subcommands of profile that are allowed for team-* profiles
+TEAM_PROFILE_SUBCOMMANDS: frozenset[str] = frozenset({"list", "describe"})
+
+# Subcommands of skills that are allowed for team-* profiles
+TEAM_SKILLS_SUBCOMMANDS: frozenset[str] = frozenset({"list"})
+
+# Subcommands of kanban that are allowed for default profile (read-only)
+DEFAULT_KANBAN_SUBCOMMANDS: frozenset[str] = frozenset({"list", "show"})
 
 # hermes options that take a value, top level and chat (`hermes chat --help`).
 # Missing one here makes the guard stricter, never looser: its value is then
@@ -42,7 +72,7 @@ SHORT_VALUE = frozenset("mzqstrcp")
 LONG_VALUE: frozenset[str] = frozenset({
     "query", "query-file", "image", "toolsets", "reasoning", "skills", "resume",
     "in", "continue", "max-turns", "run-budget", "source", "usage-file",
-    "profile",
+    "profile", "board",
 })
 
 # Commands that only print or search: `grep hermes` names hermes, it does not
@@ -289,14 +319,13 @@ def _check_segment(segment: Segment, depth: int) -> Optional[str]:
 
 def _check_hermes(args: list[Word]) -> Optional[str]:
     """Check the arguments of one hermes call."""
-    if len(args) >= 2 and (args[0].text, args[1].text) in READ_ONLY:
-        if not (args[0].dynamic or args[1].dynamic):
-            return None
-
+    # First pass: collect profiles, models, providers, and find the subcommand
     models: list[str] = []
     providers: list[str] = []
     profiles: list[str] = []
     seen_chat = False
+    subcommand: Optional[str] = None
+    subcommand_idx: Optional[int] = None
     i = 0
     while i < len(args):
         word = args[i]
@@ -338,10 +367,10 @@ def _check_hermes(args: list[Word]) -> Optional[str]:
                 seen_chat = True
                 i += 1
                 continue
-            return (
-                f"hermes argument '{text}' is not allowed: only chat on a free model, "
-                "sessions list/export and fallback list"
-            )
+            if subcommand is None:
+                subcommand = text
+                subcommand_idx = i
+            # Don't reject subsequent positional args - they're arguments to the subcommand
 
         if takes_value and i + 1 < len(args):
             nxt = args[i + 1]
@@ -364,17 +393,67 @@ def _check_hermes(args: list[Word]) -> Optional[str]:
     last_profile = profiles[-1] if profiles else None
     last_profile_is_team = last_profile is not None and last_profile.startswith("team-")
 
-    # Even when -m is given and free, we still require the last profile to be team-*
-    # (or no model but team-* profile). No profile at all is refused.
-    if not last_profile_is_team:
+    # Check subcommand-based allowances
+    if subcommand is not None:
+        # First check READ_ONLY for default profile (no team-* profile)
+        if not last_profile_is_team:
+            # For default profile, only allow specific READ_ONLY subcommands
+            # These don't require a team-* profile
+            if subcommand_idx is not None:
+                next_word = args[subcommand_idx + 1].text if subcommand_idx + 1 < len(args) else ""
+                if (subcommand, next_word) in READ_ONLY:
+                    if not (args[subcommand_idx].dynamic or 
+                            (subcommand_idx + 1 < len(args) and args[subcommand_idx + 1].dynamic)):
+                        return None
+            return "hermes requires -p/--profile team-* for this command"
+
+        # For team-* profile, allow these subcommands without requiring chat
+        if subcommand in TEAM_READ_ONLY:
+            # Additional checks for subcommands with sub-subcommands
+            if subcommand == "profile":
+                next_word = args[subcommand_idx + 1].text if subcommand_idx + 1 < len(args) else ""
+                if next_word not in TEAM_PROFILE_SUBCOMMANDS:
+                    return f"hermes profile subcommand '{next_word}' not allowed for team-* profile"
+            elif subcommand == "skills":
+                next_word = args[subcommand_idx + 1].text if subcommand_idx + 1 < len(args) else ""
+                if next_word not in TEAM_SKILLS_SUBCOMMANDS:
+                    return f"hermes skills subcommand '{next_word}' not allowed for team-* profile"
+            elif subcommand == "kanban":
+                # For team-* all kanban subcommands allowed
+                pass
+            elif subcommand == "sessions":
+                # For team-* all sessions subcommands allowed
+                pass
+            elif subcommand == "dashboard":
+                # dashboard takes no subcommand
+                pass
+            return None
+        else:
+            # Subcommand not in TEAM_READ_ONLY - for team-* profile this is refused
+            if last_profile_is_team:
+                return f"hermes subcommand '{subcommand}' not allowed for team-* profile"
+
+    # If we get here and there's no subcommand, it's a bare `hermes` which starts chat
+    # For team-* profile, chat requires a free model
+    if last_profile_is_team:
+        # Even when -m is given and free, we still require the last profile to be team-*
+        # (or no model but team-* profile). No profile at all is refused.
+        if not models and not seen_chat:
+            return "hermes chat requires explicit -m/--model with a free model, or -p/--profile team-*"
+        for model in models:
+            if not is_free_model(model):
+                return f"model '{model}' is not free (must end with :free or be in FREE_EXACT)"
+        for provider in providers:
+            if provider not in FREE_PROVIDERS:
+                return f"provider '{provider}' is not free (not in FREE_PROVIDERS)"
+        return None
+
+    # Default profile without team-* - only READ_ONLY allowed (already checked above)
+    # If chat is attempted without team-* profile, refuse
+    if seen_chat:
         return "hermes chat requires explicit -m/--model with a free model, or -p/--profile team-*"
-    for model in models:
-        if not is_free_model(model):
-            return f"model '{model}' is not free (must end with :free or be in FREE_EXACT)"
-    for provider in providers:
-        if provider not in FREE_PROVIDERS:
-            return f"provider '{provider}' is not free (not in FREE_PROVIDERS)"
-    return None
+    
+    return "hermes requires -p/--profile team-* for this command"
 
 
 def check_command(cmd: str) -> Optional[str]:
