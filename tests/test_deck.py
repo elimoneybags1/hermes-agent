@@ -110,10 +110,10 @@ def test_deck_bindings():
     """Test that TeamDeck has the expected key bindings."""
     app = deck.TeamDeck()
     binding_keys = {b.key for b in app.BINDINGS}
-    assert "1" in binding_keys
-    assert "2" in binding_keys
-    assert "3" in binding_keys
-    assert "4" in binding_keys
+    assert "f1" in binding_keys
+    assert "f2" in binding_keys
+    assert "f3" in binding_keys
+    assert "f4" in binding_keys
     assert "g" in binding_keys
     assert "q" in binding_keys
 
