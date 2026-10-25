@@ -290,6 +290,168 @@ run_budget_s = 600
             assert (profile_skills / "test-skill" / "SKILL.md").exists()
 
 
+class TestLeanProfileConfig:
+    def test_sync_writes_lean_toolsets(self, tmp_path, monkeypatch):
+        """Test sync writes toolsets from role + kanban."""
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+        
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        roles_dir = repo / "roles"
+        roles_dir.mkdir()
+        role_dir = roles_dir / "test-agent"
+        role_dir.mkdir()
+        
+        role_toml = role_dir / "role.toml"
+        role_toml.write_text("""
+name = "test-agent"
+title = "Test Agent"
+does = "Does testing"
+graded_by = "Tests pass"
+status = "planned"
+tools = ["terminal", "file", "todo", "skills"]
+[runs_on]
+harness = "hermes"
+model = "gemini-2.5-flash"
+[escalation]
+harness = "crew"
+model = "claude"
+after_failures = 2
+[budget]
+max_turns = 25
+run_budget_s = 600
+""")
+        
+        (role_dir / "SOUL.md").write_text("# Test Agent\n\nDoes testing\n")
+        
+        def mock_runner(cmd, **kwargs):
+            if cmd[:2] == ["hermes", "profile"]:
+                profile_dir = fake_home / ".hermes" / "profiles" / "team-test-agent"
+                profile_dir.mkdir(parents=True)
+                (profile_dir / "config.yaml").write_text("model:\n  default: nvidia/nemotron-3-ultra-550b-a55b:free\n")
+            return MagicMock(returncode=0, stdout="", stderr="")
+        
+        with patch("subprocess.run", side_effect=mock_runner):
+            result = profiles.sync(repo, "test-agent", runner=mock_runner)
+            
+            # Verify toolsets in config.yaml
+            config_path = fake_home / ".hermes" / "profiles" / "team-test-agent" / "config.yaml"
+            import yaml
+            with config_path.open() as f:
+                config = yaml.safe_load(f)
+            
+            expected_toolsets = ["terminal", "file", "todo", "skills", "kanban"]
+            assert config.get("toolsets") == expected_toolsets
+    
+    def test_sync_disables_project_discovery(self, tmp_path, monkeypatch):
+        """Test sync sets skills.project_discovery to False."""
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+        
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        roles_dir = repo / "roles"
+        roles_dir.mkdir()
+        role_dir = roles_dir / "test-agent"
+        role_dir.mkdir()
+        
+        role_toml = role_dir / "role.toml"
+        role_toml.write_text("""
+name = "test-agent"
+title = "Test Agent"
+does = "Does testing"
+graded_by = "Tests pass"
+status = "planned"
+tools = ["terminal"]
+[runs_on]
+harness = "hermes"
+model = "gemini-2.5-flash"
+[escalation]
+harness = "crew"
+model = "claude"
+after_failures = 2
+[budget]
+max_turns = 25
+run_budget_s = 600
+""")
+        
+        (role_dir / "SOUL.md").write_text("# Test Agent\n\nDoes testing\n")
+        
+        def mock_runner(cmd, **kwargs):
+            if cmd[:2] == ["hermes", "profile"]:
+                profile_dir = fake_home / ".hermes" / "profiles" / "team-test-agent"
+                profile_dir.mkdir(parents=True)
+                (profile_dir / "config.yaml").write_text("model:\n  default: nvidia/nemotron-3-ultra-550b-a55b:free\n")
+            return MagicMock(returncode=0, stdout="", stderr="")
+        
+        with patch("subprocess.run", side_effect=mock_runner):
+            result = profiles.sync(repo, "test-agent", runner=mock_runner)
+            
+            # Verify project_discovery is False
+            config_path = fake_home / ".hermes" / "profiles" / "team-test-agent" / "config.yaml"
+            import yaml
+            with config_path.open() as f:
+                config = yaml.safe_load(f)
+            
+            assert config.get("skills", {}).get("project_discovery") is False
+    
+    def test_sync_sets_compression_threshold(self, tmp_path, monkeypatch):
+        """Test sync sets compression.threshold_tokens to 60000."""
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+        
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        roles_dir = repo / "roles"
+        roles_dir.mkdir()
+        role_dir = roles_dir / "test-agent"
+        role_dir.mkdir()
+        
+        role_toml = role_dir / "role.toml"
+        role_toml.write_text("""
+name = "test-agent"
+title = "Test Agent"
+does = "Does testing"
+graded_by = "Tests pass"
+status = "planned"
+tools = ["terminal"]
+[runs_on]
+harness = "hermes"
+model = "gemini-2.5-flash"
+[escalation]
+harness = "crew"
+model = "claude"
+after_failures = 2
+[budget]
+max_turns = 25
+run_budget_s = 600
+""")
+        
+        (role_dir / "SOUL.md").write_text("# Test Agent\n\nDoes testing\n")
+        
+        def mock_runner(cmd, **kwargs):
+            if cmd[:2] == ["hermes", "profile"]:
+                profile_dir = fake_home / ".hermes" / "profiles" / "team-test-agent"
+                profile_dir.mkdir(parents=True)
+                (profile_dir / "config.yaml").write_text("model:\n  default: nvidia/nemotron-3-ultra-550b-a55b:free\n")
+            return MagicMock(returncode=0, stdout="", stderr="")
+        
+        with patch("subprocess.run", side_effect=mock_runner):
+            result = profiles.sync(repo, "test-agent", runner=mock_runner)
+            
+            # Verify compression.threshold_tokens is 60000
+            config_path = fake_home / ".hermes" / "profiles" / "team-test-agent" / "config.yaml"
+            import yaml
+            with config_path.open() as f:
+                config = yaml.safe_load(f)
+            
+            assert config.get("compression", {}).get("threshold_tokens") == 60000
+
+
 class TestSyncAll:
     def test_sync_all_syncs_active_and_planned(self, tmp_path, monkeypatch):
         """Test sync_all syncs roles with status active or planned."""

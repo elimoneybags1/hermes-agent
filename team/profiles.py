@@ -87,6 +87,40 @@ def _write_model_default(profile: str, model: str) -> None:
         yaml.dump(data, f)
 
 
+def _write_lean_profile_config(profile: str, role_tools: list[str]) -> None:
+    """Write lean profile configuration: toolsets, skills, compression."""
+    import yaml
+    
+    config_path = _hermes_profile_dir(profile) / "config.yaml"
+    data = {}
+    if config_path.exists():
+        with config_path.open() as f:
+            data = yaml.safe_load(f) or {}
+    
+    # 1. toolsets: role's tools + kanban (for kanban_request_review)
+    toolsets = list(role_tools) + ["kanban"]
+    data["toolsets"] = toolsets
+    
+    # 2. skills: disable project discovery, keep only role's skills
+    if "skills" not in data:
+        data["skills"] = {}
+    data["skills"]["project_discovery"] = False
+    # Note: we already replace the skills/ dir with only the role's skills
+    # The bundled skills folders remain in ~/.hermes/skills/ but won't be discovered
+    # because project_discovery is false and we don't add them to trusted_project_dirs
+    
+    # 3. compression.threshold_tokens: 60000
+    if "compression" not in data:
+        data["compression"] = {}
+    data["compression"]["threshold_tokens"] = 60000
+    
+    # 4. Disable coding posture (auto-selects full coding toolset in code workspaces)
+    data["coding_context"] = "off"
+    
+    with config_path.open("w") as f:
+        yaml.dump(data, f)
+
+
 def _get_role_skills(root: Path, role: str) -> list[dict[str, Any]]:
     """Get all skills for a role from the repo."""
     skills = []
@@ -160,6 +194,11 @@ def sync(root: Path, role: str, runner: Any = None) -> str:
     if model:
         _write_model_default(profile, model)
         changes.append(f"set model.default={model}")
+    
+    # Write lean profile config (toolsets, skills settings, compression)
+    role_tools = role_data.get("tools", [])
+    _write_lean_profile_config(profile, role_tools)
+    changes.append("wrote lean profile config")
     
     return "; ".join(changes) if changes else "no changes"
 
