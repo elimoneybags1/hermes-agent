@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -246,6 +247,39 @@ def reopen_review(
         raise KanbanError(f"hermes kanban reopen-review failed", stderr_tail)
 
 
+def unblock(
+    board: str,
+    task_id: str,
+    reason: str | None = None,
+    runner=subprocess.run,
+) -> None:
+    """Move a blocked task back to ready: `unblock <id> [--reason R]`."""
+    args = ["--board", board, "unblock", task_id]
+    if reason:
+        args.extend(["--reason", reason])
+    result = _run_kanban(args, runner=runner)
+    if result.returncode != 0:
+        stderr_tail = result.stderr[-500:] if result.stderr else "(no stderr)"
+        raise KanbanError("hermes kanban unblock failed", stderr_tail)
+
+
+def log(
+    board: str,
+    task_id: str,
+    tail: int | None = None,
+    runner=subprocess.run,
+) -> str:
+    """The worker's log for a task: `log <id> [--tail <bytes>]`."""
+    args = ["--board", board, "log", task_id]
+    if tail is not None:
+        args.extend(["--tail", str(tail)])
+    result = _run_kanban(args, runner=runner)
+    if result.returncode != 0:
+        stderr_tail = result.stderr[-500:] if result.stderr else "(no stderr)"
+        raise KanbanError("hermes kanban log failed", stderr_tail)
+    return result.stdout or ""
+
+
 def complete(
     board: str,
     task_id: str,
@@ -290,71 +324,72 @@ def session_for_task(
     if list_result.returncode != 0:
         return None
 
-    # Parse the text table output
-    # Format:
-    # Title                        Workspace          Last Active   ID
-    # ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-    # work kanban task t_d0a676d   —                  just now      20261024_150051_7ce33b
-    task_prefix = f"work kanban task {task_id[:9]}"
-    matching_session_id = None
+    # Real rows look like:
+    # '{"title{ "title": "Work on kan   work kanban task t_6f7bd1e7   just now   20261024_205703_f92dde'
+    # 'work kanban task t_4b0cf02b #2   work kanban task t_4b0cf02b   1h ago   20261024_195524_90c703'
+    # The Preview column always holds 'work kanban task <id>'; the session id
+    # is the last field.
+    matches: list[str] = []
+    for line in list_result.stdout.splitlines():
+        fields = line.split()
+        if task_id in fields:
+            matches.append(fields[-1])
+
+    if not matches:
+        return None
+
+    # Session ids sort by their YYYYMMDD_HHMMSS prefix: newest wins.
+    matching_session_id = max(matches)
+
+    # Export the session to a temp file (not /dev/stdout) and read its first line
+    with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".jsonl") as tmp:
+        tmp_path = tmp.name
     
-    for line in list_result.stdout.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("Title") or line.startswith("─"):
-            continue
-        # The ID is the last column (after the last space)
-        parts = line.rsplit(" ", 1)
-        if len(parts) != 2:
-            continue
-        title_part, session_id = parts
-        title_part = title_part.strip()
-        if title_part.startswith(task_prefix):
-            matching_session_id = session_id
-            break
-
-    if not matching_session_id:
-        return None
-
-    # Export the session to get detailed metrics
-    export_cmd = [
-        "hermes",
-        "-p",
-        profile,
-        "sessions",
-        "export",
-        "/dev/stdout",
-        "--session-id",
-        matching_session_id,
-        "--format",
-        "jsonl",
-    ]
-
-    export_result = runner(export_cmd, capture_output=True, text=True, env=env)
-    if export_result.returncode != 0:
-        return None
-
     try:
-        # JSONL: each line is a JSON object, take the first one that parses
-        lines = export_result.stdout.strip().split("\n")
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-                # This is the session record with model, billing_provider, etc.
-                return {
-                    "session_id": matching_session_id,
-                    "model": data.get("model"),
-                    "billing_provider": data.get("billing_provider"),
-                    "input_tokens": data.get("input_tokens"),
-                    "output_tokens": data.get("output_tokens"),
-                    "estimated_cost_usd": data.get("estimated_cost_usd"),
-                    "api_call_count": data.get("api_call_count"),
-                }
-            except json.JSONDecodeError:
-                continue
-    except (json.JSONDecodeError, IndexError):
-        return None
+        export_cmd = [
+            "hermes",
+            "-p",
+            profile,
+            "sessions",
+            "export",
+            tmp_path,
+            "--session-id",
+            matching_session_id,
+            "--format",
+            "jsonl",
+        ]
+
+        export_result = runner(export_cmd, capture_output=True, text=True, env=env)
+        if export_result.returncode != 0:
+            return None
+
+        # Read the exported file's first valid JSON line
+        try:
+            with open(tmp_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        return {
+                            "session_id": matching_session_id,
+                            "model": data.get("model"),
+                            "billing_provider": data.get("billing_provider"),
+                            "input_tokens": data.get("input_tokens"),
+                            "output_tokens": data.get("output_tokens"),
+                            "estimated_cost_usd": data.get("estimated_cost_usd"),
+                            "api_call_count": data.get("api_call_count"),
+                        }
+                    except json.JSONDecodeError:
+                        continue
+        except (json.JSONDecodeError, IndexError, OSError):
+            return None
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
     return None
