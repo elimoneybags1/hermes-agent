@@ -6,13 +6,18 @@ requires-python = ">=3.11"
 dependencies = [
     "tomli-w>=1.2.0",
     "pyyaml>=6.0",
+    "textual>=0.70.0",
 ]
 
 [project.scripts]
 team = "team.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "psutil>=5.9",
+]
 
 [build-system]
 requires = ["uv_build>=0.9,<0.13"]

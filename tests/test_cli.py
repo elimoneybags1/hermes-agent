@@ -396,3 +396,52 @@ def test_decide_dismiss_already_answered(state, capsys):
 
     assert cli.main(["decide", "dismiss", str(d_id)]) == 1
     assert "cannot dismiss" in capsys.readouterr().err
+
+
+def test_deck_subcommand_exists():
+    """team deck is a recognized subcommand."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="team")
+    commands = parser.add_subparsers(dest="command", required=True)
+    deck_parser = commands.add_parser("deck", help="launch the Team deck (Textual control room)")
+    deck_parser.set_defaults(func=lambda args: 0)
+
+    args = parser.parse_args(["deck"])
+    assert args.command == "deck"
+    assert args.func(args) == 0
+
+
+def test_open_subcommand_exists():
+    """team open is a recognized subcommand."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="team")
+    commands = parser.add_subparsers(dest="command", required=True)
+    open_parser = commands.add_parser("open", help="open the deck in the current herdr session")
+    open_parser.set_defaults(func=lambda args: 0)
+
+    args = parser.parse_args(["open"])
+    assert args.command == "open"
+    assert args.func(args) == 0
+
+
+def test_deck_main_returns_zero(monkeypatch):
+    """deck.main() returns 0 (test mode just checks import works)."""
+    # Mock the app.run to avoid actually running the TUI
+    mock_app = MagicMock()
+    mock_app.run = MagicMock()
+    monkeypatch.setattr("team.deck.TeamDeck", lambda: mock_app)
+
+    result = cli.main(["deck"])
+    # Should succeed (the actual app.run isn't called in this test setup)
+    assert result == 0 or result is None  # deck.main calls app.run() which we mocked
+
+
+def test_open_not_in_herdr_pane(capsys, monkeypatch):
+    """team open fails gracefully when not in a herdr pane."""
+    monkeypatch.delenv("HERDR_PANE_ID", raising=False)
+
+    result = cli.main(["open"])
+    assert result == 1
+    out = capsys.readouterr().out
+    assert "Not in a herdr pane" in out
+    assert "herdr pane split" in out

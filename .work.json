@@ -11,6 +11,10 @@
           "claude": true
         },
         {
+          "label": "deck",
+          "cwd": ""
+        },
+        {
           "label": "shell",
           "cwd": ""
         }
