@@ -982,7 +982,7 @@ function inbox() {
           <div class="chip mono" style="flex:1;">${d.target}</div>
           <span class="small muted">#${d.id}</span>
         </div>
-        <h3 style="margin:0 0 8px;font-size:16px;font-weight:600;">${d.question}</h3>
+        <h3 style="margin:0 0 8px;font-size:16px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--text);">${d.question}</h3>
         <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">${d.context}</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
           ${d.options.map((opt, i) => html`

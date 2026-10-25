@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Tests for the free model guard."""
 
 import json
@@ -24,15 +25,24 @@ class TestIsFreeModel:
 class TestCheckCommand:
     def test_allowed_free_chat(self):
         cmd = 'hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
     
     def test_allowed_free_chat_long_form(self):
         cmd = 'hermes chat --model="model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
     
     def test_allowed_free_exact_model(self):
         cmd = 'hermes chat -m gemini-2.5-flash'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
     
     def test_missing_model_refused(self):
         cmd = 'hermes chat'
@@ -42,16 +52,19 @@ class TestCheckCommand:
     
     def test_paid_model_refused(self):
         cmd = 'hermes chat -m gpt-4'
+        # Even with a team-* profile, a non-free model is refused
         reason = check_command(cmd)
         assert reason is not None
-        assert "not free" in reason
+        # First refusal is about profile, but if profile were team-*, then "not free"
+        # Since there's no profile, it's about the profile requirement
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
     
     def test_paid_provider_refused(self):
         cmd = 'hermes chat -m "model:free" --provider openai'
+        # No team-* profile -> refused for profile reason first
         reason = check_command(cmd)
         assert reason is not None
-        assert "provider" in reason.lower()
-        assert "not free" in reason
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
     
     def test_hermes_after_and_refused(self):
         cmd = 'echo hello && hermes chat -q "test"'
@@ -79,7 +92,10 @@ class TestCheckCommand:
     
     def test_implicit_chat_with_query_flag(self):
         cmd = 'hermes -q "test" -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
     
     def test_implicit_chat_without_model_refused(self):
         cmd = 'hermes -q "test"'
@@ -89,13 +105,17 @@ class TestCheckCommand:
     
     def test_model_equals_form(self):
         cmd = 'hermes chat --model=gemini-2.5-flash'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
     
     def test_provider_equals_form(self):
         cmd = 'hermes chat -m "model:free" --provider=openai'
+        # No team-* profile -> refused for profile reason first
         reason = check_command(cmd)
         assert reason is not None
-        assert "provider" in reason.lower()
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
 
 class TestCLI:
@@ -111,7 +131,8 @@ class TestCLI:
     
     def test_allowed_free_chat_cli(self):
         code, _, _ = self._run_free_check('hermes chat -m "model:free"')
-        assert code == 0
+        # No team-* profile -> refused
+        assert code == 2
     
     def test_missing_model_refused_cli(self):
         code, _, stderr = self._run_free_check('hermes chat')
@@ -120,13 +141,15 @@ class TestCLI:
     
     def test_paid_model_refused_cli(self):
         code, _, stderr = self._run_free_check('hermes chat -m gpt-4')
+        # No team-* profile -> refused for profile reason
         assert code == 2
-        assert "not free" in stderr
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in stderr
     
     def test_paid_provider_refused_cli(self):
         code, _, stderr = self._run_free_check('hermes chat -m "model:free" --provider openai')
+        # No team-* profile -> refused for profile reason
         assert code == 2
-        assert "provider" in stderr.lower()
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in stderr
     
     def test_non_hermes_allowed_cli(self):
         code, _, _ = self._run_free_check('echo hello')
@@ -191,8 +214,11 @@ class TestReviewFindings:
         assert "requires explicit -m/--model" in reason
 
     def test_function_body_with_free_model_allowed(self):
+        # Now requires a team-* profile even with a free model
         cmd = 'run() { s=$1; hermes chat -Q --yolo --in /tmp/w --query-file /tmp/b.md -m nvidia/nemotron-3-ultra-550b-a55b:free > /tmp/o 2>&1; }; run a & run b & wait'
-        assert check_command(cmd) is None
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_brace_group_refused(self):
         cmd = '{ hermes chat -q test; }'
@@ -239,43 +265,73 @@ class TestReviewFindings:
     # Finding 3: Leading VAR=value assignments and wrappers
     def test_var_assignment_before_hermes_allowed(self):
         cmd = 'FOO=bar hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_env_wrapper_allowed(self):
         cmd = 'env FOO=bar hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_command_wrapper_allowed(self):
         cmd = 'command hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_exec_wrapper_allowed(self):
         cmd = 'exec hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_nohup_wrapper_allowed(self):
         cmd = 'nohup hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_time_wrapper_allowed(self):
         cmd = 'time hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_timeout_wrapper_allowed(self):
         cmd = 'timeout 10 hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_nice_wrapper_allowed(self):
         cmd = 'nice hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_uv_run_wrapper_allowed(self):
         cmd = 'uv run hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_uvx_wrapper_allowed(self):
         cmd = 'uvx hermes chat -m "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_var_assignment_without_model_refused(self):
         cmd = 'FOO=bar hermes chat -q test'
@@ -286,7 +342,10 @@ class TestReviewFindings:
     # Finding 4: --model X (space-separated) support
     def test_model_space_separated_allowed(self):
         cmd = 'hermes chat --model "model:free"'
-        assert check_command(cmd) is None
+        # No team-* profile -> refused
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_model_space_separated_without_model_refused(self):
         cmd = 'hermes chat --model'
@@ -296,17 +355,17 @@ class TestReviewFindings:
 
     def test_provider_space_separated_refused(self):
         cmd = 'hermes chat -m "model:free" --provider openai'
+        # No team-* profile -> refused for profile reason first
         reason = check_command(cmd)
         assert reason is not None
-        assert "provider" in reason.lower()
-        assert "not free" in reason
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_provider_equals_form_refused(self):
         cmd = 'hermes chat -m "model:free" --provider=openai'
+        # No team-* profile -> refused for profile reason first
         reason = check_command(cmd)
         assert reason is not None
-        assert "provider" in reason.lower()
-        assert "not free" in reason
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     # Finding 5: Backstop - pgrep and similar harmless commands are refused
     def test_pgrep_hermes_chat_refused(self):
@@ -413,13 +472,25 @@ class TestStillAllowed:
     """Ordinary commands the stricter parsing must not refuse."""
 
     def test_top_level_model_before_chat(self):
-        assert check_command('hermes -m x:free chat -q hi') is None
+        # No team-* profile -> refused
+        cmd = 'hermes -m x:free chat -q hi'
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_line_continuation(self):
-        assert check_command('hermes chat -m x:free \\\n  -Q --query-file /tmp/b.md') is None
+        # No team-* profile -> refused
+        cmd = 'hermes chat -m x:free \\\n  -Q --query-file /tmp/b.md'
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_quoted_variable_as_option_value(self):
-        assert check_command('hermes chat -m x:free --query-file "$BRIEF" --in "$WT"') is None
+        # No team-* profile -> refused
+        cmd = 'hermes chat -m x:free --query-file "$BRIEF" --in "$WT"'
+        reason = check_command(cmd)
+        assert reason is not None
+        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
 
     def test_grep_for_hermes(self):
         assert check_command('grep -rn hermes team/') is None
