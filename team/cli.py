@@ -15,6 +15,7 @@ from team.free import check_command
 from team import decisions
 from team import agents
 from team import profiles
+from team import deck
 
 LIST_COLUMNS = ("id", "target", "role", "attempt", "started", "ended", "outcome", "grader")
 TARGET_COLUMNS = ("name", "path", "commit", "attached_at")
@@ -319,6 +320,106 @@ def _goals(args: argparse.Namespace) -> int:
     return 0
 
 
+def _deck(args: argparse.Namespace) -> int:
+    """Launch the Team deck (Textual app)."""
+    return deck.main()
+
+
+def _open(args: argparse.Namespace) -> int:
+    """Open the deck in the current herdr session."""
+    import subprocess
+    import json
+
+    # Check if we're in a herdr pane
+    pane_id = os.environ.get("HERDR_PANE_ID")
+    if not pane_id:
+        print("Not in a herdr pane. Run this from a herdr terminal:")
+        print("  herdr pane split --direction right --ratio 0.45 --cwd $PWD --no-focus")
+        print("  herdr pane send-text <pane_id> 'team deck'")
+        print("  herdr pane send-keys <pane_id> enter")
+        return 1
+
+    # Get current working directory
+    cwd = os.getcwd()
+
+    # Split pane to the right
+    try:
+        result = subprocess.run(
+            [
+                "herdr", "pane", "split", pane_id,
+                "--direction", "right",
+                "--ratio", "0.45",
+                "--cwd", cwd,
+                "--no-focus"
+            ],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        new_pane = result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to split pane: {e.stderr}", file=sys.stderr)
+        return 1
+
+    # Send 'team deck' to the new pane
+    try:
+        subprocess.run(
+            ["herdr", "pane", "send-text", new_pane, "team deck"],
+            check=True
+        )
+        subprocess.run(
+            ["herdr", "pane", "send-keys", new_pane, "enter"],
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to send command to pane: {e}", file=sys.stderr)
+        return 1
+
+    # Check if team run is running
+    import psutil
+    run_running = False
+    for proc in psutil.process_iter(["cmdline"]):
+        try:
+            cmdline = proc.info.get("cmdline")
+            if cmdline and "team" in cmdline and "run" in cmdline:
+                run_running = True
+                break
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    if not run_running:
+        # Create a 'run' tab
+        try:
+            subprocess.run(
+                ["herdr", "--session", "Team", "tab", "create", "--label", "run", "--cwd", cwd],
+                check=True
+            )
+            # Send 'team run' to the run tab's pane
+            # Get the pane in the run tab
+            result = subprocess.run(
+                ["herdr", "--session", "Team", "pane", "list", "--tab", "run", "--json"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            panes = json.loads(result.stdout)
+            if panes:
+                run_pane = panes[0]["id"]
+                subprocess.run(
+                    ["herdr", "pane", "send-text", run_pane, "team run"],
+                    check=True
+                )
+                subprocess.run(
+                    ["herdr", "pane", "send-keys", run_pane, "enter"],
+                    check=True
+                )
+        except (subprocess.CalledProcessError, json.JSONDecodeError, IndexError) as e:
+            print(f"Warning: could not create run tab: {e}", file=sys.stderr)
+
+    print(f"Opened deck in pane {new_pane}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -421,6 +522,12 @@ def main(argv: list[str] | None = None) -> int:
     goals_parser.add_argument("target", nargs="?", help="filter by target name")
     goals_parser.add_argument("--all", action="store_true", help="show all goals (including finished)")
     goals_parser.set_defaults(func=_goals)
+
+    deck_parser = commands.add_parser("deck", help="launch the Team deck (Textual control room)")
+    deck_parser.set_defaults(func=_deck)
+
+    open_parser = commands.add_parser("open", help="open the deck in the current herdr session")
+    open_parser.set_defaults(func=_open)
 
     args = parser.parse_args(argv)
     return args.func(args)
