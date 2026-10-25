@@ -22,6 +22,8 @@ import sqlite3
 import subprocess
 import sys
 import time
+import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -174,6 +176,27 @@ def _is_paid_model(session: dict | None) -> tuple[bool, str | None]:
     return reason is not None, reason
 
 
+def _build_session_data(session: dict | None) -> dict:
+    """Build provider/model/tokens data for record_call, handling None session."""
+    if session is None:
+        return {
+            "provider": "unknown",
+            "model": "unknown",
+            "tokens_in": None,
+            "tokens_out": None,
+            "ok": True,  # Can't prove it's paid, so allow
+            "error": None,
+        }
+    return {
+        "provider": session.get("billing_provider") or "unknown",
+        "model": session.get("model") or "unknown",
+        "tokens_in": session.get("input_tokens"),
+        "tokens_out": session.get("output_tokens"),
+        "ok": True,
+        "error": None,
+    }
+
+
 def _blocked_reason(full: dict) -> str:
     task = full.get("task", {})
     for event in reversed(full.get("events") or []):
@@ -222,23 +245,27 @@ class Loop:
         kanban.ensure_board(name, runner=self.runner)
         # Collect status for one-line stdout output
         dispatch_result = kanban.dispatch(name, max_spawns=self.cfg["loop.max_new_per_tick"], runner=self.runner)
-        dispatched = dispatch_result.get("dispatched", 0)
+        spawned = dispatch_result.get("spawned", [])
+        dispatched = len(spawned)
         
         goals = ledger.active_goals(self.conn, name)
         transitions = []
         running_count = 0
         
         for goal in goals:
+            full = None
             try:
                 status_before = self._get_goal_status(goal)
-                self.step(goal)
+                self.step(goal, full)
                 status_after = self._get_goal_status(goal)
                 if status_before != status_after:
                     transitions.append(f"goal {goal['id']} {status_before}\u2192{status_after}")
                 if status_after == "running":
                     running_count += 1
-            except (kanban.KanbanError, grade.GradeError, RunError, OSError) as e:
-                self.log(f"goal {goal['id']}: {e} {getattr(e, 'stderr', '')}".rstrip())
+            except Exception as e:
+                # Any unexpected exception is logged with traceback and does not stop the tick/loop
+                tb = traceback.format_exc()
+                self.log(f"goal {goal['id']}: unexpected error: {e}\n{tb}")
         
         # One line per tick on stdout
         if dispatched > 0 or transitions:
@@ -262,15 +289,20 @@ class Loop:
         except (kanban.KanbanError, OSError):
             return "error"
 
-    def step(self, goal: dict) -> None:
+    def step(self, goal: dict, full: dict | None = None) -> None:
         """Move one goal along as far as its current state allows."""
         job = ledger.get_job(self.conn, goal["job_id"]) if goal["job_id"] else None
         if job is None:
             # Race: goal row exists before team goal attaches its job.
             # Skip if created < 120s ago instead of failing with 'goal has no job'.
-            created = goal.get("created_at")
-            if created is not None and self.now() - float(created) < 120:
-                return
+            created = goal.get("created")
+            if created is not None:
+                try:
+                    created_ts = datetime.fromisoformat(created).timestamp()
+                    if self.now() - created_ts < 120:
+                        return
+                except (ValueError, TypeError):
+                    pass
             ledger.finish_goal(self.conn, goal["id"], "error", "goal has no job")
             return
         claude = (job["task_ref"] or "").startswith("claude:")
@@ -288,14 +320,15 @@ class Loop:
                 self._next_attempt(goal, job["grader_detail"])
             return
 
-        full = kanban.show_full(goal["target"], goal["current_task"], runner=self.runner)
+        if full is None:
+            full = kanban.show_full(goal["target"], goal["current_task"], runner=self.runner)
         task = full["task"]
         status = task.get("status")
         if status == "review":
-            self._grade_review(goal, job)
+            self._grade_review(goal, job, full)
         elif status == "done":
             # Worker marked done anyway - grade as before; on fail fall back to new task
-            self._grade_free(goal, job)
+            self._grade_free(goal, job, full)
         elif status == "running":
             self._watch(goal, job, full)
         elif status in ("blocked", "archived"):
@@ -356,17 +389,20 @@ class Loop:
         ledger.finish_job(self.conn, job["id"], "error", "team-run", reason)
         self._next_attempt(goal, reason)
 
-    def _grade_free(self, goal: dict, job: dict) -> None:
+    def _grade_free(self, goal: dict, job: dict, full: dict) -> None:
         task_id = goal["current_task"]
-        session = kanban.session_for_task(task_id, runner=self.runner)
+        # Get assignee from task to use as profile for session_for_task, like _grade_review does
+        assignee = full.get("task", {}).get("assignee", "team-worker")
+        session = kanban.session_for_task(task_id, profile=assignee, runner=self.runner)
         is_paid, reason = _is_paid_model(session)
+        session_data = _build_session_data(session)
         ledger.record_call(
             self.conn, job["id"],
-            provider=session.get("billing_provider") or "unknown" if session else "unknown",
-            model=session.get("model") or "unknown" if session else "unknown",
-            task_class=goal["role"], tokens_in=session.get("input_tokens") if session else None,
-            tokens_out=session.get("output_tokens") if session else None, latency_ms=None,
-            ok=not is_paid, error=reason,
+            provider=session_data["provider"],
+            model=session_data["model"],
+            task_class=goal["role"], tokens_in=session_data["tokens_in"],
+            tokens_out=session_data["tokens_out"], latency_ms=None,
+            ok=session_data["ok"] and not is_paid, error=reason if is_paid else session_data["error"],
         )
         if is_paid:
             reason = f"refused as free: {reason}"
@@ -382,21 +418,21 @@ class Loop:
         else:
             self._next_attempt(goal, detail)
 
-    def _grade_review(self, goal: dict, job: dict) -> None:
+    def _grade_review(self, goal: dict, job: dict, full: dict) -> None:
         """Grade a task that the worker moved to review."""
         task_id = goal["current_task"]
         # Get assignee from task to use as profile for session_for_task
-        full = kanban.show_full(goal["target"], task_id, runner=self.runner)
         assignee = full.get("task", {}).get("assignee", "team-worker")
         session = kanban.session_for_task(task_id, profile=assignee, runner=self.runner)
         is_paid, reason = _is_paid_model(session)
+        session_data = _build_session_data(session)
         ledger.record_call(
             self.conn, job["id"],
-            provider=session.get("billing_provider") or "unknown" if session else "unknown",
-            model=session.get("model") or "unknown" if session else "unknown",
-            task_class=goal["role"], tokens_in=session.get("input_tokens") if session else None,
-            tokens_out=session.get("output_tokens") if session else None, latency_ms=None,
-            ok=not is_paid, error=reason,
+            provider=session_data["provider"],
+            model=session_data["model"],
+            task_class=goal["role"], tokens_in=session_data["tokens_in"],
+            tokens_out=session_data["tokens_out"], latency_ms=None,
+            ok=session_data["ok"] and not is_paid, error=reason if is_paid else session_data["error"],
         )
         if is_paid:
             reason = f"refused as free: {reason}"
