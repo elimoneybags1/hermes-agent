@@ -80,6 +80,14 @@ def role_info(root: Path, name: str) -> dict:
     return role
 
 
+def role_skills(root: Path, name: str) -> tuple[str, ...]:
+    """Skill names under roles/<name>/skills/ (directory names)."""
+    skills_dir = root / "roles" / name / "skills"
+    if not skills_dir.is_dir():
+        return ()
+    return tuple(sorted(d.name for d in skills_dir.iterdir() if d.is_dir()))
+
+
 def run_budget_s(role: dict) -> int:
     return int(role.get("budget", {}).get("run_budget_s", 900))
 
@@ -158,6 +166,14 @@ def _paid(session: dict) -> str | None:
     return None
 
 
+def _is_paid_model(session: dict | None) -> tuple[bool, str | None]:
+    """Check if a session has a paid model; returns (is_paid, reason)."""
+    if session is None:
+        return False, None
+    reason = _paid(session)
+    return reason is not None, reason
+
+
 def _blocked_reason(full: dict) -> str:
     task = full.get("task", {})
     for event in reversed(full.get("events") or []):
@@ -204,17 +220,57 @@ class Loop:
 
     def tick_target(self, name: str) -> None:
         kanban.ensure_board(name, runner=self.runner)
-        kanban.dispatch(name, max_spawns=self.cfg["loop.max_new_per_tick"], runner=self.runner)
-        for goal in ledger.active_goals(self.conn, name):
+        # Collect status for one-line stdout output
+        dispatch_result = kanban.dispatch(name, max_spawns=self.cfg["loop.max_new_per_tick"], runner=self.runner)
+        dispatched = dispatch_result.get("dispatched", 0)
+        
+        goals = ledger.active_goals(self.conn, name)
+        transitions = []
+        running_count = 0
+        
+        for goal in goals:
             try:
+                status_before = self._get_goal_status(goal)
                 self.step(goal)
+                status_after = self._get_goal_status(goal)
+                if status_before != status_after:
+                    transitions.append(f"goal {goal['id']} {status_before}\u2192{status_after}")
+                if status_after == "running":
+                    running_count += 1
             except (kanban.KanbanError, grade.GradeError, RunError, OSError) as e:
                 self.log(f"goal {goal['id']}: {e} {getattr(e, 'stderr', '')}".rstrip())
+        
+        # One line per tick on stdout
+        if dispatched > 0 or transitions:
+            ts = time.strftime("%H:%M:%S", time.localtime(self.now()))
+            parts = [f"{ts} {name}:"]
+            if dispatched > 0:
+                parts.append(f"dispatched {dispatched}")
+            parts.extend(transitions)
+            print("; ".join(parts))
+        elif running_count > 0:
+            ts = time.strftime("%H:%M:%S", time.localtime(self.now()))
+            print(f"{ts} {name}: idle ({running_count} goals running)")
+
+    def _get_goal_status(self, goal: dict) -> str:
+        """Get current kanban task status for a goal."""
+        if not goal.get("current_task"):
+            return "none"
+        try:
+            full = kanban.show_full(goal["target"], goal["current_task"], runner=self.runner)
+            return full.get("task", {}).get("status", "unknown")
+        except (kanban.KanbanError, OSError):
+            return "error"
 
     def step(self, goal: dict) -> None:
         """Move one goal along as far as its current state allows."""
         job = ledger.get_job(self.conn, goal["job_id"]) if goal["job_id"] else None
         if job is None:
+            # Race: goal row exists before team goal attaches its job.
+            # Skip if created < 120s ago instead of failing with 'goal has no job'.
+            created = goal.get("created_at")
+            if created is not None and self.now() - float(created) < 120:
+                return
             ledger.finish_goal(self.conn, goal["id"], "error", "goal has no job")
             return
         claude = (job["task_ref"] or "").startswith("claude:")
@@ -257,12 +313,18 @@ class Loop:
         title = goal["goal"].splitlines()[0][:80]
         if attempt > 1:
             title += f" (attempt {attempt})"
+        skills = role_skills(self.root, goal["role"])
+        model = role.get("runs_on", {}).get("model", "")
+        if not model or not is_free_model(model):
+            raise RunError(f"role {goal['role']} has no free model configured")
         task = kanban.create_task(
             goal["target"], title, _brief(goal, attempt, failure),
             assignee=assignee_for(goal["role"], self.runner),
             workspace=f"worktree:{goal['worktree']}",
             branch=goal["branch"],
             max_runtime=run_budget_s(role),
+            skills=skills,
+            model=model,
             runner=self.runner,
         )
         job = self._start_job(goal, attempt, task["id"])
@@ -297,22 +359,21 @@ class Loop:
     def _grade_free(self, goal: dict, job: dict) -> None:
         task_id = goal["current_task"]
         session = kanban.session_for_task(task_id, runner=self.runner)
-        if session is not None:
-            problem = _paid(session)
-            ledger.record_call(
-                self.conn, job["id"],
-                provider=session.get("billing_provider") or "unknown",
-                model=session.get("model") or "unknown",
-                task_class=goal["role"], tokens_in=session.get("input_tokens"),
-                tokens_out=session.get("output_tokens"), latency_ms=None,
-                ok=problem is None, error=problem,
-            )
-            if problem:
-                reason = f"refused as free: {problem}"
-                ledger.finish_job(self.conn, job["id"], "error", "free-gate", reason)
-                self._block(goal, reason)
-                ledger.finish_goal(self.conn, goal["id"], "error", reason)
-                return
+        is_paid, reason = _is_paid_model(session)
+        ledger.record_call(
+            self.conn, job["id"],
+            provider=session.get("billing_provider") or "unknown" if session else "unknown",
+            model=session.get("model") or "unknown" if session else "unknown",
+            task_class=goal["role"], tokens_in=session.get("input_tokens") if session else None,
+            tokens_out=session.get("output_tokens") if session else None, latency_ms=None,
+            ok=not is_paid, error=reason,
+        )
+        if is_paid:
+            reason = f"refused as free: {reason}"
+            ledger.finish_job(self.conn, job["id"], "error", "free-gate", reason)
+            self._block(goal, reason)
+            ledger.finish_goal(self.conn, goal["id"], "error", reason)
+            return
         ok, detail = self.grade(goal)
         ledger.finish_job(self.conn, job["id"], "pass" if ok else "fail",
                           goal["check_cmd"], detail)
@@ -324,23 +385,25 @@ class Loop:
     def _grade_review(self, goal: dict, job: dict) -> None:
         """Grade a task that the worker moved to review."""
         task_id = goal["current_task"]
-        session = kanban.session_for_task(task_id, runner=self.runner)
-        if session is not None:
-            problem = _paid(session)
-            ledger.record_call(
-                self.conn, job["id"],
-                provider=session.get("billing_provider") or "unknown",
-                model=session.get("model") or "unknown",
-                task_class=goal["role"], tokens_in=session.get("input_tokens"),
-                tokens_out=session.get("output_tokens"), latency_ms=None,
-                ok=problem is None, error=problem,
-            )
-            if problem:
-                reason = f"refused as free: {problem}"
-                ledger.finish_job(self.conn, job["id"], "error", "free-gate", reason)
-                self._block(goal, reason)
-                ledger.finish_goal(self.conn, goal["id"], "error", reason)
-                return
+        # Get assignee from task to use as profile for session_for_task
+        full = kanban.show_full(goal["target"], task_id, runner=self.runner)
+        assignee = full.get("task", {}).get("assignee", "team-worker")
+        session = kanban.session_for_task(task_id, profile=assignee, runner=self.runner)
+        is_paid, reason = _is_paid_model(session)
+        ledger.record_call(
+            self.conn, job["id"],
+            provider=session.get("billing_provider") or "unknown" if session else "unknown",
+            model=session.get("model") or "unknown" if session else "unknown",
+            task_class=goal["role"], tokens_in=session.get("input_tokens") if session else None,
+            tokens_out=session.get("output_tokens") if session else None, latency_ms=None,
+            ok=not is_paid, error=reason,
+        )
+        if is_paid:
+            reason = f"refused as free: {reason}"
+            ledger.finish_job(self.conn, job["id"], "error", "free-gate", reason)
+            self._block(goal, reason)
+            ledger.finish_goal(self.conn, goal["id"], "error", reason)
+            return
         ok, detail = self.grade(goal)
         ledger.finish_job(self.conn, job["id"], "pass" if ok else "fail",
                           goal["check_cmd"], detail)
@@ -348,21 +411,26 @@ class Loop:
             kanban.complete(goal["target"], task_id, result=f"passed: {detail[-200:]}", runner=self.runner)
             self._land(goal)
         else:
-            kanban.comment(goal["target"], task_id, f"FAILED: {detail}", runner=self.runner)
-            kanban.reopen_review(goal["target"], task_id, runner=self.runner)
-            # Do NOT create a new kanban task - the same task is reopened for the next attempt
-            # Just update the ledger for the next attempt
+            # Decide next step BEFORE touching kanban
             goal_updated = ledger.get_goal(self.conn, goal["id"])
             if goal_updated is None:
                 return
             role = role_info(self.root, goal_updated["role"])
             nxt = goal_updated["attempt"] + 1
             if nxt <= after_failures(role):
+                # Next free attempt: comment failure tail, then reopen_review
+                kanban.comment(goal["target"], task_id, f"FAILED: {_tail(detail)}", runner=self.runner)
+                kanban.reopen_review(goal["target"], task_id, runner=self.runner)
                 new_job = self._start_job(goal_updated, nxt, task_id)
                 ledger.update_goal(self.conn, goal_updated["id"], attempt=nxt, job_id=new_job)
             elif nxt == after_failures(role) + 1 and self.cfg["escalation.claude"]:
+                # Claude attempt: comment, then block the task (kind needs_input)
+                kanban.comment(goal["target"], task_id, f"FAILED: {_tail(detail)}", runner=self.runner)
+                kanban.block(goal["target"], task_id, "Escalating to Claude", kind="needs_input", runner=self.runner)
                 self._claude_attempt(goal_updated, nxt, detail)
             else:
+                # Give up: comment and block
+                kanban.comment(goal["target"], task_id, f"FAILED: {_tail(detail)}", runner=self.runner)
                 self._give_up(goal_updated, f"all {goal_updated['attempt']} attempts failed", detail)
 
     # -- escalation ------------------------------------------------------------
@@ -400,13 +468,19 @@ class Loop:
         if not result["ok"]:
             detail = f"claude run failed: {result['result']}"
             ledger.finish_job(self.conn, job, "error", "claude", detail)
+            # Comment result on task, then block
+            kanban.comment(goal["target"], goal["current_task"], f"CLAUDE FAILED: {_tail(detail)}", runner=self.runner)
+            kanban.block(goal["target"], goal["current_task"], "Claude attempt failed", kind="needs_input", runner=self.runner)
             self._give_up(goal, "the Claude attempt failed too", detail)
             return
         ok, detail = self.grade(goal)
         ledger.finish_job(self.conn, job, "pass" if ok else "fail", goal["check_cmd"], detail)
         if ok:
+            kanban.complete(goal["target"], goal["current_task"], result=f"claude passed: {detail[-200:]}", runner=self.runner)
             self._land(goal)
         else:
+            kanban.comment(goal["target"], goal["current_task"], f"CLAUDE FAILED CHECK: {_tail(detail)}", runner=self.runner)
+            kanban.block(goal["target"], goal["current_task"], "Claude attempt failed check", kind="needs_input", runner=self.runner)
             self._give_up(goal, "the Claude attempt failed too", detail)
 
     def _give_up(self, goal: dict, why: str, detail: str | None) -> None:

@@ -75,6 +75,7 @@ def create_task(
     branch: str | None = None,
     max_runtime: int | None = None,
     skills: tuple[str, ...] = (),
+    model: str | None = None,
     runner=subprocess.run,
 ) -> dict:
     """Create a kanban task and return the parsed task dict."""
@@ -98,6 +99,8 @@ def create_task(
     if skills:
         for skill in skills:
             args.extend(["--skill", skill])
+    if model:
+        args.extend(["--model", model])
 
     result = _run_kanban(args, runner=runner)
     return _parse_json_output(result, "create")

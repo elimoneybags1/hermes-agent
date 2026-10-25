@@ -99,13 +99,27 @@ class FakeHermes:
         sub, rest = a[2], a[3:]
         if sub == "dispatch":
             self.dispatches.append(a)
-            return self._ok({"spawned": []})
+            return self._ok({"spawned": [], "dispatched": 0})
         if sub == "create":
             tid = f"t_{len(self.tasks) + 1:08x}"
             task = {"id": tid, "title": rest[0], "status": "ready", "result": None,
                     "body": rest[rest.index("--body") + 1],
                     "assignee": rest[rest.index("--assignee") + 1],
                     "argv": a}
+            # Extract skills and model if present (after --json)
+            skills = []
+            i = 0
+            while i < len(rest):
+                if rest[i] == "--skill":
+                    skills.append(rest[i + 1])
+                    i += 2
+                elif rest[i] == "--model":
+                    task["model"] = rest[i + 1]
+                    i += 2
+                else:
+                    i += 1
+            if skills:
+                task["skills"] = skills
             self.tasks[tid] = {"task": task, "runs": [], "events": [], "latest_summary": None}
             return self._ok(task)
         if sub == "show":
@@ -119,6 +133,7 @@ class FakeHermes:
             return self._ok()
         if sub == "reopen-review":
             self.tasks[rest[0]]["task"]["status"] = "ready"
+            self.tasks[rest[0]]["events"].append({"kind": "reopen-review", "payload": ""})
             return self._ok()
         if sub == "complete":
             result = None
@@ -149,6 +164,9 @@ def env(tmp_path, monkeypatch):
     root = init_repo(tmp_path / "team")
     (root / "roles" / "implement").mkdir(parents=True)
     (root / "roles" / "implement" / "role.toml").write_text(ROLE)
+    # Create skills directories for the implement role
+    (root / "roles" / "implement" / "skills" / "commit-before-done").mkdir(parents=True)
+    (root / "roles" / "implement" / "skills" / "merge-main-first").mkdir(parents=True)
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "role")
     conn = ledger.connect(tmp_path / "state" / "team.db")
@@ -195,6 +213,10 @@ def test_start_goal_creates_worktree_task_job_and_goal(env):
     assert argv[argv.index("--max-runtime") + 1] == "900s"
     assert task["assignee"] == "team-worker"
     assert CHECK in task["body"]
+    # Check that skills and model are passed
+    assert "commit-before-done" in task.get("skills", [])
+    assert "merge-main-first" in task.get("skills", [])
+    assert task.get("model") == FREE
     [job] = env.jobs()
     assert (job["attempt"], job["task_ref"], job["role"]) == (1, g["current_task"], "implement")
     assert job["target_commit"] == git(env.repo, "rev-parse", "main")
@@ -492,7 +514,7 @@ def test_review_pass_completes_and_lands(env):
 
 
 def test_review_fail_comments_reopens_and_retries(env):
-    """Task in review fails: comment, reopen_review, new attempt on same branch."""
+    """Task in review fails: comment (with tail), reopen_review, new attempt on same branch."""
     g = env.goal()
     commit(g["worktree"], "result.txt", "nope\n")
     env.fake.done(g["current_task"])
@@ -508,9 +530,16 @@ def test_review_fail_comments_reopens_and_retries(env):
     assert g2["attempt"] == 2
     assert g2["current_task"] == g["current_task"]
     # Verify comment and reopen_review were called on the task
-    # Check that the task has comment and reopen events recorded in the fake
-    # Note: the fake's _hermes doesn't track these as events, so just verify job was created
-    # Task should be reopened (status back to ready in real kanban)
+    # The fake's _hermes tracks events for comment and reopen-review
+    # Check that the task has comment with FAILED prefix and reopen-review events
+    events = task_entry.get("events", [])
+    comment_events = [e for e in events if e.get("kind") == "comment"]
+    reopen_events = [e for e in events if e.get("kind") == "reopen-review"]
+    # Should have at least one comment with FAILED prefix
+    assert len(comment_events) >= 1, f"Expected comment events, got {events}"
+    assert any("FAILED" in e.get("payload", "") for e in comment_events), f"Comment should contain FAILED: {comment_events}"
+    # Should have reopen-review event
+    assert len(reopen_events) >= 1, f"Expected reopen-review event, got {events}"
 
 
 def test_done_task_fail_falls_back_to_new_task(env):
