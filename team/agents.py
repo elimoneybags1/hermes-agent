@@ -39,6 +39,95 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 VALID_STATUSES = {"active", "planned"}
 VALID_HARNESSES = {"hermes", "claude-code", "crew"}
 
+NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
+
+def create(
+    root: Path,
+    name: str,
+    *,
+    title: str,
+    does: str,
+    graded_by: str,
+    model: str,
+    tools: list[str],
+    hands_to: str | None = None,
+    instructions: str,
+    source: str = "dashboard",
+) -> str:
+    """Create a new agent with role.toml and SOUL.md in one commit.
+    
+    Refuses:
+    - existing name
+    - name not matching ^[a-z][a-z0-9-]{0,31}$
+    - non-free model
+    - tools outside TOOLSETS
+    - unknown hands_to
+    
+    Returns the commit SHA.
+    """
+    all_names = agent_names(root)
+    if name in all_names:
+        raise AgentError(f"agent already exists: {name}")
+    
+    if not NAME_RE.match(name):
+        raise AgentError("name must match ^[a-z][a-z0-9-]{0,31}$")
+    
+    if not is_free_model(model):
+        raise AgentError(f"model '{model}' is not free (must end with :free or be in FREE_EXACT)")
+    
+    for t in tools:
+        if t not in TOOLSETS:
+            raise AgentError(f"unknown tool: {t}")
+    
+    if hands_to is not None:
+        if hands_to == name:
+            raise AgentError("hands_to cannot point to itself")
+        if hands_to not in all_names:
+            raise AgentError(f"hands_to must be an existing agent name")
+    
+    # Create role directory
+    role_dir = root / "roles" / name
+    role_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Build role.toml
+    role_data = {
+        "name": name,
+        "title": title,
+        "does": does,
+        "graded_by": graded_by,
+        "status": "planned",
+        "tools": tools,
+        "runs_on": {
+            "harness": "hermes",
+            "model": model,
+        },
+        "escalation": {
+            "harness": "crew",
+            "model": "claude",
+            "after_failures": 2,
+        },
+        "budget": {
+            "max_turns": 25,
+            "run_budget_s": 600,
+        },
+    }
+    if hands_to:
+        role_data["hands_to"] = hands_to
+    
+    # Write role.toml
+    role_toml_path = role_dir / "role.toml"
+    with role_toml_path.open("wb") as f:
+        tomli_w.dump(role_data, f)
+    
+    # Write SOUL.md
+    soul_path = role_dir / "SOUL.md"
+    soul_path.write_text(instructions)
+    
+    # Commit both files
+    msg = f"{name}: created ({source})"
+    return _git_commit(root, msg, role_toml_path, soul_path)
+
 
 def agent_names(root: Path) -> list[str]:
     """Directories under roles/ with a role.toml, sorted."""

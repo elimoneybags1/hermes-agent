@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlsplit
 
 from team import agents, dash, ledger, settings, targets
 from team.roles import load_roles
+from team.decisions import list_open, answer, dismiss
 
 DEFAULT_PORT = 7341
 INDEX = Path(__file__).resolve().parent / "ui" / "index.html"
@@ -139,6 +140,11 @@ class Handler(BaseHTTPRequestHandler):
         if len(rest) == 2 and rest[0] == "targets":
             if method == "PATCH":
                 return lambda: self._set_target(rest[1])
+        # Decisions routes (Inbox)
+        if method == "GET" and rest == ["decisions"]:
+            return self._decisions
+        if method == "POST" and len(rest) == 2 and rest[0] == "decisions":
+            return lambda: self._decision_action(rest[1])
         # Agents routes
         if len(rest) < 2 or rest[0] != "agents":
             return None
@@ -261,6 +267,48 @@ class Handler(BaseHTTPRequestHandler):
         key = self._need_str(body, "key")
         result = settings.set_target(name, key, self._need(body, "value"))
         self._json(200, result)
+
+    # --- decisions (Inbox)
+
+    def _decisions(self) -> None:
+        conn = self.server.connect()
+        if conn is None:
+            self._json(200, {"decisions": [], "reviews": {}})
+            return
+        try:
+            decisions = list_open(conn)
+            # Parse options JSON for each decision
+            for d in decisions:
+                import json
+                d["options"] = json.loads(d["options"])
+            # For now, reviews table doesn't exist - leave empty as per spec
+            reviews = {}
+            self._json(200, {"decisions": decisions, "reviews": reviews})
+        finally:
+            conn.close()
+
+    def _decision_action(self, decision_id_str: str) -> None:
+        try:
+            decision_id = int(decision_id_str)
+        except ValueError:
+            raise HTTPError(400, "invalid decision id")
+        body = self._body()
+        conn = self.server.connect()
+        if conn is None:
+            raise HTTPError(500, "no ledger")
+        try:
+            if body.get("dismiss") is True:
+                dismiss(conn, decision_id)
+            elif "answer" in body:
+                answer_text = body["answer"]
+                if not isinstance(answer_text, str):
+                    raise HTTPError(400, "answer must be a string")
+                answer(conn, decision_id, answer_text)
+            else:
+                raise HTTPError(400, "body must contain 'answer' or 'dismiss: true'")
+            self._json(200, {"ok": True})
+        finally:
+            conn.close()
 
     # --- live events
 

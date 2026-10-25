@@ -36,6 +36,9 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
     "escalation.claude_max_turns": (int, 60, "Turn limit for a Claude Code attempt."),
     "escalation.claude_timeout_s": (int, 1800, "Time limit for a Claude Code attempt."),
     "ask.block_after_claude_fails": (bool, True, "When the Claude attempt fails too, block the task and ask Eli."),
+    "models.claude_cost": (float, 0.3, "How much pass-probability a Claude attempt must beat a free one by."),
+    "models.minute_weight": (float, 0.005, "Penalty per median minute of a model's attempts."),
+    "models.explore": (bool, True, "Off = always take the best mean, no Thompson sampling."),
 }
 
 TARGET_FIELDS: dict[str, tuple[type, Any, str]] = {
@@ -60,6 +63,10 @@ def _coerce(key: str, kind: type, value: Any) -> Any:
     elif kind is int:
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise AgentError(f"{key} must be a whole number above 0")
+    elif kind is float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise AgentError(f"{key} must be a number above 0")
+        value = float(value)
     elif kind is str:
         if not isinstance(value, str) or not value.strip():
             raise AgentError(f"{key} must be a non-empty string")

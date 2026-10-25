@@ -77,3 +77,60 @@ implement task, as today.
    through it. `team part <target> "<part>"` replaces `team goal` for planned
    work (`team goal` stays as the one-task path).
 3. Dashboard: the pipeline strip shows each part's stage.
+
+## Step 2 contract: `team/pipeline.py`
+
+**Every stage is a goal.** The loop in `team/run.py` already does attempts,
+retries, Claude escalation, the watchdog, the review column and the ledger
+for a goal. A stage reuses all of it; the pipeline only decides which goals
+exist, what their check is, and where they land.
+
+Ledger:
+- New table `parts`: id, target, title, does, done_when, branch
+  (`team/part-<id>-<slug>`), worktree, stage
+  (`spec|test_write|implement|verify|review|landed|held|failed`), review_rounds,
+  created, finished, outcome, detail.
+- `goals` gains `part_id` (nullable), `base` (branch it starts from and lands
+  into; default `main`), `needs_commits` (bool, default 1).
+
+Files a stage writes outside the repo (Decision 1), under
+`$TEAM_STATE/targets/<target>/parts/<id>/`: `spec.md`, `tasks.json`
+(shape: roles/spec/skills/task-list), `verify.md`, `review.json`
+(`{"verdict": "land"|"fix", "criteria": [{"criterion", "met", "evidence"}],
+"fix": [{"task": "impl-2", "what": "..."}], "decisions": [...]}`). The brief of
+each stage names these paths and includes the earlier stages' files.
+
+Gates are commands, so they are the goal's check: `team gate <stage> <part_id>`
+run in the goal's worktree, exit 0 = pass, output = the failure shown to the
+next attempt.
+- `spec`: tasks.json valid per the task-list skill; spec.md non-empty. If its
+  `decisions` is non-empty: decisions rows (task_id = the spec task), part
+  `held`; answering them puts the part back to `spec` with the answers in
+  the brief. `needs_commits = 0`.
+- `test_write`: only files under the tests listed in tasks.json changed vs
+  base; those test files fail; the rest of the check passes.
+- `implement` (one goal per task, at most `pipeline.max_parallel_impl`
+  running): changed files ⊆ the task's files; the task's test files pass.
+- `verify`: the target's full check passes; verify.md exists with a verdict
+  line `VERDICT: pass`. `needs_commits = 0`.
+- `review`: review.json valid, verdict `land`, every criterion `met`.
+  `fix` → one implement goal per named task with the reason, then verify and
+  review again; after 2 review rounds, a decision for Eli and the part is
+  `held`. `needs_commits = 0`.
+
+Branches: stage goals branch from the part branch (`base`) and land into it
+(`grade.land` takes the base). When review passes, the part branch lands on
+the target's main with the same refusals as today, and the part is `landed`.
+
+`team run` each tick, after stepping goals: `pipeline.advance(root, conn,
+target)` moves each part whose current stage's goals all passed to the next
+stage and creates its goals; a part whose stage goal failed for good is
+`failed` and its decision goes to Eli.
+
+CLI: `team part <target> "<title>" --does "..." --done-when "..."` starts a
+part at `spec`; `team parts [target]` lists them with their stage;
+`team gate <stage> <part_id>` (used as the check).
+
+Each stage's role and model come from `roles/<role>` (`spec`, `test`,
+`implement`, `test`, `review`); the brief for a stage is built from the role's
+SOUL.md stage section, the part, and the files above.
