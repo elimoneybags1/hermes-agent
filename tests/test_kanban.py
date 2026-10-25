@@ -104,6 +104,7 @@ def test_create_task_with_optional_args(monkeypatch, tmp_path):
             branch="team/test-branch",
             max_runtime=3600,
             skills=("skill1", "skill2"),
+            model="nvidia/nemotron-3-ultra-550b-a55b:free",
             runner=runner,
         )
 
@@ -118,6 +119,9 @@ def test_create_task_with_optional_args(monkeypatch, tmp_path):
     assert argv.count("--skill") == 2
     assert "skill1" in argv
     assert "skill2" in argv
+    # model is passed
+    assert "--model" in argv
+    assert "nvidia/nemotron-3-ultra-550b-a55b:free" in argv
     assert captured_cmd["env"]["HERMES_KANBAN_HOME"] == str(kanban_home)
 
 

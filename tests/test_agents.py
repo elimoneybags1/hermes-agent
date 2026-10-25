@@ -687,5 +687,243 @@ class TestDetailBossSpecific:
             # Should not be a list - each command is a separate row
 
 
+class TestCreate:
+    def test_create_agent_basic(self, temp_repo):
+        """Test creating a new agent with minimal required fields."""
+        sha = agents.create(
+            temp_repo,
+            "test-agent",
+            title="Test Agent",
+            does="Does testing",
+            graded_by="Tests pass",
+            model="gemini-2.5-flash",
+            tools=["terminal", "file"],
+            instructions="# Test Agent\n\nDoes testing\n",
+        )
+        assert len(sha) == 40
+        
+        # Verify role.toml was created
+        import tomllib
+        role_toml = temp_repo / "roles" / "test-agent" / "role.toml"
+        assert role_toml.exists()
+        with role_toml.open("rb") as f:
+            data = tomllib.load(f)
+        assert data["name"] == "test-agent"
+        assert data["title"] == "Test Agent"
+        assert data["does"] == "Does testing"
+        assert data["graded_by"] == "Tests pass"
+        assert data["status"] == "planned"
+        assert data["tools"] == ["terminal", "file"]
+        assert data["runs_on"]["harness"] == "hermes"
+        assert data["runs_on"]["model"] == "gemini-2.5-flash"
+        assert data["escalation"]["harness"] == "crew"
+        assert data["escalation"]["model"] == "claude"
+        assert data["escalation"]["after_failures"] == 2
+        assert data["budget"]["max_turns"] == 25
+        assert data["budget"]["run_budget_s"] == 600
+        
+        # Verify SOUL.md was created
+        soul = temp_repo / "roles" / "test-agent" / "SOUL.md"
+        assert soul.exists()
+        assert soul.read_text() == "# Test Agent\n\nDoes testing\n"
+        
+        # Verify commit message
+        msg = subprocess.run(
+            ["git", "-C", str(temp_repo), "log", "-1", "--pretty=format:%s", sha],
+            check=True, capture_output=True, text=True
+        ).stdout
+        assert msg == "test-agent: created (dashboard)"
+    
+    def test_create_agent_with_hands_to(self, temp_repo):
+        """Test creating an agent with hands_to pointing to existing agent."""
+        sha = agents.create(
+            temp_repo,
+            "test-agent",
+            title="Test Agent",
+            does="Does testing",
+            graded_by="Tests pass",
+            model="gemini-2.5-flash",
+            tools=["terminal"],
+            hands_to="review",
+            instructions="# Test Agent\n\nDoes testing\n",
+        )
+        assert len(sha) == 40
+        
+        import tomllib
+        role_toml = temp_repo / "roles" / "test-agent" / "role.toml"
+        with role_toml.open("rb") as f:
+            data = tomllib.load(f)
+        assert data["hands_to"] == "review"
+    
+    def test_create_agent_refuses_existing_name(self, temp_repo):
+        """Test create refuses an existing agent name."""
+        agents.create(
+            temp_repo,
+            "test-agent",
+            title="Test Agent",
+            does="Does testing",
+            graded_by="Tests pass",
+            model="gemini-2.5-flash",
+            tools=["terminal"],
+            instructions="test",
+        )
+        
+        with pytest.raises(AgentError, match="agent already exists"):
+            agents.create(
+                temp_repo,
+                "test-agent",
+                title="Test Agent 2",
+                does="Does testing 2",
+                graded_by="Tests pass",
+                model="gemini-2.5-flash",
+                tools=["terminal"],
+                instructions="test",
+            )
+    
+    def test_create_agent_refuses_invalid_name(self, temp_repo):
+        """Test create refuses names not matching ^[a-z][a-z0-9-]{0,31}$."""
+        with pytest.raises(AgentError, match="name must match"):
+            agents.create(
+                temp_repo,
+                "Test-Agent",  # uppercase
+                title="Test",
+                does="Does",
+                graded_by="Tests",
+                model="gemini-2.5-flash",
+                tools=["terminal"],
+                instructions="test",
+            )
+        
+        with pytest.raises(AgentError, match="name must match"):
+            agents.create(
+                temp_repo,
+                "-invalid",  # starts with -
+                title="Test",
+                does="Does",
+                graded_by="Tests",
+                model="gemini-2.5-flash",
+                tools=["terminal"],
+                instructions="test",
+            )
+        
+        with pytest.raises(AgentError, match="name must match"):
+            agents.create(
+                temp_repo,
+                "a" * 33,  # too long (max 32)
+                title="Test",
+                does="Does",
+                graded_by="Tests",
+                model="gemini-2.5-flash",
+                tools=["terminal"],
+                instructions="test",
+            )
+    
+    def test_create_agent_refuses_non_free_model(self, temp_repo):
+        """Test create refuses non-free models."""
+        with pytest.raises(AgentError, match="not free"):
+            agents.create(
+                temp_repo,
+                "test-agent",
+                title="Test Agent",
+                does="Does testing",
+                graded_by="Tests pass",
+                model="gpt-4",  # not free
+                tools=["terminal"],
+                instructions="test",
+            )
+    
+    def test_create_agent_refuses_unknown_tool(self, temp_repo):
+        """Test create refuses tools outside TOOLSETS."""
+        with pytest.raises(AgentError, match="unknown tool"):
+            agents.create(
+                temp_repo,
+                "test-agent",
+                title="Test Agent",
+                does="Does testing",
+                graded_by="Tests pass",
+                model="gemini-2.5-flash",
+                tools=["terminal", "invalid_tool"],
+                instructions="test",
+            )
+    
+    def test_create_agent_refuses_unknown_hands_to(self, temp_repo):
+        """Test create refuses unknown hands_to."""
+        with pytest.raises(AgentError, match="existing agent name"):
+            agents.create(
+                temp_repo,
+                "test-agent",
+                title="Test Agent",
+                does="Does testing",
+                graded_by="Tests pass",
+                model="gemini-2.5-flash",
+                tools=["terminal"],
+                hands_to="nonexistent",
+                instructions="test",
+            )
+    
+    def test_create_agent_refuses_self_hands_to(self, temp_repo):
+        """Test create refuses hands_to pointing to itself."""
+        # First create the agent, then try to create another with hands_to to itself
+        agents.create(
+            temp_repo,
+            "test-agent",
+            title="Test Agent",
+            does="Does testing",
+            graded_by="Tests pass",
+            model="gemini-2.5-flash",
+            tools=["terminal"],
+            instructions="test",
+        )
+        
+        with pytest.raises(AgentError, match="cannot point to itself"):
+            agents.create(
+                temp_repo,
+                "test-agent-2",
+                title="Test Agent 2",
+                does="Does testing 2",
+                graded_by="Tests pass",
+                model="gemini-2.5-flash",
+                tools=["terminal"],
+                hands_to="test-agent-2",
+                instructions="test",
+            )
+    
+    def test_create_agent_commits_both_files(self, temp_repo):
+        """Test create commits both role.toml and SOUL.md in one commit."""
+        # Stage an unrelated file first
+        unrelated = temp_repo / "unrelated.txt"
+        unrelated.write_text("unrelated")
+        subprocess.run(["git", "-C", str(temp_repo), "add", "unrelated.txt"], check=True)
+        
+        sha = agents.create(
+            temp_repo,
+            "test-agent",
+            title="Test Agent",
+            does="Does testing",
+            graded_by="Tests pass",
+            model="gemini-2.5-flash",
+            tools=["terminal"],
+            instructions="test",
+        )
+        
+        # Check the commit only touches the two agent files
+        diff = subprocess.run(
+            ["git", "-C", str(temp_repo), "show", "--name-only", "--pretty=format:", sha],
+            check=True, capture_output=True, text=True
+        )
+        changed_files = sorted([f for f in diff.stdout.strip().split("\n") if f])
+        assert set(changed_files) == {
+            "roles/test-agent/role.toml",
+            "roles/test-agent/SOUL.md",
+        }
+        
+        # Check unrelated.txt is still staged
+        status = subprocess.run(
+            ["git", "-C", str(temp_repo), "status", "--porcelain"],
+            check=True, capture_output=True, text=True
+        )
+        assert "unrelated.txt" in status.stdout
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

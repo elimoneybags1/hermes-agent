@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from team.free import is_free_model
-from team.ledger import connect
 from team.settings import load as load_settings
 
 
@@ -149,6 +148,7 @@ def choose(
     rng: random.Random,
     *,
     root: Path,
+    previous_model: str | None = None,
 ) -> dict[str, Any]:
     """
     Choose a model for this attempt.
@@ -184,20 +184,8 @@ def choose(
     # 3. Get ledger stats
     stats = _ledger_stats(conn, role, target)
 
-    # 4. Determine which model failed last attempt (if retry)
-    failed_model = None
-    if attempt > 1:
-        # Find the model used in the previous attempt for this role+target
-        sql = """
-            SELECT c.model
-            FROM jobs j
-            JOIN calls c ON c.job_id = j.id
-            WHERE j.role = ? AND j.target = ? AND j.attempt = ?
-            ORDER BY c.id DESC LIMIT 1
-        """
-        row = conn.execute(sql, (role, target, attempt - 1)).fetchone()
-        if row:
-            failed_model = row["model"]
+    # 4. On retry, avoid the model that just failed (passed by caller)
+    failed_model = previous_model
 
     # 5. Score each candidate
     explore = settings.get("models.explore", True)
@@ -212,9 +200,6 @@ def choose(
         score, details = _score_model(model, stats, settings, rng, explore)
         scored.append((model, score, details))
 
-    if not scored:
-        raise ValueError(f"role {role}: no valid candidates after free-model filter")
-
     # 6. On retry, avoid the model that just failed (unless it's the only one)
     if failed_model and len(scored) > 1:
         scored = [(m, s, d) for m, s, d in scored if m != failed_model]
@@ -226,12 +211,20 @@ def choose(
     scored.sort(key=lambda x: x[1], reverse=True)
     best_model, best_score, best_details = scored[0]
 
-    # Build scores dict for all candidates (for logging)
+    # Build scores dict for all candidates (for logging) - use the same scored list
     all_scores = {}
+    for model, score, details in scored:
+        all_scores[model] = details
+    # Include filtered-out candidates with a reason
     for model in candidates:
-        if model == "claude" or is_free_model(model):
-            _, details = _score_model(model, stats, settings, rng, explore)
-            all_scores[model] = details
+        if model not in all_scores:
+            if model == "claude" or is_free_model(model):
+                # This was filtered out due to retry avoidance
+                _, details = _score_model(model, stats, settings, rng, explore)
+                all_scores[model] = details
+                all_scores[model]["filtered_reason"] = "avoided on retry"
+            else:
+                all_scores[model] = {"filtered_reason": "not free"}
 
     why = "thompson"
     if failed_model and best_model != failed_model:
