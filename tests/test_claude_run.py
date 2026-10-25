@@ -2,6 +2,7 @@
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -150,3 +151,99 @@ def test_run_passes_custom_timeout():
     result = claude_run.run(Path("/tmp/wt"), "brief", timeout_s=900, runner=fake_runner)
 
     assert result["result"] == "timeout after 900s"
+
+
+def test_build_cmd_with_tools():
+    """Test _build_cmd includes --allowed-tools."""
+    cmd = claude_run._build_cmd("brief", max_turns=5, tools=["Read", "Write", "Bash"])
+    assert "--allowed-tools" in cmd
+    idx = cmd.index("--allowed-tools")
+    assert cmd[idx + 1] == "Read,Write,Bash"
+
+
+def test_build_cmd_with_model():
+    """Test _build_cmd includes --model."""
+    cmd = claude_run._build_cmd("brief", model="claude-3-opus")
+    assert "--model" in cmd
+    idx = cmd.index("--model")
+    assert cmd[idx + 1] == "claude-3-opus"
+
+
+def test_build_cmd_with_json_schema():
+    """Test _build_cmd includes --schema with temp file."""
+    schema = {"type": "object", "properties": {"result": {"type": "string"}}}
+    cmd = claude_run._build_cmd("brief", json_schema=schema)
+    assert "--schema" in cmd
+    idx = cmd.index("--schema")
+    schema_path = cmd[idx + 1]
+    assert schema_path.endswith(".json")
+    # Verify the file contains the schema
+    with open(schema_path) as f:
+        loaded = json.load(f)
+    assert loaded == schema
+
+
+def test_build_cmd_with_allowed_files():
+    """Test _build_cmd includes --allowed-files."""
+    cmd = claude_run._build_cmd("brief", allowed_files=["src/**", "tests/**"])
+    assert "--allowed-files" in cmd
+    idx = cmd.index("--allowed-files")
+    assert cmd[idx + 1] == "src/**:tests/**"
+
+
+def test_build_cmd_with_check():
+    """Test _build_cmd includes --check."""
+    cmd = claude_run._build_cmd("brief", check="pytest")
+    assert "--check" in cmd
+    idx = cmd.index("--check")
+    assert cmd[idx + 1] == "pytest"
+
+
+def test_build_cmd_with_decision_file():
+    """Test _build_cmd includes --decision-file."""
+    cmd = claude_run._build_cmd("brief", decision_file="/tmp/decision.json")
+    assert "--decision-file" in cmd
+    idx = cmd.index("--decision-file")
+    assert cmd[idx + 1] == "/tmp/decision.json"
+
+
+def test_run_passes_tools():
+    """Test run() passes tools to _build_cmd."""
+    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
+    claude_run.run(Path("/tmp/wt"), "brief", tools=["Read", "Write"], runner=fake_runner)
+    args, _ = fake_runner.call_args
+    assert "--allowed-tools" in args[0]
+
+
+def test_run_passes_model():
+    """Test run() passes model to _build_cmd."""
+    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
+    claude_run.run(Path("/tmp/wt"), "brief", model="test-model", runner=fake_runner)
+    args, _ = fake_runner.call_args
+    assert "--model" in args[0]
+    idx = args[0].index("--model")
+    assert args[0][idx + 1] == "test-model"
+
+
+def test_run_passes_allowed_files():
+    """Test run() passes allowed_files to _build_cmd."""
+    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
+    claude_run.run(Path("/tmp/wt"), "brief", allowed_files=["src/**"], runner=fake_runner)
+    args, _ = fake_runner.call_args
+    assert "--allowed-files" in args[0]
+
+
+def test_run_passes_check():
+    """Test run() passes check to _build_cmd."""
+    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
+    claude_run.run(Path("/tmp/wt"), "brief", check="make test", runner=fake_runner)
+    args, _ = fake_runner.call_args
+    assert "--check" in args[0]
+
+
+def test_run_passes_decision_file():
+    """Test run() passes decision_file to _build_cmd."""
+    fake_runner = MagicMock(return_value=FakeCompletedProcess(0, '{"is_error": false}'))
+    claude_run.run(Path("/tmp/wt"), "brief", decision_file="/tmp/decision.json", runner=fake_runner)
+    args, _ = fake_runner.call_args
+    assert "--decision-file" in args[0]

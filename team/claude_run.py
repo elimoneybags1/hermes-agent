@@ -29,20 +29,18 @@ class ClaudeRunError(RuntimeError):
     """Raised when claude command fails."""
 
 
-def run(
-    worktree: Path | str,
+def _build_cmd(
     brief: str,
     *,
     max_turns: int = 60,
-    timeout_s: int = 1800,
-    runner: Any = subprocess.run,
-) -> dict[str, Any]:
-    """Run claude -p with the given brief in the worktree.
-
-    Returns a dict with: ok, result, session_id, num_turns, duration_ms, usage.
-    Missing keys are None. ok is False on error, non-zero exit, or non-JSON output.
-    """
-    worktree = Path(worktree)
+    tools: list[str] | None = None,
+    model: str | None = None,
+    json_schema: dict | None = None,
+    allowed_files: list[str] | None = None,
+    check: str | None = None,
+    decision_file: str | None = None,
+) -> list[str]:
+    """Build the claude -p command with all options."""
     cmd = [
         "claude",
         "-p",
@@ -53,6 +51,62 @@ def run(
         str(max_turns),
         "--dangerously-skip-permissions",
     ]
+    
+    if tools:
+        cmd.extend(["--allowed-tools", ",".join(tools)])
+    
+    if model:
+        cmd.extend(["--model", model])
+    
+    if json_schema:
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(json_schema, f)
+            schema_path = f.name
+        cmd.extend(["--output-format", "json", "--schema", schema_path])
+    
+    if allowed_files:
+        cmd.extend(["--allowed-files", ":".join(allowed_files)])
+    
+    if check:
+        cmd.extend(["--check", check])
+    
+    if decision_file:
+        cmd.extend(["--decision-file", decision_file])
+    
+    return cmd
+
+
+def run(
+    worktree: Path | str,
+    brief: str,
+    *,
+    max_turns: int = 60,
+    timeout_s: int = 1800,
+    runner: Any = subprocess.run,
+    tools: list[str] | None = None,
+    model: str | None = None,
+    json_schema: dict | None = None,
+    allowed_files: list[str] | None = None,
+    check: str | None = None,
+    decision_file: str | None = None,
+) -> dict[str, Any]:
+    """Run claude -p with the given brief in the worktree.
+
+    Returns a dict with: ok, result, session_id, num_turns, duration_ms, usage.
+    Missing keys are None. ok is False on error, non-zero exit, or non-JSON output.
+    """
+    worktree = Path(worktree)
+    cmd = _build_cmd(
+        brief,
+        max_turns=max_turns,
+        tools=tools,
+        model=model,
+        json_schema=json_schema,
+        allowed_files=allowed_files,
+        check=check,
+        decision_file=decision_file,
+    )
     env = clean_env()
     start = time.monotonic()
     try:
