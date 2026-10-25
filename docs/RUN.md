@@ -163,3 +163,55 @@ sees the task's comments in its context; `complete <id>` finishes it.
 - **One line per tick on stdout**, so the `run` tab shows what Team does:
   `HH:MM:SS <target>: dispatched N; goal 3 review→grading; goal 3 pass, landed abc1234`
   or `HH:MM:SS idle (2 goals running)`. Errors stay on stderr.
+
+## Claude in build mode (Eli, 2026-10-24)
+
+Claude Code runs under two sets of rules. **Interactive** (the boss, Eli's
+sessions): ask before assuming, explain, glue steps together. **Build** (every
+`claude_run` call Team makes): no one is there to answer, so it never asks; it
+works only inside its task, proves its work by the check, returns exactly the
+shape the gate reads, and turns anything that is Eli's to decide into a
+decision file instead of a question. Build mode runs Claude through Team's
+orchestration with the same role files as the Hermes workers.
+
+`team/claude_roles.py`:
+- `plugin_dir(root, role) -> Path`: generate, under
+  `$TEAM_STATE/claude/<role>/`, a Claude Code plugin from `roles/<role>/`:
+  `.claude-plugin/plugin.json`; `agents/<role>.md` (frontmatter `name`,
+  `description` from `does`; body: the role's SOUL.md, then the **build rules**
+  below); `skills/<skill>/SKILL.md` copied from the role (same Agent Skills
+  format Hermes uses); `hooks/hooks.json` with the two gates below. Regenerate
+  when any source file is newer. Never written inside a repo.
+- Build rules appended to every build agent: "No person is reading this
+  session. Never ask a question and never wait for an answer. If a choice
+  belongs to Eli (scope, a dependency, cost, a design he would notice), write
+  it to $TEAM_DECISION_FILE as JSON {question, context, options,
+  recommendation} and stop. Touch only the files your task names. Finish only
+  when the check passes and your work is committed."
+
+`team hook stop` and `team hook pretool` (`team/cli.py`, read Claude Code's
+hook JSON on stdin; exit 2 with a reason on stderr blocks and tells Claude why):
+- **Stop gate**: refuse to stop while `git status --porcelain
+  --untracked-files=no` in the worktree is not empty, or while
+  `$TEAM_CHECK` (run in the worktree, timeout from settings) fails; the
+  reason is the dirty file list or the check's last 40 lines. At most
+  `$TEAM_STOP_RETRIES` (default 3) refusals per session (count in a file under
+  the plugin dir keyed by session_id), then allow, so it can never loop forever.
+- **Edit gate** (PreToolUse on Edit, Write, MultiEdit, NotebookEdit): when
+  `$TEAM_ALLOWED_FILES` is set (colon-separated paths relative to the
+  worktree), refuse a file_path outside it.
+
+`claude_run.run(...)` gains `role`, `tools`, `model`, `json_schema`,
+`allowed_files`, `check`, `decision_file`: argv adds `--plugin-dir
+<plugin_dir> --agent <role>`, `--tools <role.toml tools mapped to Claude
+tools>` (file→Read,Edit,Write,Glob,Grep; terminal→Bash; read-only roles get
+Read,Grep,Glob), `--model` when given, `--json-schema` when given, and the env
+vars above. API-key variables stay scrubbed. Result adds `structured` (the
+parsed schema output) and the usage block as returned (input, output,
+cache_creation_input_tokens, cache_read_input_tokens).
+
+Interactive settings: check (and record here) whether the user's
+`~/.claude/CLAUDE.md` loads in `claude -p`; if it does, the build rules above
+override its "ask before assuming" for build sessions. The user's settings.json
+deny rules (they protect secrets) must stay in force: do not pass
+`--setting-sources` that drops `user`.
