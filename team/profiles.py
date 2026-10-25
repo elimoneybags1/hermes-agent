@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from team.agents import _read_role_toml
 from team.free import is_free_model
@@ -21,9 +24,11 @@ def _hermes_profile_dir(profile: str) -> Path:
     return home / ".hermes" / "profiles" / profile
 
 
-def _run_hermes_profile_create(profile: str, clone_from: str, description: str) -> None:
+def _run_hermes_profile_create(profile: str, clone_from: str, description: str, runner: Any = None) -> None:
     """Create a Hermes profile by cloning from another."""
-    subprocess.run(
+    if runner is None:
+        runner = subprocess.run
+    runner(
         [
             "hermes",
             "profile",
@@ -136,7 +141,7 @@ def sync(root: Path, role: str, runner: Any = None) -> str:
     profile_dir = _hermes_profile_dir(profile)
     if not profile_dir.exists():
         description = role_data.get("does", f"Team agent: {role}")
-        _run_hermes_profile_create(profile, "team-worker", description)
+        _run_hermes_profile_create(profile, "team-worker", description, runner)
         changes.append(f"created profile {profile}")
     
     # Write SOUL.md

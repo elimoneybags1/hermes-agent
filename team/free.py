@@ -359,10 +359,14 @@ def _check_hermes(args: list[Word]) -> Optional[str]:
             profiles.append(value)
         i += 1
 
-    # Allow team-* profiles (cloned from team-worker which holds free-only settings)
-    team_profile_allowed = any(p.startswith("team-") for p in profiles)
+    # Hermes uses the LAST -p/--profile. Allow only if the last profile is team-*.
+    # The default profile holds paid keys: never use it.
+    last_profile = profiles[-1] if profiles else None
+    last_profile_is_team = last_profile is not None and last_profile.startswith("team-")
 
-    if not models and not team_profile_allowed:
+    # Even when -m is given and free, we still require the last profile to be team-*
+    # (or no model but team-* profile). No profile at all is refused.
+    if not last_profile_is_team:
         return "hermes chat requires explicit -m/--model with a free model, or -p/--profile team-*"
     for model in models:
         if not is_free_model(model):

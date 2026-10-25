@@ -982,8 +982,8 @@ function inbox() {
           <div class="chip mono" style="flex:1;">${d.target}</div>
           <span class="small muted">#${d.id}</span>
         </div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">${d.context}</div>
-        <h3 style="margin:0 0 12px;font-size:15px;">${d.question}</h3>
+        <h3 style="margin:0 0 8px;font-size:16px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--text);">${d.question}</h3>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">${d.context}</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
           ${d.options.map((opt, i) => html`
             <button class="btn${d.recommendation === opt ? ' primary' : ''}" 
@@ -1298,7 +1298,7 @@ function connect() {
     let fp;
     try { fp = JSON.parse(ev.data).fingerprint; } catch (_) { return; }
     if (!S.live) { S.live = true; renderHeader(); }
-    if (fp !== S.fp) { S.fp = fp; refresh(); if (S.tab === 'settings') loadSettings(); if (S.tab === 'inbox') loadInbox(); }
+    if (fp !== S.fp) { S.fp = fp; refresh(); loadInbox(); if (S.tab === 'settings') loadSettings(); }
   };
 }
 
