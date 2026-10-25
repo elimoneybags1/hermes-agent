@@ -35,8 +35,9 @@ def test_init_creates_agreed_columns(conn):
     ]
     assert cols("calls") == [
         "id", "job_id", "provider", "model", "task_class", "tokens_in",
-        "tokens_out", "latency_ms", "ok", "error", "ts",
+        "tokens_out", "latency_ms", "ok", "error", "ts", "api_calls",
     ]
+    assert cols("pauses") == ["id", "target", "until", "reason", "created"]
 
 
 def test_init_is_idempotent(conn):
@@ -128,7 +129,7 @@ def test_init_adds_ts_to_old_ledger_keeping_rows(tmp_path):
     c.executescript(OLD_CALLS)
     ledger.init(c)
     ledger.init(c)
-    assert [r["name"] for r in c.execute("PRAGMA table_info(calls)")][-1] == "ts"
+    assert [r["name"] for r in c.execute("PRAGMA table_info(calls)")][-2:] == ["ts", "api_calls"]
     assert [j["id"] for j in ledger.list_jobs(c)] == [1]
     [old] = c.execute("SELECT * FROM calls").fetchall()
     assert old["provider"] == "groq" and old["ts"] is None
@@ -186,3 +187,23 @@ def test_goal_lifecycle(conn):
     assert ledger.get_goal(conn, goal)["detail"] == "landed abc"
     with pytest.raises(LookupError):
         ledger.finish_goal(conn, goal, "fail")
+
+
+def test_record_call_keeps_api_calls(conn):
+    job = ledger.start_job(conn, "team", "c", "implement", "v")
+    ledger.record_call(conn, job, "openrouter", "m:free", "implement", 1, 1, None, True,
+                       api_calls=54)
+    assert conn.execute("SELECT api_calls FROM calls").fetchone()["api_calls"] == 54
+
+
+def test_pauses(conn):
+    now = 2_000_000_000.0
+    assert ledger.active_pause(conn, "team", now) is None
+    ledger.add_pause(conn, "team", now + 60, "free quota")
+    ledger.add_pause(conn, "team", now + 3600, "free quota")
+    ledger.add_pause(conn, "other", now - 1, "over")
+    pause = ledger.active_pause(conn, "team", now)
+    assert pause["until"] == "2033-05-18T04:33:20+00:00"
+    assert pause["reason"] == "free quota"
+    assert ledger.active_pause(conn, "team", now + 3600) is None
+    assert ledger.active_pause(conn, "other", now) is None
