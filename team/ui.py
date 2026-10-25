@@ -279,7 +279,6 @@ class Handler(BaseHTTPRequestHandler):
             decisions = list_open(conn)
             # Parse options JSON for each decision
             for d in decisions:
-                import json
                 d["options"] = json.loads(d["options"])
             # For now, reviews table doesn't exist - leave empty as per spec
             reviews = {}
@@ -298,15 +297,25 @@ class Handler(BaseHTTPRequestHandler):
             raise HTTPError(500, "no ledger")
         try:
             if body.get("dismiss") is True:
-                dismiss(conn, decision_id)
+                with self.server.write_lock:
+                    dismiss(conn, decision_id)
             elif "answer" in body:
                 answer_text = body["answer"]
                 if not isinstance(answer_text, str):
                     raise HTTPError(400, "answer must be a string")
-                answer(conn, decision_id, answer_text)
+                if not answer_text.strip():
+                    raise HTTPError(400, "answer must not be empty")
+                with self.server.write_lock:
+                    answer(conn, decision_id, answer_text)
             else:
                 raise HTTPError(400, "body must contain 'answer' or 'dismiss: true'")
             self._json(200, {"ok": True})
+        except LookupError as e:
+            raise HTTPError(404, str(e))
+        except ValueError as e:
+            if "not open" in str(e):
+                raise HTTPError(409, str(e))
+            raise HTTPError(400, str(e))
         finally:
             conn.close()
 
