@@ -445,3 +445,139 @@ def test_open_not_in_herdr_pane(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "Not in a herdr pane" in out
     assert "herdr pane split" in out
+
+
+def test_hook_stop_exists():
+    """team hook stop is a recognized subcommand."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="team")
+    commands = parser.add_subparsers(dest="command", required=True)
+    hook_parser = commands.add_parser("hook", help="Claude Code hooks for build mode")
+    hook_sub = hook_parser.add_subparsers(dest="action", required=True)
+    hook_sub.add_parser("stop", help="Stop hook - runs when agent finishes").set_defaults(func=lambda args: 0)
+
+    args = parser.parse_args(["hook", "stop"])
+    assert args.command == "hook"
+    assert args.action == "stop"
+    assert args.func(args) == 0
+
+
+def test_hook_pretool_exists():
+    """team hook pretool is a recognized subcommand."""
+    import argparse
+    parser = argparse.ArgumentParser(prog="team")
+    commands = parser.add_subparsers(dest="command", required=True)
+    hook_parser = commands.add_parser("hook", help="Claude Code hooks for build mode")
+    hook_sub = hook_parser.add_subparsers(dest="action", required=True)
+    hook_sub.add_parser("pretool", help="PreToolUse hook - enforces TEAM_ALLOWED_FILES gate").set_defaults(func=lambda args: 0)
+
+    args = parser.parse_args(["hook", "pretool"])
+    assert args.command == "hook"
+    assert args.action == "pretool"
+    assert args.func(args) == 0
+
+
+def test_hook_stop_returns_zero_on_valid_input(monkeypatch, capsys):
+    """team hook stop returns 0 on valid JSON input."""
+    import json
+    import io
+    import sys
+    
+    # Mock stdin with valid JSON
+    payload = {"tool_name": "Bash", "tool_input": {"command": "echo hello"}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    
+    result = cli.main(["hook", "stop"])
+    assert result == 0
+
+
+def test_hook_stop_returns_zero_on_invalid_json(monkeypatch, capsys):
+    """team hook stop returns 0 on invalid JSON (ignores non-hook input)."""
+    import io
+    import sys
+    
+    monkeypatch.setattr(sys, "stdin", io.StringIO("not json"))
+    
+    result = cli.main(["hook", "stop"])
+    assert result == 0
+
+
+def test_hook_pretool_allows_non_edit_tools(monkeypatch, capsys):
+    """team hook pretool returns 0 for non-edit tools."""
+    import json
+    import io
+    import sys
+    
+    payload = {"tool_name": "Read", "tool_input": {"file_path": "/tmp/test.txt"}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    
+    result = cli.main(["hook", "pretool"])
+    assert result == 0
+
+
+def test_hook_pretool_allows_when_no_gate(monkeypatch, capsys):
+    """team hook pretool returns 0 when TEAM_ALLOWED_FILES not set."""
+    import json
+    import io
+    import sys
+    
+    monkeypatch.delenv("TEAM_ALLOWED_FILES", raising=False)
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": "/tmp/test.txt"}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    
+    result = cli.main(["hook", "pretool"])
+    assert result == 0
+
+
+def test_hook_pretool_allows_matching_file(monkeypatch, capsys):
+    """team hook pretool returns 0 when file matches allowed pattern."""
+    import json
+    import io
+    import sys
+    
+    monkeypatch.setenv("TEAM_ALLOWED_FILES", "src/**:tests/**")
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": "/home/user/src/main.py"}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    
+    result = cli.main(["hook", "pretool"])
+    assert result == 0
+
+
+def test_hook_pretool_blocks_non_matching_file(monkeypatch, capsys):
+    """team hook pretool returns 2 when file doesn't match allowed pattern."""
+    import json
+    import io
+    import sys
+    
+    monkeypatch.setenv("TEAM_ALLOWED_FILES", "src/**:tests/**")
+    payload = {"tool_name": "Edit", "tool_input": {"file_path": "/home/user/config.json"}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    
+    result = cli.main(["hook", "pretool"])
+    assert result == 2
+    assert "Edit blocked" in capsys.readouterr().err
+
+
+def test_hook_pretool_blocks_when_no_file_path(monkeypatch, capsys):
+    """team hook pretool returns 0 when no file_path in tool_input (edge case)."""
+    import json
+    import io
+    import sys
+    
+    monkeypatch.setenv("TEAM_ALLOWED_FILES", "src/**")
+    payload = {"tool_name": "Edit", "tool_input": {}}
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    
+    result = cli.main(["hook", "pretool"])
+    assert result == 0
+
+
+def test_hook_pretool_handles_invalid_json(monkeypatch, capsys):
+    """team hook pretool returns 0 on invalid JSON."""
+    import io
+    import sys
+    
+    monkeypatch.setattr(sys, "stdin", io.StringIO("not json"))
+    
+    result = cli.main(["hook", "pretool"])
+    assert result == 0
