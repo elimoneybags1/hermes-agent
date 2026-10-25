@@ -60,6 +60,8 @@ class FakeHermes:
         self.sessions: dict[str, dict] = {}
         self.calls: list[list[str]] = []
         self.dispatches: list[list[str]] = []
+        self.logs: dict[str, str] = {}
+        self.unblocked: list[str] = []
         self.profiles = ["default", "team-worker"]
         self.claude = None  # fn(cwd) -> dict payload
         self.claude_env = None
@@ -91,11 +93,14 @@ class FakeHermes:
             a = a[2:]
         
         if a[:2] == ["sessions", "list"]:
-            rows = [f"work kanban task {t[:9]}   —   now   s_{t}" for t in self.sessions]
-            return self._ok("Title   Workspace   Last Active   ID\n" + "\n".join(rows))
+            # Real shape: workers rename the title; Preview holds the task id.
+            rows = [f'{{"title{{ "title": "Work on kan   work kanban task {t}   just now   s_{t}'
+                    for t in self.sessions]
+            return self._ok("Title   Preview   Last Active   ID\n" + "\n".join(rows))
         if a[:2] == ["sessions", "export"]:
             task = a[a.index("--session-id") + 1][2:]
-            return self._ok(json.dumps(self.sessions[task]) + "\n")
+            Path(a[2]).write_text(json.dumps(self.sessions[task]) + "\n")
+            return self._ok("")
         assert a[0] == "kanban", a
         a = a[1:]
         if a[:2] == ["boards", "list"]:
@@ -136,6 +141,12 @@ class FakeHermes:
         if sub == "block":
             self.blocked[rest[0]] = (rest[1], rest[rest.index("--kind") + 1])
             self.tasks[rest[0]]["task"]["status"] = "blocked"
+            return self._ok()
+        if sub == "log":
+            return self._ok(self.logs.get(rest[0], ""))
+        if sub == "unblock":
+            self.unblocked.append(rest[0])
+            self.tasks[rest[0]]["task"]["status"] = "ready"
             return self._ok()
         if sub == "comment":
             self.tasks[rest[0]]["events"].append({"kind": "comment", "payload": rest[1]})
@@ -703,3 +714,158 @@ def test_unexpected_exception_in_goal_does_not_stop_tick(env):
     env.loop().tick()
     # If we got here without crashing, the exception handling works
     assert True
+
+
+def quota_log(reset_s):
+    """The end of a real worker log that ran out of free quota (t_802f93ef, 2026-10-24)."""
+    return (
+        "Query: work kanban task t_x\n"
+        "... 'Rate limit exceeded: free-models-per-day' and 'X-RateLimit-Reset': '<epoch ms>' ...\n"
+        "⚠️  API call failed (attempt 2/3): RateLimitError [HTTP 429]\n"
+        "   📝 Error: HTTP 429: Rate limit exceeded: free-models-per-day-high-balance. \n"
+        "   📋 Details: {'message': 'Rate limit exceeded: free-models-per-day-high-balance. ', "
+        "'code': 429, 'metadata': {'headers': {'X-RateLimit-Limit': '1000', "
+        f"'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': '{int(reset_s * 1000)}'}}, "
+        "'limit_source': 'openrouter_free_tier_daily'}}\n"
+        "⏱️ Rate limited. Waiting 4.5s (attempt 3/3)...\n"
+        "❌ Rate limited after 3 retries — HTTP 429: Rate limit exceeded: free-models-per-day-high-balance. \n"
+        "   💀 Final error: HTTP 429: Rate limit exceeded: free-models-per-day-high-balance. \n"
+        " API call failed after 3 retries: HTTP 429: Rate limit exceeded:                \n"
+        " free-models-per-day-high-balance.                                              \n"
+        "Resume this session with:\n  hermes --resume 20261024_195245_48cf00 -p team-implement\n"
+        "Session:        20261024_195245_48cf00\nTitle:          work kanban task t_802f93ef\n"
+    )
+
+
+def block_task(env, tid, reason="worker said so", events=()):
+    entry = env.fake.tasks[tid]
+    entry["task"]["status"] = "blocked"
+    entry["events"].extend(events)
+    entry["events"].append({"kind": "blocked", "payload": {"reason": reason}})
+
+
+def loop_at(env, now):
+    return run.Loop(env.root, env.conn, runner=env.fake, pid_alive=lambda p: env.alive.get(p, False),
+                    kill=env.killed.append, now=lambda: now, log=env.logs.append)
+
+
+def test_quota_reset_reads_the_header_and_ignores_the_echoed_body():
+    assert run.quota_reset(quota_log(1792886400), NOW) == 1792886400
+    body_only = "'Rate limit exceeded: free-models-per-day' and 'X-RateLimit-Reset': '<epoch ms>'"
+    assert run.quota_reset(body_only, NOW) is None
+    no_header = "❌ Rate limited after 3 retries — HTTP 429: Rate limit exceeded: free-models-per-day."
+    assert run.quota_reset(no_header, NOW) == (NOW // 86400 + 1) * 86400
+    # An old quota stop far above the end of the log does not count.
+    assert run.quota_reset(quota_log(NOW) + "x" * 3000, NOW) is None
+
+
+def test_out_of_free_quota_pauses_the_target_without_an_attempt(env, capsys):
+    g = env.goal()
+    tid = g["current_task"]
+    block_task(env, tid)
+    env.fake.logs[tid] = quota_log(NOW + 3600)
+    env.loop().tick()
+
+    [job] = env.jobs()
+    assert job["ended"] is None
+    goal = env.get(g["id"])
+    assert (goal["attempt"], goal["finished"], goal["current_task"]) == (1, None, tid)
+    pause = ledger.active_pause(env.conn, "demo", NOW)
+    assert pause["until"] == ledger._iso(NOW + 3600)
+    until = time.strftime("%H:%M", time.localtime(NOW + 3600))
+    assert f"demo: paused, free quota until {until}" in capsys.readouterr().out
+
+    dispatches = len(env.fake.dispatches)
+    env.loop().tick()  # still paused: no dispatch, no second pause row
+    assert len(env.fake.dispatches) == dispatches
+    assert env.conn.execute("SELECT COUNT(*) FROM pauses").fetchone()[0] == 1
+    assert env.fake.unblocked == []
+
+    loop_at(env, NOW + 3601).tick()  # quota reset: unblock, dispatch again
+    assert env.fake.unblocked == [tid]
+    assert env.fake.tasks[tid]["task"]["status"] == "ready"
+    assert len(env.fake.dispatches) == dispatches + 1
+    assert len(env.jobs()) == 1 and env.get(g["id"])["finished"] is None
+
+
+def test_dead_worker_out_of_quota_is_blocked_not_retried(env):
+    g = env.goal()
+    tid = g["current_task"]
+    env.fake.running(tid, pid=4242, started=NOW - 10)
+    env.fake.logs[tid] = quota_log(NOW + 600)
+    env.loop().tick()
+    assert "free quota" in env.fake.blocked[tid][0]
+    [job] = env.jobs()
+    assert job["ended"] is None
+    assert ledger.active_pause(env.conn, "demo", NOW) is not None
+
+
+def test_body_quoting_the_quota_error_is_an_ordinary_block(env):
+    g = env.goal()
+    block_task(env, g["current_task"], "needs a key")
+    env.fake.logs[g["current_task"]] = env.fake.tasks[g["current_task"]]["task"]["body"] + (
+        "\n'Rate limit exceeded: free-models-per-day' and 'X-RateLimit-Reset': '<epoch ms>'\n")
+    env.loop().tick()
+    assert env.get(g["id"])["outcome"] == "error"
+    assert ledger.active_pause(env.conn, "demo", NOW) is None
+
+
+GAVE_UP = [
+    {"kind": "timed_out", "payload": {"pid": 41071, "elapsed_seconds": 920, "limit_seconds": 900}},
+    {"kind": "gave_up", "payload": {"failures": 2, "effective_limit": 2, "limit_source": "dispatcher",
+                                    "error": "elapsed 920s > limit 900s",
+                                    "trigger_outcome": "timed_out", "retry_status": "ready"}},
+]
+
+
+def test_kanban_giving_up_is_a_failed_attempt(env):
+    g = env.goal()
+    entry = env.fake.tasks[g["current_task"]]
+    entry["task"]["status"] = "blocked"  # real shape: blocked, last event gave_up
+    entry["events"].extend(GAVE_UP)
+    env.loop().tick()
+    first, second = env.jobs()
+    assert first["outcome"] == "timeout"
+    assert "gave up after timed_out: elapsed 920s > limit 900s" in first["grader_detail"]
+    goal = env.get(g["id"])
+    assert (goal["attempt"], goal["finished"]) == (2, None)
+    assert goal["current_task"] != g["current_task"]
+    assert "elapsed 920s" in env.fake.tasks[goal["current_task"]]["task"]["body"]
+
+
+def test_kanban_giving_up_on_quota_is_a_pause(env):
+    g = env.goal()
+    entry = env.fake.tasks[g["current_task"]]
+    entry["task"]["status"] = "blocked"
+    entry["events"].extend(GAVE_UP)
+    env.fake.logs[g["current_task"]] = quota_log(NOW + 600)
+    env.loop().tick()
+    assert len(env.jobs()) == 1 and env.jobs()[0]["ended"] is None
+    assert ledger.active_pause(env.conn, "demo", NOW) is not None
+
+
+def shows(env):
+    return sum(1 for c in env.fake.calls if "show" in c)
+
+
+def test_show_full_once_per_goal_per_tick(env):
+    g = env.goal()
+    env.alive[77] = True
+    env.fake.running(g["current_task"], pid=77, started=NOW - 10)
+    env.loop().tick()
+    assert shows(env) == 1  # nothing changed: no re-read
+
+    env.fake.tasks[g["current_task"]]["task"]["status"] = "review"
+    commit(g["worktree"], "result.txt", "ok\n")
+    env.fake.sessions[g["current_task"]] = {"model": FREE, "estimated_cost_usd": 0.0}
+    env.loop().tick()
+    assert shows(env) == 1 + 2  # step graded and landed: one re-read
+    assert env.get(g["id"])["outcome"] == "pass"
+
+
+def test_api_calls_are_recorded(env):
+    g = env.goal()
+    commit(g["worktree"], "result.txt", "ok\n")
+    env.fake.done(g["current_task"])
+    env.loop().tick()
+    assert env.conn.execute("SELECT api_calls FROM calls").fetchone()["api_calls"] == 3

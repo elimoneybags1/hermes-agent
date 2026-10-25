@@ -291,19 +291,19 @@ run_budget_s = 600
 
 
 class TestLeanProfileConfig:
-    def test_sync_writes_lean_toolsets(self, tmp_path, monkeypatch):
-        """Test sync writes toolsets from role + kanban."""
+    def test_sync_writes_platform_toolsets_and_disabled_toolsets(self, tmp_path, monkeypatch):
+        """Test sync writes platform_toolsets.cli and agent.disabled_toolsets from role."""
         fake_home = tmp_path / "fake_home"
         fake_home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: fake_home)
-        
+
         repo = tmp_path / "repo"
         repo.mkdir()
         roles_dir = repo / "roles"
         roles_dir.mkdir()
         role_dir = roles_dir / "test-agent"
         role_dir.mkdir()
-        
+
         role_toml = role_dir / "role.toml"
         role_toml.write_text("""
 name = "test-agent"
@@ -323,27 +323,45 @@ after_failures = 2
 max_turns = 25
 run_budget_s = 600
 """)
-        
+
         (role_dir / "SOUL.md").write_text("# Test Agent\n\nDoes testing\n")
-        
+
         def mock_runner(cmd, **kwargs):
             if cmd[:2] == ["hermes", "profile"]:
                 profile_dir = fake_home / ".hermes" / "profiles" / "team-test-agent"
                 profile_dir.mkdir(parents=True)
                 (profile_dir / "config.yaml").write_text("model:\n  default: nvidia/nemotron-3-ultra-550b-a55b:free\n")
             return MagicMock(returncode=0, stdout="", stderr="")
-        
+
         with patch("subprocess.run", side_effect=mock_runner):
             result = profiles.sync(repo, "test-agent", runner=mock_runner)
-            
-            # Verify toolsets in config.yaml
+
+            # Verify platform_toolsets and disabled_toolsets in config.yaml
             config_path = fake_home / ".hermes" / "profiles" / "team-test-agent" / "config.yaml"
             import yaml
             with config_path.open() as f:
                 config = yaml.safe_load(f)
-            
-            expected_toolsets = ["terminal", "file", "todo", "skills", "kanban"]
-            assert config.get("toolsets") == expected_toolsets
+
+            # platform_toolsets.cli should be sorted role tools
+            expected_platform_toolsets = ["file", "skills", "terminal", "todo"]
+            assert config.get("platform_toolsets", {}).get("cli") == expected_platform_toolsets
+
+            # No top-level toolsets key
+            assert "toolsets" not in config
+
+            # No kanban in platform_toolsets
+            assert "kanban" not in config.get("platform_toolsets", {}).get("cli", [])
+
+            # disabled_toolsets should be all built-in toolsets not in role's tools
+            BUILTIN_TOOLSETS = [
+                "web", "browser", "code_execution", "vision", "image_gen", "tts",
+                "memory", "session_search", "clarify", "delegation", "cronjob",
+                "computer_use", "video", "video_gen", "x_search", "stt",
+                "homeassistant", "spotify", "yuanbao", "context_engine",
+            ]
+            role_tools = {"terminal", "file", "todo", "skills"}
+            expected_disabled = [ts for ts in BUILTIN_TOOLSETS if ts not in role_tools]
+            assert config.get("agent", {}).get("disabled_toolsets") == expected_disabled
     
     def test_sync_disables_project_discovery(self, tmp_path, monkeypatch):
         """Test sync sets skills.project_discovery to False."""

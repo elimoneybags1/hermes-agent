@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS calls (
     latency_ms  INTEGER,
     ok          INTEGER NOT NULL CHECK (ok IN (0, 1)),
     error       TEXT,
-    ts          TEXT
+    ts          TEXT,
+    api_calls   INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS decisions (
@@ -81,6 +82,16 @@ CREATE TABLE IF NOT EXISTS goals (
 );
 
 CREATE INDEX IF NOT EXISTS goals_target ON goals(target);
+
+CREATE TABLE IF NOT EXISTS pauses (
+    id      INTEGER PRIMARY KEY,
+    target  TEXT NOT NULL,
+    until   TEXT NOT NULL,
+    reason  TEXT NOT NULL,
+    created TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS pauses_target ON pauses(target);
 """
 
 
@@ -111,7 +122,7 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
 def init(conn: sqlite3.Connection) -> None:
     """Create the jobs, calls and goals tables. Safe to run on an existing ledger.
 
-    A ledger made before calls.ts, jobs.task_ref or a decisions column existed gets the column
+    A ledger made before calls.ts, calls.api_calls, jobs.task_ref or a decisions column existed gets the column
     added in place; existing rows keep NULL there, since it was never recorded.
     """
     with conn:
@@ -119,6 +130,8 @@ def init(conn: sqlite3.Connection) -> None:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(calls)")}
         if "ts" not in cols:
             conn.execute("ALTER TABLE calls ADD COLUMN ts TEXT")
+        if "api_calls" not in cols:
+            conn.execute("ALTER TABLE calls ADD COLUMN api_calls INTEGER")
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
         if "task_ref" not in cols:
             conn.execute("ALTER TABLE jobs ADD COLUMN task_ref TEXT")
@@ -184,15 +197,20 @@ def record_call(
     latency_ms: int | None,
     ok: bool,
     error: str | None = None,
+    api_calls: int | None = None,
 ) -> int:
-    """Record one model call made by a job and return its id."""
+    """Record one model call made by a job and return its id.
+
+    `api_calls` is how many API requests a worker session made (it counts
+    against the free tier's daily quota).
+    """
     with conn:
         cur = conn.execute(
             "INSERT INTO calls (job_id, provider, model, task_class, tokens_in,"
-            " tokens_out, latency_ms, ok, error, ts)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " tokens_out, latency_ms, ok, error, ts, api_calls)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (job_id, provider, model, task_class, tokens_in, tokens_out,
-             latency_ms, int(ok), error, _now()),
+             latency_ms, int(ok), error, _now(), api_calls),
         )
     return cur.lastrowid
 
@@ -318,3 +336,26 @@ def list_goals(
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY id DESC"
     return [dict(row) for row in conn.execute(sql, args)]
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
+
+
+def add_pause(conn: sqlite3.Connection, target: str, until: float, reason: str) -> int:
+    """Pause a target's dispatch until `until` (epoch seconds); returns its id."""
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO pauses (target, until, reason, created) VALUES (?, ?, ?, ?)",
+            (target, _iso(until), reason, _now()),
+        )
+    return cur.lastrowid
+
+
+def active_pause(conn: sqlite3.Connection, target: str, now: float) -> dict | None:
+    """The target's pause that lasts longest past `now`, or None."""
+    row = conn.execute(
+        "SELECT * FROM pauses WHERE target = ? AND until > ? ORDER BY until DESC LIMIT 1",
+        (target, _iso(now)),
+    ).fetchone()
+    return dict(row) if row else None

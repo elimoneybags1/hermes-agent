@@ -334,9 +334,10 @@ def test_session_for_task_found(tmp_path):
     kanban_home.mkdir(parents=True)
 
     # Real text table output from `hermes sessions list`
+    # Format: rows may have JSON prefix, second column holds 'work kanban task <full_id>'
     sessions_list = """Title                        Workspace          Last Active   ID
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-work kanban task t_abc1234 some task   —                  just now      20261024_150051_7ce33b
+{"title": "Work on kan   work kanban task t_abc123456789   just now   20261024_150051_7ce33b
 other session                                    —                  5m ago        20261024_144848_173531"""
 
     export_jsonl = json.dumps({
@@ -349,6 +350,7 @@ other session                                    —                  5m ago    
     })
 
     call_count = {"list": 0, "export": 0}
+    export_files = {}  # Track temp files created for export
 
     def runner(cmd, **kwargs):
         if "sessions" in cmd and "list" in cmd:
@@ -360,7 +362,17 @@ other session                                    —                  5m ago    
             assert "20261024_150051_7ce33b" in cmd
             assert "--format" in cmd
             assert "jsonl" in cmd
-            return FakeCompletedProcess(0, export_jsonl, "")
+            # Find the temp file path in the command and write the export data to it
+            export_path = None
+            for i, arg in enumerate(cmd):
+                if arg == "export" and i + 1 < len(cmd):
+                    export_path = cmd[i + 1]
+                    break
+            if export_path:
+                with open(export_path, "w") as f:
+                    f.write(export_jsonl + "\n")
+                export_files[export_path] = True
+            return FakeCompletedProcess(0, "", "")
         return FakeCompletedProcess(1, "", "unexpected")
 
     with patch("team.kanban.state_dir") as mock_state_dir:
@@ -428,7 +440,7 @@ def test_session_for_task_export_failure(tmp_path):
 
     sessions_list = """Title                        Workspace          Last Active   ID
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-work kanban task t_abc123 some task   —                  just now      20261024_150051_7ce33b"""
+{"title": "Work on kan   work kanban task t_abc123 some task   just now   20261024_150051_7ce33b"""
 
     def runner(cmd, **kwargs):
         if "sessions" in cmd and "list" in cmd:
@@ -453,7 +465,7 @@ def test_session_for_task_invalid_json(tmp_path):
 
     sessions_list = """Title                        Workspace          Last Active   ID
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-work kanban task t_abc123 some task   —                  just now      20261024_150051_7ce33b"""
+{"title": "Work on kan   work kanban task t_abc123 some task   just now   20261024_150051_7ce33b"""
 
     def runner(cmd, **kwargs):
         if "sessions" in cmd and "list" in cmd:
@@ -470,15 +482,15 @@ work kanban task t_abc123 some task   —                  just now      2026102
     assert result is None
 
 
-def test_session_for_task_uses_first_nine_chars(tmp_path):
-    """session_for_task matches on first 9 chars of task id."""
+def test_session_for_task_matches_full_task_id(tmp_path):
+    """session_for_task matches on full task id."""
     state_dir = tmp_path / "state" / "team"
     kanban_home = state_dir / "kanban"
     kanban_home.mkdir(parents=True)
 
     sessions_list = """Title                        Workspace          Last Active   ID
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-work kanban task t_abc1234 some task   —                  just now      20261024_150051_7ce33b"""
+{"title": "Work on kan   work kanban task t_abc12345extra   just now   20261024_150051_7ce33b"""
 
     export_jsonl = json.dumps({
         "model": "test-model",
@@ -493,13 +505,22 @@ work kanban task t_abc1234 some task   —                  just now      202610
         if "sessions" in cmd and "list" in cmd:
             return FakeCompletedProcess(0, sessions_list, "")
         if "sessions" in cmd and "export" in cmd:
-            return FakeCompletedProcess(0, export_jsonl, "")
+            # Find the temp file path in the command and write the export data to it
+            export_path = None
+            for i, arg in enumerate(cmd):
+                if arg == "export" and i + 1 < len(cmd):
+                    export_path = cmd[i + 1]
+                    break
+            if export_path:
+                with open(export_path, "w") as f:
+                    f.write(export_jsonl + "\n")
+            return FakeCompletedProcess(0, "", "")
         return FakeCompletedProcess(1, "", "unexpected")
 
     with patch("team.kanban.state_dir") as mock_state_dir:
         mock_state_dir.return_value = state_dir
 
-        # Task ID longer than 9 chars, should match on first 9
+        # Task ID longer than 9 chars, should match on full task id
         result = kanban.session_for_task(task_id="t_abc12345extra", runner=runner)
 
     assert result is not None
@@ -652,7 +673,7 @@ def test_session_for_task_uses_profile(tmp_path):
 
     sessions_list = """Title                        Workspace          Last Active   ID
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-work kanban task t_abc1234 some task   —                  just now      20261024_150051_7ce33b"""
+{"title": "Work on kan   work kanban task t_abc123456789   just now   20261024_150051_7ce33b"""
 
     export_jsonl = json.dumps({
         "model": "test-model",
@@ -670,7 +691,16 @@ work kanban task t_abc1234 some task   —                  just now      202610
         if "sessions" in cmd and "list" in cmd:
             return FakeCompletedProcess(0, sessions_list, "")
         if "sessions" in cmd and "export" in cmd:
-            return FakeCompletedProcess(0, export_jsonl, "")
+            # Find the temp file path in the command and write the export data to it
+            export_path = None
+            for i, arg in enumerate(cmd):
+                if arg == "export" and i + 1 < len(cmd):
+                    export_path = cmd[i + 1]
+                    break
+            if export_path:
+                with open(export_path, "w") as f:
+                    f.write(export_jsonl + "\n")
+            return FakeCompletedProcess(0, "", "")
         return FakeCompletedProcess(1, "", "unexpected")
 
     with patch("team.kanban.state_dir") as mock_state_dir:
@@ -687,3 +717,76 @@ work kanban task t_abc1234 some task   —                  just now      202610
     assert "team-implement" in list_cmd
     assert "-p" in export_cmd
     assert "team-implement" in export_cmd
+
+
+# Rows copied from a real `hermes -p team-implement sessions list` (2026-10-24).
+REAL_SESSIONS = """Title                            Preview                                  Last Active   ID
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+work kanban task t_b017d6e7      work kanban task t_b017d6e7              1m ago        20261024_224920_2c7851
+Check enabled toolsets for pro   What toolsets are enabled for this pro   59m ago       20261024_215727_2b604e
+{"title{ "title": "Work kanban   work kanban task t_ff2356f7              1h ago        20261024_212018_2f7fab
+{"title{ "title": "Work on kan   work kanban task t_ff2356f7              1h ago        20261024_210500_c1a161
+{"title{ "title": "Work on kan   work kanban task t_6f7bd1e7              1h ago        20261024_205703_f92dde
+work kanban task t_4b0cf02b #3   work kanban task t_4b0cf02b              2h ago        20261024_204504_493675
+work kanban task t_4b0cf02b #2   work kanban task t_4b0cf02b              3h ago        20261024_195524_90c703
+work kanban task t_4b0cf02b      work kanban task t_4b0cf02b              3h ago        20261024_195423_12eff9
+"""
+
+
+def _real_sessions_runner(seen):
+    def runner(cmd, **kwargs):
+        if cmd[3:5] == ["sessions", "list"]:
+            return FakeCompletedProcess(0, REAL_SESSIONS, "")
+        if cmd[3:5] == ["sessions", "export"]:
+            seen.append(cmd)
+            Path(cmd[5]).write_text(json.dumps({
+                "model": "nvidia/nemotron-3-ultra-550b-a55b:free", "billing_provider": "openrouter",
+                "input_tokens": 678361, "output_tokens": 26507,
+                "estimated_cost_usd": 0.0, "api_call_count": 54,
+            }) + "\n" + json.dumps({"role": "user", "content": "x"}) + "\n")
+            return FakeCompletedProcess(0, "", "")
+        return FakeCompletedProcess(1, "", "unexpected")
+    return runner
+
+
+@pytest.mark.parametrize("task_id, session_id", [
+    ("t_6f7bd1e7", "20261024_205703_f92dde"),   # title renamed by the worker
+    ("t_ff2356f7", "20261024_212018_2f7fab"),   # two renamed rows: newest
+    ("t_4b0cf02b", "20261024_204504_493675"),   # #2, #3 retries: newest
+    ("t_b017d6e7", "20261024_224920_2c7851"),
+])
+def test_session_for_task_real_rows(task_id, session_id):
+    seen = []
+    result = kanban.session_for_task(task_id, profile="team-implement",
+                                     runner=_real_sessions_runner(seen))
+    [cmd] = seen
+    assert cmd[:4] == ["hermes", "-p", "team-implement", "sessions"]
+    assert cmd[4:] == ["export", cmd[5], "--session-id", session_id, "--format", "jsonl"]
+    assert cmd[5] != "/dev/stdout"
+    assert not Path(cmd[5]).exists()  # the temp file is cleaned up
+    assert result["session_id"] == session_id
+    assert result["api_call_count"] == 54
+    assert result["input_tokens"] == 678361
+
+
+def test_session_for_task_ignores_prefix_of_another_id():
+    assert kanban.session_for_task("t_4b0cf0", runner=_real_sessions_runner([])) is None
+
+
+def test_log_and_unblock_argv():
+    calls = []
+
+    def runner(cmd, **kwargs):
+        calls.append(cmd)
+        return FakeCompletedProcess(0, "the log", "")
+
+    assert kanban.log("team", "t_1", tail=8000, runner=runner) == "the log"
+    kanban.unblock("team", "t_1", reason="quota reset", runner=runner)
+    assert calls[0][3:] == ["kanban", "--board", "team", "log", "t_1", "--tail", "8000"]
+    assert calls[1][3:] == ["kanban", "--board", "team", "unblock", "t_1",
+                            "--reason", "quota reset"]
+
+
+def test_log_failure_raises():
+    with pytest.raises(kanban.KanbanError):
+        kanban.log("team", "t_1", runner=lambda cmd, **kw: FakeCompletedProcess(1, "", "no"))

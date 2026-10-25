@@ -36,6 +36,13 @@ Runner = Callable[..., subprocess.CompletedProcess]
 # A run gets this long past its role's budget before Team calls it stuck.
 GRACE_S = 300
 FAILURE_CHARS = 4000
+# OpenRouter's free tier: 1000 requests per day per account. A worker that hits
+# it ends its log with this error; the log also echoes the task body, so only
+# the end of the log counts, and only the error as Hermes prints it.
+QUOTA_ERROR = "HTTP 429: Rate limit exceeded: free-models-per-day"
+QUOTA_RESET_RE = re.compile(r"'X-RateLimit-Reset': '(\d+)'")
+LOG_TAIL_BYTES = 8000
+QUOTA_END_CHARS = 2000
 
 
 class RunError(RuntimeError):
@@ -186,6 +193,7 @@ def _build_session_data(session: dict | None) -> dict:
             "tokens_out": None,
             "ok": True,  # Can't prove it's paid, so allow
             "error": None,
+            "api_calls": None,
         }
     return {
         "provider": session.get("billing_provider") or "unknown",
@@ -194,7 +202,32 @@ def _build_session_data(session: dict | None) -> dict:
         "tokens_out": session.get("output_tokens"),
         "ok": True,
         "error": None,
+        "api_calls": session.get("api_call_count"),
     }
+
+
+def quota_reset(log_text: str, now: float) -> float | None:
+    """When the free quota that stopped this worker resets (epoch s), or None."""
+    if QUOTA_ERROR not in log_text[-QUOTA_END_CHARS:]:
+        return None
+    resets = QUOTA_RESET_RE.findall(log_text)
+    if resets:
+        return int(resets[-1]) / 1000
+    return (now // 86400 + 1) * 86400  # the free tier resets at UTC midnight
+
+
+def _gave_up(full: dict) -> dict | None:
+    """Kanban's `gave_up` payload when that, not a block, is the task's last word."""
+    for event in reversed(full.get("events") or []):
+        if event.get("kind") == "blocked":
+            return None
+        if event.get("kind") == "gave_up":
+            return event.get("payload") or {}
+    return None
+
+
+def _status(full: dict | None) -> str:
+    return full.get("task", {}).get("status", "unknown") if full else "none"
 
 
 def _blocked_reason(full: dict) -> str:
@@ -243,21 +276,25 @@ class Loop:
 
     def tick_target(self, name: str) -> None:
         kanban.ensure_board(name, runner=self.runner)
-        # Collect status for one-line stdout output
-        dispatch_result = kanban.dispatch(name, max_spawns=self.cfg["loop.max_new_per_tick"], runner=self.runner)
-        spawned = dispatch_result.get("spawned", [])
-        dispatched = len(spawned)
-        
+        dispatched = 0
+        if ledger.active_pause(self.conn, name, self.now()) is None:
+            dispatch_result = kanban.dispatch(name, max_spawns=self.cfg["loop.max_new_per_tick"], runner=self.runner)
+            dispatched = len(dispatch_result.get("spawned") or [])
+
         goals = ledger.active_goals(self.conn, name)
         transitions = []
         running_count = 0
-        
+
         for goal in goals:
-            full = None
             try:
-                status_before = self._get_goal_status(goal)
-                self.step(goal, full)
-                status_after = self._get_goal_status(goal)
+                # One show_full per goal: step shares it, and it is re-read
+                # only when step acted.
+                full = self._show(goal)
+                status_before = _status(full)
+                if self.step(goal, full):
+                    status_after = _status(self._show(ledger.get_goal(self.conn, goal["id"])))
+                else:
+                    status_after = status_before
                 if status_before != status_after:
                     transitions.append(f"goal {goal['id']} {status_before}\u2192{status_after}")
                 if status_after == "running":
@@ -266,31 +303,34 @@ class Loop:
                 # Any unexpected exception is logged with traceback and does not stop the tick/loop
                 tb = traceback.format_exc()
                 self.log(f"goal {goal['id']}: unexpected error: {e}\n{tb}")
-        
+
         # One line per tick on stdout
-        if dispatched > 0 or transitions:
-            ts = time.strftime("%H:%M:%S", time.localtime(self.now()))
-            parts = [f"{ts} {name}:"]
-            if dispatched > 0:
-                parts.append(f"dispatched {dispatched}")
-            parts.extend(transitions)
-            print("; ".join(parts))
+        ts = time.strftime("%H:%M:%S", time.localtime(self.now()))
+        pause = ledger.active_pause(self.conn, name, self.now())
+        parts = []
+        if pause is not None:
+            until = datetime.fromisoformat(pause["until"]).timestamp()
+            parts.append(f"paused, free quota until {time.strftime('%H:%M', time.localtime(until))}")
+        if dispatched > 0:
+            parts.append(f"dispatched {dispatched}")
+        parts.extend(transitions)
+        if parts:
+            print(f"{ts} {name}: " + "; ".join(parts))
         elif running_count > 0:
-            ts = time.strftime("%H:%M:%S", time.localtime(self.now()))
             print(f"{ts} {name}: idle ({running_count} goals running)")
 
-    def _get_goal_status(self, goal: dict) -> str:
-        """Get current kanban task status for a goal."""
-        if not goal.get("current_task"):
-            return "none"
-        try:
-            full = kanban.show_full(goal["target"], goal["current_task"], runner=self.runner)
-            return full.get("task", {}).get("status", "unknown")
-        except (kanban.KanbanError, OSError):
-            return "error"
+    def _show(self, goal: dict | None) -> dict | None:
+        """The goal's current task as `show_full` returns it; None without one."""
+        if not goal or not goal.get("current_task"):
+            return None
+        return kanban.show_full(goal["target"], goal["current_task"], runner=self.runner)
 
-    def step(self, goal: dict, full: dict | None = None) -> None:
-        """Move one goal along as far as its current state allows."""
+    def step(self, goal: dict, full: dict | None = None) -> bool:
+        """Move one goal along as far as its current state allows.
+
+        True when it acted (the task's status may have changed), False when
+        there was nothing to do yet.
+        """
         job = ledger.get_job(self.conn, goal["job_id"]) if goal["job_id"] else None
         if job is None:
             # Race: goal row exists before team goal attaches its job.
@@ -300,11 +340,11 @@ class Loop:
                 try:
                     created_ts = datetime.fromisoformat(created).timestamp()
                     if self.now() - created_ts < 120:
-                        return
+                        return False
                 except (ValueError, TypeError):
                     pass
             ledger.finish_goal(self.conn, goal["id"], "error", "goal has no job")
-            return
+            return True
         claude = (job["task_ref"] or "").startswith("claude:")
         if job["ended"] is None and claude:
             reason = "team run stopped during the Claude attempt"
@@ -318,7 +358,7 @@ class Loop:
                 self._give_up(goal, "the Claude attempt failed too", job["grader_detail"])
             else:
                 self._next_attempt(goal, job["grader_detail"])
-            return
+            return True
 
         if full is None:
             full = kanban.show_full(goal["target"], goal["current_task"], runner=self.runner)
@@ -330,12 +370,48 @@ class Loop:
             # Worker marked done anyway - grade as before; on fail fall back to new task
             self._grade_free(goal, job, full)
         elif status == "running":
-            self._watch(goal, job, full)
-        elif status in ("blocked", "archived"):
+            return self._watch(goal, job, full)
+        elif status in ("blocked", "crashed", "archived"):
+            if status != "archived":
+                until = self._quota_reset(goal)
+                if until is not None:
+                    return self._quota_wait(goal, until)
+            gave_up = _gave_up(full) if status != "archived" else None
+            if gave_up is not None:
+                # Kanban retried the worker and stopped: one failed attempt.
+                trigger = gave_up.get("trigger_outcome") or "error"
+                reason = f"kanban gave up after {trigger}: {gave_up.get('error') or _blocked_reason(full)}"
+                outcome = "timeout" if trigger == "timed_out" else "error"
+                ledger.finish_job(self.conn, job["id"], outcome, "kanban", reason)
+                self._next_attempt(goal, reason)
+                return True
             reason = _blocked_reason(full)
             ledger.finish_job(self.conn, job["id"], "error", "kanban", reason)
             ledger.finish_goal(self.conn, goal["id"], "error", f"kanban {status}: {reason}")
-        # Anything else is still queued: kanban dispatches it.
+        else:
+            return False  # still queued: kanban dispatches it
+        return True
+
+    # -- free quota ------------------------------------------------------------
+
+    def _quota_reset(self, goal: dict) -> float | None:
+        """When the free quota resets, if that is what stopped the goal's worker."""
+        text = kanban.log(goal["target"], goal["current_task"], tail=LOG_TAIL_BYTES,
+                          runner=self.runner)
+        return quota_reset(text, self.now())
+
+    def _quota_wait(self, goal: dict, until: float) -> bool:
+        """Not an attempt: pause the target until the quota resets, then unblock."""
+        task_id = goal["current_task"]
+        if until <= self.now():
+            kanban.unblock(goal["target"], task_id, reason="free quota has reset",
+                           runner=self.runner)
+            return True
+        pause = ledger.active_pause(self.conn, goal["target"], self.now())
+        if pause is None or datetime.fromisoformat(pause["until"]).timestamp() < until:
+            ledger.add_pause(self.conn, goal["target"], until,
+                             f"free quota (task {task_id}, goal {goal['id']})")
+        return False
 
     # -- free attempts ---------------------------------------------------------
 
@@ -369,7 +445,7 @@ class Loop:
         """Kanban neither enforces --max-runtime nor notices a dead worker."""
         runs = full.get("runs") or []
         if not runs:
-            return
+            return False
         run = runs[-1]
         pid, started = run.get("worker_pid"), run.get("started_at")
         budget = run_budget_s(role_info(self.root, goal["role"]))
@@ -381,13 +457,21 @@ class Loop:
             age = int(self.now() - float(started))
             reason = f"run {run.get('id')} is {age}s old, over its {budget}s budget + {GRACE_S}s"
         if reason is None:
-            return
+            return False
         if alive:
             self.kill(int(pid))
             reason += f"; terminated pid {pid}"
+        until = None if alive else self._quota_reset(goal)
+        if until is not None:
+            # Out of free quota, not a failed attempt: blocked until it resets.
+            kanban.block(goal["target"], goal["current_task"], f"{reason}; free quota",
+                         runner=self.runner)
+            self._quota_wait(goal, until)
+            return True
         kanban.block(goal["target"], goal["current_task"], reason, runner=self.runner)
         ledger.finish_job(self.conn, job["id"], "error", "team-run", reason)
         self._next_attempt(goal, reason)
+        return True
 
     def _grade_free(self, goal: dict, job: dict, full: dict) -> None:
         task_id = goal["current_task"]
@@ -403,6 +487,7 @@ class Loop:
             task_class=goal["role"], tokens_in=session_data["tokens_in"],
             tokens_out=session_data["tokens_out"], latency_ms=None,
             ok=session_data["ok"] and not is_paid, error=reason if is_paid else session_data["error"],
+            api_calls=session_data["api_calls"],
         )
         if is_paid:
             reason = f"refused as free: {reason}"
@@ -433,6 +518,7 @@ class Loop:
             task_class=goal["role"], tokens_in=session_data["tokens_in"],
             tokens_out=session_data["tokens_out"], latency_ms=None,
             ok=session_data["ok"] and not is_paid, error=reason if is_paid else session_data["error"],
+            api_calls=session_data["api_calls"],
         )
         if is_paid:
             reason = f"refused as free: {reason}"
