@@ -11,11 +11,11 @@ class TestIsFreeModel:
     def test_free_suffix(self):
         assert is_free_model("some-model:free") is True
         assert is_free_model("provider/model:free") is True
-    
+
     def test_free_exact(self):
         assert is_free_model("gemini-2.5-flash") is True
         assert is_free_model("openai/gpt-oss-120b") is True
-    
+
     def test_paid_model(self):
         assert is_free_model("gpt-4") is False
         assert is_free_model("claude-3-opus") is False
@@ -29,27 +29,27 @@ class TestCheckCommand:
         reason = check_command(cmd)
         assert reason is not None
         assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
-    
+
     def test_allowed_free_chat_long_form(self):
         cmd = 'hermes chat --model="model:free"'
         # No team-* profile -> refused
         reason = check_command(cmd)
         assert reason is not None
         assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
-    
+
     def test_allowed_free_exact_model(self):
         cmd = 'hermes chat -m gemini-2.5-flash'
         # No team-* profile -> refused
         reason = check_command(cmd)
         assert reason is not None
         assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
-    
+
     def test_missing_model_refused(self):
         cmd = 'hermes chat'
         reason = check_command(cmd)
         assert reason is not None
         assert "requires explicit -m/--model" in reason
-    
+
     def test_paid_model_refused(self):
         cmd = 'hermes chat -m gpt-4'
         # Even with a team-* profile, a non-free model is refused
@@ -58,58 +58,58 @@ class TestCheckCommand:
         # First refusal is about profile, but if profile were team-*, then "not free"
         # Since there's no profile, it's about the profile requirement
         assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
-    
+
     def test_paid_provider_refused(self):
         cmd = 'hermes chat -m "model:free" --provider openai'
         # No team-* profile -> refused for profile reason first
         reason = check_command(cmd)
         assert reason is not None
         assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
-    
+
     def test_hermes_after_and_refused(self):
         cmd = 'echo hello && hermes chat -q "test"'
         reason = check_command(cmd)
         assert reason is not None
         assert "requires explicit -m/--model" in reason
-    
+
     def test_non_hermes_command_allowed(self):
         cmd = 'echo hello world'
         assert check_command(cmd) is None
-    
+
     def test_hermes_sessions_list_allowed(self):
         cmd = 'hermes sessions list'
         assert check_command(cmd) is None
-    
+
     def test_hermes_fallback_list_allowed(self):
         cmd = 'hermes fallback list'
         assert check_command(cmd) is None
-    
+
     def test_unbalanced_quotes_refused(self):
         cmd = "hermes chat -m 'unclosed"
         reason = check_command(cmd)
         assert reason is not None
         assert "unbalanced quotes" in reason
-    
+
     def test_implicit_chat_with_query_flag(self):
         cmd = 'hermes -q "test" -m "model:free"'
         # No team-* profile -> refused
         reason = check_command(cmd)
         assert reason is not None
-        assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
-    
+        assert "requires -p/--profile team-*" in reason
+
     def test_implicit_chat_without_model_refused(self):
         cmd = 'hermes -q "test"'
         reason = check_command(cmd)
         assert reason is not None
-        assert "requires explicit -m/--model" in reason
-    
+        assert "requires -p/--profile team-*" in reason
+
     def test_model_equals_form(self):
         cmd = 'hermes chat --model=gemini-2.5-flash'
         # No team-* profile -> refused
         reason = check_command(cmd)
         assert reason is not None
         assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in reason
-    
+
     def test_provider_equals_form(self):
         cmd = 'hermes chat -m "model:free" --provider=openai'
         # No team-* profile -> refused for profile reason first
@@ -128,37 +128,37 @@ class TestCLI:
             text=True,
         )
         return result.returncode, result.stdout, result.stderr
-    
+
     def test_allowed_free_chat_cli(self):
         code, _, _ = self._run_free_check('hermes chat -m "model:free"')
         # No team-* profile -> refused
         assert code == 2
-    
+
     def test_missing_model_refused_cli(self):
         code, _, stderr = self._run_free_check('hermes chat')
         assert code == 2
         assert "requires explicit -m/--model" in stderr
-    
+
     def test_paid_model_refused_cli(self):
         code, _, stderr = self._run_free_check('hermes chat -m gpt-4')
         # No team-* profile -> refused for profile reason
         assert code == 2
         assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in stderr
-    
+
     def test_paid_provider_refused_cli(self):
         code, _, stderr = self._run_free_check('hermes chat -m "model:free" --provider openai')
         # No team-* profile -> refused for profile reason
         assert code == 2
         assert "requires explicit -m/--model with a free model, or -p/--profile team-*" in stderr
-    
+
     def test_non_hermes_allowed_cli(self):
         code, _, _ = self._run_free_check('echo hello')
         assert code == 0
-    
+
     def test_hermes_sessions_allowed_cli(self):
         code, _, _ = self._run_free_check('hermes sessions list')
         assert code == 0
-    
+
     def test_malformed_json_exits_zero(self):
         result = subprocess.run(
             [sys.executable, "-m", "team", "free-check"],
@@ -167,7 +167,7 @@ class TestCLI:
             text=True,
         )
         assert result.returncode == 0
-    
+
     def test_missing_fields_exits_zero(self):
         payload = {"tool_name": "Bash"}
         result = subprocess.run(
@@ -177,7 +177,7 @@ class TestCLI:
             text=True,
         )
         assert result.returncode == 0
-    
+
     def test_non_bash_tool_exits_zero(self):
         payload = {"tool_name": "Edit", "tool_input": {"command": "hermes chat"}}
         result = subprocess.run(
@@ -500,3 +500,76 @@ class TestStillAllowed:
 
     def test_pipe_out_of_sessions_list(self):
         assert check_command('hermes sessions list | grep chat') is None
+
+    # New tests for team-* profile rules
+    def test_team_profile_config_refused(self):
+        assert check_command('hermes -p team-worker config set model.default openai/gpt-5') is not None
+
+    def test_team_profile_kanban_dispatch_allowed(self):
+        assert check_command('hermes -p team-worker kanban --board team dispatch --json') is None
+
+    def test_team_profile_kanban_list_allowed(self):
+        assert check_command('hermes -p team-worker kanban list') is None
+
+    def test_team_profile_sessions_list_allowed(self):
+        assert check_command('hermes -p team-worker sessions list') is None
+
+    def test_team_profile_dashboard_allowed(self):
+        assert check_command('hermes -p team-worker dashboard') is None
+
+    def test_team_profile_skills_list_allowed(self):
+        assert check_command('hermes -p team-worker skills list') is None
+
+    def test_team_profile_profile_list_allowed(self):
+        assert check_command('hermes -p team-worker profile list') is None
+
+    def test_team_profile_profile_describe_allowed(self):
+        assert check_command('hermes -p team-worker profile describe') is None
+
+    def test_default_profile_kanban_list_allowed(self):
+        assert check_command('hermes kanban list') is None
+
+    def test_default_profile_kanban_show_allowed(self):
+        assert check_command('hermes kanban show') is None
+
+    def test_default_profile_kanban_dispatch_refused(self):
+        assert check_command('hermes kanban dispatch') is not None
+
+    def test_default_profile_sessions_list_allowed(self):
+        assert check_command('hermes sessions list') is None
+
+    def test_default_profile_sessions_export_allowed(self):
+        assert check_command('hermes sessions export') is None
+
+    def test_default_profile_profile_list_allowed(self):
+        assert check_command('hermes profile list') is None
+
+    def test_default_profile_profile_describe_refused(self):
+        assert check_command('hermes profile describe') is not None
+
+    def test_default_profile_fallback_list_allowed(self):
+        assert check_command('hermes fallback list') is None
+
+    def test_default_profile_dashboard_refused(self):
+        assert check_command('hermes dashboard') is not None
+
+    def test_default_profile_skills_list_refused(self):
+        assert check_command('hermes skills list') is not None
+
+    def test_default_profile_sessions_delete_refused(self):
+        assert check_command('hermes sessions delete X') is not None
+
+    def test_team_profile_auth_refused(self):
+        assert check_command('hermes -p team-worker auth login') is not None
+
+    def test_team_profile_setup_refused(self):
+        assert check_command('hermes -p team-worker setup') is not None
+
+    def test_team_profile_model_refused(self):
+        assert check_command('hermes -p team-worker model') is not None
+
+    def test_team_profile_gateway_refused(self):
+        assert check_command('hermes -p team-worker gateway') is not None
+
+    def test_team_profile_tools_refused(self):
+        assert check_command('hermes -p team-worker tools') is not None
