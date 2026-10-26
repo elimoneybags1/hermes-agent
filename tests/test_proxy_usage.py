@@ -78,3 +78,12 @@ def test_tier_sessions_record_real_models(monkeypatch):
              "latency_ms": 5, "ok": True, "error": None, "api_calls": 1}]
     monkeypatch.setattr(proxy_usage, "calls_for_task", lambda task_id: real)
     assert run._call_rows({"model": "tier-complex"}, "t_9") == real
+
+
+def test_missing_session_still_uses_usage_log(monkeypatch):
+    real = [{"provider": "gemini", "model": "g", "tokens_in": 1, "tokens_out": 1,
+             "latency_ms": 5, "ok": True, "error": None, "api_calls": 1}]
+    monkeypatch.setattr(proxy_usage, "calls_for_task", lambda task_id: real)
+    assert run._call_rows(None, "t_9") == real
+    monkeypatch.setattr(proxy_usage, "calls_for_task", lambda task_id: [])
+    assert run._call_rows(None, "t_9")[0]["model"] == "unknown"

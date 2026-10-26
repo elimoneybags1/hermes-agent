@@ -213,7 +213,8 @@ def _build_session_data(session: dict | None) -> dict:
 def _call_rows(session: dict | None, task_id: str) -> list[dict]:
     """Ledger rows for a worker session: through the LiteLLM proxy, one per real
     model that served it (from the proxy's usage log); otherwise the session itself."""
-    if session and session.get("model") in PROXY_MODELS:
+    # No session found (goal 18 attempt 2) still has the proxy's record of the task.
+    if session is None or session.get("model") in PROXY_MODELS:
         rows = proxy_usage.calls_for_task(task_id)
         if rows:
             return rows

@@ -64,7 +64,10 @@ def connect(p: Path, key: str) -> None:
     data = yaml.safe_load(cfg.read_text()) or {}
     others = [e for e in data.get("custom_providers") or [] if e.get("name") != PROVIDER["name"]]
     data["custom_providers"] = others + [dict(PROVIDER)]
-    data["model"] = {"provider": PROVIDER["name"], "default": MODEL}
+    # model.context_length is the first thing Hermes's resolver reads; without it Hermes
+    # took the window from the proxy's /models (1M) and never compressed (goal 18: 18K -> 56K).
+    data["model"] = {"provider": PROVIDER["name"], "default": MODEL,
+                     "context_length": PROVIDER["context_length"]}
     data["fallback_providers"] = []
     data["fallback_model"] = None
     data["file_read_max_chars"] = FILE_READ_MAX_CHARS
