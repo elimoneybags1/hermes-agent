@@ -14,7 +14,7 @@ tools = [
 
 [runs_on]
 harness = "hermes"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "team-auto"
 
 [models]
 candidates = [

@@ -28,8 +28,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from team import claude_roles, claude_run, decisions, grade, kanban, ledger, settings, targets
-from team.free import is_free_model
+from team import claude_roles, claude_run, decisions, grade, kanban, ledger, proxy_usage, settings, targets
+from team.free import PROXY_MODEL, is_free_model
 from team.roles import load_roles
 
 Runner = Callable[..., subprocess.CompletedProcess]
@@ -208,6 +208,16 @@ def _build_session_data(session: dict | None) -> dict:
         "error": None,
         "api_calls": session.get("api_call_count"),
     }
+
+
+def _call_rows(session: dict | None, task_id: str) -> list[dict]:
+    """Ledger rows for a worker session: through the LiteLLM proxy, one per real
+    model that served it (from the proxy's usage log); otherwise the session itself."""
+    if session and session.get("model") == PROXY_MODEL:
+        rows = proxy_usage.calls_for_task(task_id)
+        if rows:
+            return rows
+    return [_build_session_data(session)]
 
 
 def quota_reset(log_text: str, now: float) -> float | None:
@@ -483,16 +493,16 @@ class Loop:
         assignee = full.get("task", {}).get("assignee", "team-worker")
         session = kanban.session_for_task(task_id, profile=assignee, runner=self.runner)
         is_paid, reason = _is_paid_model(session)
-        session_data = _build_session_data(session)
-        ledger.record_call(
-            self.conn, job["id"],
-            provider=session_data["provider"],
-            model=session_data["model"],
-            task_class=goal["role"], tokens_in=session_data["tokens_in"],
-            tokens_out=session_data["tokens_out"], latency_ms=None,
-            ok=session_data["ok"] and not is_paid, error=reason if is_paid else session_data["error"],
-            api_calls=session_data["api_calls"],
-        )
+        for session_data in _call_rows(session, task_id):
+            ledger.record_call(
+                self.conn, job["id"],
+                provider=session_data["provider"],
+                model=session_data["model"],
+                task_class=goal["role"], tokens_in=session_data["tokens_in"],
+                tokens_out=session_data["tokens_out"], latency_ms=session_data.get("latency_ms"),
+                ok=session_data["ok"] and not is_paid, error=reason if is_paid else session_data["error"],
+                api_calls=session_data["api_calls"],
+            )
         if is_paid:
             reason = f"refused as free: {reason}"
             ledger.finish_job(self.conn, job["id"], "error", "free-gate", reason)
@@ -514,16 +524,16 @@ class Loop:
         assignee = full.get("task", {}).get("assignee", "team-worker")
         session = kanban.session_for_task(task_id, profile=assignee, runner=self.runner)
         is_paid, reason = _is_paid_model(session)
-        session_data = _build_session_data(session)
-        ledger.record_call(
-            self.conn, job["id"],
-            provider=session_data["provider"],
-            model=session_data["model"],
-            task_class=goal["role"], tokens_in=session_data["tokens_in"],
-            tokens_out=session_data["tokens_out"], latency_ms=None,
-            ok=session_data["ok"] and not is_paid, error=reason if is_paid else session_data["error"],
-            api_calls=session_data["api_calls"],
-        )
+        for session_data in _call_rows(session, task_id):
+            ledger.record_call(
+                self.conn, job["id"],
+                provider=session_data["provider"],
+                model=session_data["model"],
+                task_class=goal["role"], tokens_in=session_data["tokens_in"],
+                tokens_out=session_data["tokens_out"], latency_ms=session_data.get("latency_ms"),
+                ok=session_data["ok"] and not is_paid, error=reason if is_paid else session_data["error"],
+                api_calls=session_data["api_calls"],
+            )
         if is_paid:
             reason = f"refused as free: {reason}"
             ledger.finish_job(self.conn, job["id"], "error", "free-gate", reason)

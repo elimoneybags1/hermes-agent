@@ -21,6 +21,29 @@ class TestIsFreeModel:
         assert is_free_model("claude-3-opus") is False
         assert is_free_model("anthropic/claude-3") is False
 
+    def test_proxy_free_only_while_its_config_checks(self, monkeypatch):
+        import team.free as free
+        monkeypatch.setattr(free, "proxy_is_free", lambda: True)
+        assert is_free_model("team-auto") is True
+        monkeypatch.setattr(free, "proxy_is_free", lambda: False)
+        assert is_free_model("team-auto") is False
+
+    def test_proxy_check_fails_closed(self, monkeypatch, tmp_path):
+        import team.free as free
+        bad = tmp_path / "build.py"
+        bad.write_text("import sys; sys.exit(1)\n")
+        monkeypatch.setattr(free, "_PROXY_BUILD", bad)
+        free.proxy_is_free.cache_clear()
+        try:
+            assert free.proxy_is_free() is False
+        finally:
+            free.proxy_is_free.cache_clear()
+
+    def test_proxy_config_in_repo_checks(self):
+        import team.free as free
+        free.proxy_is_free.cache_clear()
+        assert free.proxy_is_free() is True
+
 
 class TestCheckCommand:
     def test_allowed_free_chat(self):

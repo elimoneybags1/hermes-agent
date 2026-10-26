@@ -24,7 +24,11 @@ subprocess list), or under a name assembled from variables.
 """
 
 import fnmatch
+import functools
 import re
+import subprocess
+import sys
+from pathlib import Path
 from typing import NamedTuple, Optional
 
 # Models that are free despite not ending in ":free"
@@ -107,8 +111,28 @@ class Segment(NamedTuple):
 
 
 def is_free_model(model: str) -> bool:
-    """Return True if the model is allowed (ends with :free or in FREE_EXACT)."""
+    """Return True if the model is allowed (ends with :free or in FREE_EXACT),
+    or is Team's LiteLLM router while its config routes only to free models."""
+    if model == PROXY_MODEL:
+        return proxy_is_free()
     return model.endswith(":free") or model in FREE_EXACT
+
+
+# Team's LiteLLM auto-router (litellm/). Free only while litellm/build.py --check
+# passes: config.yaml is exactly what free-models.json generates, and that
+# refuses any model not documented free or from a blocked provider.
+PROXY_MODEL = "team-auto"
+_PROXY_BUILD = Path(__file__).resolve().parent.parent / "litellm" / "build.py"
+
+
+@functools.cache
+def proxy_is_free() -> bool:
+    try:
+        r = subprocess.run([sys.executable, str(_PROXY_BUILD), "--check"],
+                           capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return r.returncode == 0
 
 
 def _close_paren(s: str, i: int) -> int:
