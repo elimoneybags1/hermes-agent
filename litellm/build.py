@@ -72,8 +72,8 @@ def deployments(catalog: dict) -> list[dict]:
             "api_key": f"os.environ/{p['key']}",
             "order": int(m["order"]),
             # A hung free endpoint (seen on NVIDIA) must fail over, not stall a worker.
-            "timeout": 180,
-            "stream_timeout": 60,
+            "timeout": 90,
+            "stream_timeout": 45,
         }
         if p.get("api_base"):
             params["api_base"] = p["api_base"]
@@ -85,6 +85,14 @@ def deployments(catalog: dict) -> list[dict]:
         # Free deployments cost nothing; keeps LiteLLM's spend log honest.
         info["input_cost_per_token"] = 0
         info["output_cost_per_token"] = 0
+        # New models are missing from LiteLLM's built-in map, and its pre-call checks then
+        # drop them from tool-calling requests; declare what the catalog knows.
+        if m.get("tools") is not None:
+            info["supports_function_calling"] = info["supports_tool_choice"] = bool(m["tools"])
+        if m.get("vision") is not None:
+            info["supports_vision"] = bool(m["vision"])
+        if m.get("reasoning") is not None:
+            info["supports_reasoning"] = bool(m["reasoning"])
         out.append({"model_name": group(m["tier"]), "litellm_params": params, "model_info": info})
     for tier in TIERS:
         if not any(d["model_name"] == group(tier) for d in out):
@@ -117,7 +125,12 @@ def config(catalog: dict) -> dict:
         "router_settings": {
             # Lowest 'order' first; a deployment that 429s or fails rests, then the next order serves.
             "enable_pre_call_checks": True,
-            "num_retries": 2,
+            # A session (Team job, by x-litellm-session-id) keeps one model within its tier
+            # unless that model fails or cools down.
+            "optional_pre_call_checks": ["session_affinity"],
+            # Bounded: retries x timeout x fallbacks once held a worker for 9.5 minutes.
+            "num_retries": 1,
+            "max_fallbacks": 2,
             "allowed_fails": 1,
             "cooldown_time": 300,
             "fallbacks": [{group(t): [group(f) for f in FALLBACKS[t]]} for t in TIERS],

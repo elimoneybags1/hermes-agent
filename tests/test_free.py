@@ -24,9 +24,12 @@ class TestIsFreeModel:
     def test_proxy_free_only_while_its_config_checks(self, monkeypatch):
         import team.free as free
         monkeypatch.setattr(free, "proxy_is_free", lambda: True)
-        assert is_free_model("team-auto") is True
+        for name in ("team-auto", "tier-simple", "tier-medium", "tier-complex", "tier-reasoning"):
+            assert is_free_model(name) is True
+        assert is_free_model("tier-paid") is False
         monkeypatch.setattr(free, "proxy_is_free", lambda: False)
         assert is_free_model("team-auto") is False
+        assert is_free_model("tier-complex") is False
 
     def test_proxy_check_fails_closed(self, monkeypatch, tmp_path):
         import team.free as free

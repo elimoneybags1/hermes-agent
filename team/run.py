@@ -28,8 +28,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from team import claude_roles, claude_run, decisions, grade, kanban, ledger, proxy_usage, settings, targets
-from team.free import PROXY_MODEL, is_free_model
+from team import claude_roles, claude_run, decisions, grade, kanban, ledger, proxy_tier, proxy_usage, settings, targets
+from team.free import PROXY_MODEL, PROXY_MODELS, is_free_model
 from team.roles import load_roles
 
 Runner = Callable[..., subprocess.CompletedProcess]
@@ -213,7 +213,7 @@ def _build_session_data(session: dict | None) -> dict:
 def _call_rows(session: dict | None, task_id: str) -> list[dict]:
     """Ledger rows for a worker session: through the LiteLLM proxy, one per real
     model that served it (from the proxy's usage log); otherwise the session itself."""
-    if session and session.get("model") == PROXY_MODEL:
+    if session and session.get("model") in PROXY_MODELS:
         rows = proxy_usage.calls_for_task(task_id)
         if rows:
             return rows
@@ -440,6 +440,10 @@ class Loop:
         model = role.get("runs_on", {}).get("model", "")
         if not model or not is_free_model(model):
             raise RunError(f"role {goal['role']} has no free model configured")
+        if model == PROXY_MODEL:
+            # The worker's opening message is only "work kanban task <id>"; tier the goal itself.
+            model, why = proxy_tier.for_task(goal["goal"], attempt)
+            self.log(f"goal {goal['id']}: attempt {attempt} on {model} ({why})")
         task = kanban.create_task(
             goal["target"], title, _brief(goal, attempt, failure),
             assignee=assignee_for(goal["role"], self.runner),

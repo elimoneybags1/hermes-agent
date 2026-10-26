@@ -25,11 +25,17 @@ PROVIDER = {
     "api_key": "${TEAM_LITELLM_KEY}",
     "api_mode": "chat_completions",
     "extra_headers": {"x-litellm-session-id": "${HERMES_KANBAN_TASK}"},
-    # Smallest window among routed models (muse-glimmer, gpt-oss-20b, command-a-plus):
-    # Hermes compresses before any tier's model would refuse the prompt.
-    "context_length": 128000,
+    # Hermes compresses at half of this, so prompts stay under ~32K tokens instead of
+    # growing to ~64K (goal 18 reached 62K uncompressed); well inside every model's window.
+    "context_length": 64000,
 }
+# One big read is resent on every later turn (goal 18: an 18K-char JSON file); read in ranges.
+FILE_READ_MAX_CHARS = 20000
 MODEL = "team-auto"
+# Hermes's own side jobs run on the cheapest tier, through the same provider so they
+# carry the task's session header. Team dispatches the main work on a tier (-m).
+AUXILIARY = ("compression", "session_search", "title_generation", "curator", "background_review")
+SIDE_MODEL = "tier-simple"
 
 
 def profiles() -> list[Path]:
@@ -61,6 +67,11 @@ def connect(p: Path, key: str) -> None:
     data["model"] = {"provider": PROVIDER["name"], "default": MODEL}
     data["fallback_providers"] = []
     data["fallback_model"] = None
+    data["file_read_max_chars"] = FILE_READ_MAX_CHARS
+    aux = data.setdefault("auxiliary", {})
+    aux.pop("openrouter_model", None)
+    for task in AUXILIARY:
+        aux.setdefault(task, {}).update(provider=PROVIDER["name"], model=SIDE_MODEL, fallback_chain=[])
     cfg.write_text(yaml.safe_dump(data, sort_keys=False))
     set_env(p / ".env", "TEAM_LITELLM_KEY", key)
 

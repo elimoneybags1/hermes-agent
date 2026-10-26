@@ -54,3 +54,27 @@ def test_proxy_session_without_log_falls_back_to_session(monkeypatch):
 def test_direct_session_is_recorded_as_is():
     rows = run._call_rows({"model": "x/y:free", "billing_provider": "openrouter"}, "t_9")
     assert [(r["provider"], r["model"]) for r in rows] == [("openrouter", "x/y:free")]
+
+
+def test_tier_floor_and_retry_bump():
+    from team import proxy_tier
+    assert proxy_tier.for_task("x", 1, classify=lambda t: "SIMPLE")[0] == "tier-medium"
+    assert proxy_tier.for_task("x", 1, classify=lambda t: "COMPLEX")[0] == "tier-complex"
+    assert proxy_tier.for_task("x", 2, classify=lambda t: "MEDIUM")[0] == "tier-complex"
+    assert proxy_tier.for_task("x", 5, classify=lambda t: "COMPLEX")[0] == "tier-reasoning"
+
+
+def test_tier_falls_back_to_floor_when_proxy_is_down():
+    from team import proxy_tier
+
+    def down(text):
+        raise ConnectionRefusedError()
+    model, why = proxy_tier.for_task("x", 1, classify=down)
+    assert model == "tier-medium" and "unavailable" in why
+
+
+def test_tier_sessions_record_real_models(monkeypatch):
+    real = [{"provider": "nvidia", "model": "m", "tokens_in": 1, "tokens_out": 1,
+             "latency_ms": 5, "ok": True, "error": None, "api_calls": 1}]
+    monkeypatch.setattr(proxy_usage, "calls_for_task", lambda task_id: real)
+    assert run._call_rows({"model": "tier-complex"}, "t_9") == real

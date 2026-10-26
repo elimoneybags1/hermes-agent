@@ -113,7 +113,7 @@ class Segment(NamedTuple):
 def is_free_model(model: str) -> bool:
     """Return True if the model is allowed (ends with :free or in FREE_EXACT),
     or is Team's LiteLLM router while its config routes only to free models."""
-    if model == PROXY_MODEL:
+    if model in PROXY_MODELS:
         return proxy_is_free()
     return model.endswith(":free") or model in FREE_EXACT
 
@@ -122,6 +122,8 @@ def is_free_model(model: str) -> bool:
 # passes: config.yaml is exactly what free-models.json generates, and that
 # refuses any model not documented free or from a blocked provider.
 PROXY_MODEL = "team-auto"
+# Its tier groups, which Team dispatches tasks on directly (team/proxy_tier.py).
+PROXY_MODELS = frozenset({PROXY_MODEL, "tier-simple", "tier-medium", "tier-complex", "tier-reasoning"})
 _PROXY_BUILD = Path(__file__).resolve().parent.parent / "litellm" / "build.py"
 
 
