@@ -593,8 +593,6 @@ model_list:
       return_raw_model_name: true
 router_settings:
   enable_pre_call_checks: true
-  optional_pre_call_checks:
-  - session_affinity
   num_retries: 1
   max_fallbacks: 2
   allowed_fails: 1
@@ -618,5 +616,6 @@ litellm_settings:
   callbacks:
   - spend_guard.guard
   - usage_log.logger
+  - session_pin.pin
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

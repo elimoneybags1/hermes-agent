@@ -126,9 +126,6 @@ def config(catalog: dict) -> dict:
         "router_settings": {
             # Lowest 'order' first; a deployment that 429s or fails rests, then the next order serves.
             "enable_pre_call_checks": True,
-            # A session (Team job, by x-litellm-session-id) keeps one model within its tier
-            # unless that model fails or cools down.
-            "optional_pre_call_checks": ["session_affinity"],
             # Bounded: retries x timeout x fallbacks once held a worker for 9.5 minutes.
             "num_retries": 1,
             "max_fallbacks": 2,
@@ -140,7 +137,9 @@ def config(catalog: dict) -> dict:
         "litellm_settings": {
             "drop_params": True,
             "telemetry": False,
-            "callbacks": ["spend_guard.guard", "usage_log.logger"],
+            # session_pin: a session (Team job, by x-litellm-session-id) keeps one model within
+            # its tier until that model fails. LiteLLM's own session_affinity skips mixed groups.
+            "callbacks": ["spend_guard.guard", "usage_log.logger", "session_pin.pin"],
         },
         "general_settings": {"master_key": "os.environ/LITELLM_MASTER_KEY"},
     }
