@@ -15,6 +15,7 @@ answered, so a job that failed over stays on its new model instead of bouncing b
 from __future__ import annotations
 
 import copy
+import logging
 import time
 
 from litellm.integrations.custom_logger import CustomLogger
@@ -22,6 +23,7 @@ from litellm.router_utils.pre_call_checks.deployment_affinity_check import Deplo
 
 TTL_S = 2 * 3600
 FRONT = -1  # below every configured order (they start at 1)
+log = logging.getLogger("team.session_pin")
 
 
 class SessionPin(CustomLogger):
@@ -38,11 +40,18 @@ class SessionPin(CustomLogger):
     async def async_filter_deployments(self, model, healthy_deployments, messages,
                                        request_kwargs=None, parent_otel_span=None):
         kwargs = request_kwargs or {}
-        if kwargs.get("_target_order") is not None:  # LiteLLM is already failing over by order
-            return healthy_deployments
         session = DeploymentAffinityCheck._get_session_id_from_request_kwargs(kwargs)
         pinned = self._get(session, model) if session else None
         if not pinned:
+            return healthy_deployments
+        ids = [str((d.get("model_info") or {}).get("id")) for d in healthy_deployments]
+        # Say why a pin goes unused, so every model switch in usage.db can be explained.
+        if kwargs.get("_target_order") is not None:  # LiteLLM is already failing over by order
+            log.warning("session_pin: %s %s pinned %s not applied: failing over by order", session, model, pinned)
+            return healthy_deployments
+        if pinned not in ids:
+            log.warning("session_pin: %s %s pinned %s not applied: not among healthy %s",
+                        session, model, pinned, ids)
             return healthy_deployments
         out = []
         for d in healthy_deployments:
