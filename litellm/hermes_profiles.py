@@ -25,10 +25,14 @@ PROVIDER = {
     "api_key": "${TEAM_LITELLM_KEY}",
     "api_mode": "chat_completions",
     "extra_headers": {"x-litellm-session-id": "${HERMES_KANBAN_TASK}"},
-    # Hermes compresses at half of this, so prompts stay under ~32K tokens instead of
-    # growing to ~64K (goal 18 reached 62K uncompressed); well inside every model's window.
+    # Hermes compresses at 75% of a window under 512K, so prompts stay under ~48K tokens
+    # (goal 18 reached 62K uncompressed); well inside every model's window.
     "context_length": 64000,
 }
+# Per model as well: Team runs workers with -m tier-*, and Hermes ignores model.context_length
+# for any model other than the configured default (goal 19 grew to 62K uncompressed).
+PROVIDER["models"] = {name: {"context_length": PROVIDER["context_length"]} for name in
+                      ("team-auto", "tier-simple", "tier-medium", "tier-complex", "tier-reasoning")}
 # One big read is resent on every later turn (goal 18: an 18K-char JSON file); read in ranges.
 FILE_READ_MAX_CHARS = 20000
 MODEL = "team-auto"
@@ -64,8 +68,8 @@ def connect(p: Path, key: str) -> None:
     data = yaml.safe_load(cfg.read_text()) or {}
     others = [e for e in data.get("custom_providers") or [] if e.get("name") != PROVIDER["name"]]
     data["custom_providers"] = others + [dict(PROVIDER)]
-    # model.context_length is the first thing Hermes's resolver reads; without it Hermes
-    # took the window from the proxy's /models (1M) and never compressed (goal 18: 18K -> 56K).
+    # Without a context length Hermes takes the window from the proxy's /models (1M for
+    # tier-medium) and never compresses (goal 18: 18K -> 56K).
     data["model"] = {"provider": PROVIDER["name"], "default": MODEL,
                      "context_length": PROVIDER["context_length"]}
     data["fallback_providers"] = []
