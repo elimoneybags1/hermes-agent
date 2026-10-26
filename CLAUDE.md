@@ -13,6 +13,20 @@ what breaks) and specializes its workers to it over time.
 **Current stage: base architecture only.** Get a footing that works on one
 target end to end before adding roles, targets or autonomy.
 
+## Claude execution (2026-10-25)
+
+Eli chose the full Hermes runtime as the base, with Team policy layered on top.
+The complete fork is pinned at `vendor/hermes-agent` (GitHub:
+`elimoneybags1/hermes-agent`). Plain `team` and Claude escalation instantiate
+its native `AIAgent` through `team/hermes_native.py`. Hermes owns prompt
+construction, tools, memory, skills, compression and sessions. A local adapter
+uses the tool-free Claude CLI for subscription inference only. See
+`docs/HERMES-BOSS.md` for provenance and `docs/HARNESS.md` for execution.
+Free worker profiles also retain Hermes learning/context features.
+`team optimize` opens a separate advisory Hermes agent that compiles evidence,
+saves concrete recommendations, and discusses them with Eli. It cannot apply
+changes or dispatch work. See `docs/OPTIMIZER.md`.
+
 ## Design principles (decided)
 
 - **The foreman is code, not a free-roaming agent.** A typed state machine with a
@@ -65,8 +79,8 @@ Nobody has read it yet; it needs a session in `platform`.
 
 ## How Team is built
 
-- **The boss is the agent Eli talks to** (Eli, 2026-10-19): a Claude Code agent,
-  `plugin/agents/boss.md`, started by plain `team`. Its role, tools and rules
+- **The boss is the agent Eli talks to** (Eli, 2026-10-19): a native Hermes agent with Team overlays,
+  instructed by `plugin/agents/boss.md`, started by plain `team`. Its role, tools and rules
   live in git so they can be tuned. Roster in `roles/*/role.toml`; what
   each agent is doing shows in `team dash`, and in grid (`docs/DASH.md`).
 - **Free models do almost all the work** (Eli, 2026-10-19). Workers are Hermes
@@ -106,3 +120,11 @@ from logs/processes not markdown, no empty scaffolding, portable paths
 ## Terminal
 
 `work team` opens the herdr session. Layout in `.work.json`.
+
+## Scoped boss planning
+
+The boss uses targeted inspection, persistent goal contracts and constrained
+native Hermes Explorer/Critic/Verifier helpers. See `docs/SCOPED-PLANNING.md`.
+Project reads are scoped and budgeted; direct unscoped reads and kanban_create
+are not exposed. Worker briefs carry the scoped contract without overwriting
+learned profiles. Other role recommendations: `docs/ROLE-PLANNING-REVIEW.md`.

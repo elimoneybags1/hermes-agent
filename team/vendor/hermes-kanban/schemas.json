@@ -1,0 +1,210 @@
+{
+  "kanban_list": {
+    "name": "kanban_list",
+    "description": "List Kanban task summaries so an orchestrator profile can discover work to route. Supports the same core filters as the CLI: assignee, status, tenant, include_archived, and limit. Returns compact rows with ids, title, status, assignee, priority, parent/child ids, and counts. Bounded to 50 rows by default, 200 max, with truncation metadata. Also recomputes ready tasks before listing, matching the CLI. Orchestrator-only \u2014 dispatcher-spawned task workers never see this tool.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "assignee": {
+          "type": "string",
+          "description": "Optional assignee/profile filter."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "triage",
+            "todo",
+            "ready",
+            "running",
+            "blocked",
+            "done",
+            "archived"
+          ],
+          "description": "Optional task status filter."
+        },
+        "tenant": {
+          "type": "string",
+          "description": "Optional tenant/project namespace filter."
+        },
+        "include_archived": {
+          "type": "boolean",
+          "description": "Include archived tasks. Defaults to false."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Optional maximum rows to return (default 50, max 200)."
+        },
+        "board": {
+          "type": "string",
+          "description": "Kanban board slug to target. When omitted, the call resolves the active board the usual way: HERMES_KANBAN_DB env \u2192 HERMES_KANBAN_BOARD env \u2192 the 'current' symlink under the kanban home \u2192 'default'. Pass an explicit slug only when the caller (e.g. a Telegram routing layer) needs to override the env-pinned active board for this one call."
+        }
+      },
+      "required": []
+    }
+  },
+  "kanban_show": {
+    "name": "kanban_show",
+    "description": "Read a task's full state \u2014 title, body, assignee, parent task handoffs, your prior attempts on this task if any, comments, and recent events. Use this to (re)orient yourself before starting work, especially on retries. The response includes a pre-formatted ``worker_context`` string suitable for inclusion verbatim in your reasoning.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "Task id. If omitted, defaults to HERMES_KANBAN_TASK from the env (the task the dispatcher spawned you to work on)."
+        },
+        "board": {
+          "type": "string",
+          "description": "Kanban board slug to target. When omitted, the call resolves the active board the usual way: HERMES_KANBAN_DB env \u2192 HERMES_KANBAN_BOARD env \u2192 the 'current' symlink under the kanban home \u2192 'default'. Pass an explicit slug only when the caller (e.g. a Telegram routing layer) needs to override the env-pinned active board for this one call."
+        }
+      },
+      "required": []
+    }
+  },
+  "kanban_comment": {
+    "name": "kanban_comment",
+    "description": "Append a comment to a task's thread. Use for durable notes that should outlive this run (questions for the next worker, partial findings, rationale). Ephemeral reasoning doesn't belong here \u2014 use your normal response instead.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "Task id. Required (may be your own task or another's \u2014 comment threads are per-task)."
+        },
+        "body": {
+          "type": "string",
+          "description": "Markdown-supported comment body."
+        },
+        "board": {
+          "type": "string",
+          "description": "Kanban board slug to target. When omitted, the call resolves the active board the usual way: HERMES_KANBAN_DB env \u2192 HERMES_KANBAN_BOARD env \u2192 the 'current' symlink under the kanban home \u2192 'default'. Pass an explicit slug only when the caller (e.g. a Telegram routing layer) needs to override the env-pinned active board for this one call."
+        }
+      },
+      "required": [
+        "task_id",
+        "body"
+      ]
+    }
+  },
+  "kanban_create": {
+    "name": "kanban_create",
+    "description": "Create a new kanban task, optionally as a child of the current one (pass the current task id in ``parents``). Used by orchestrator workers to fan out \u2014 decompose work into child tasks with specific assignees, link them into a pipeline, then complete your own task. The dispatcher picks up the new tasks on its next tick and spawns the assigned profiles.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Short task title (required)."
+        },
+        "assignee": {
+          "type": "string",
+          "description": "Profile name that should execute this task (e.g. 'researcher-a', 'reviewer', 'writer'). Required \u2014 tasks without an assignee are never dispatched."
+        },
+        "body": {
+          "type": "string",
+          "description": "Opening post: full spec, acceptance criteria, links. The assigned worker reads this as part of its context."
+        },
+        "parents": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Parent task ids. The new task stays in 'todo' until every parent reaches 'done'; then it auto-promotes to 'ready'. Typical fan-in: list all the researcher task ids when creating a synthesizer task."
+        },
+        "tenant": {
+          "type": "string",
+          "description": "Optional namespace for multi-project isolation. Defaults to HERMES_TENANT env if set."
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Dispatcher tiebreaker. Higher = picked sooner when multiple ready tasks share an assignee."
+        },
+        "workspace_kind": {
+          "type": "string",
+          "enum": [
+            "scratch",
+            "dir",
+            "worktree"
+          ],
+          "description": "Workspace flavor: 'scratch' (fresh tmp dir, default), 'dir' (shared directory, requires absolute workspace_path), 'worktree' (git worktree)."
+        },
+        "workspace_path": {
+          "type": "string",
+          "description": "Absolute path for 'dir' or 'worktree' workspace. Relative paths are rejected at dispatch."
+        },
+        "project": {
+          "type": "string",
+          "description": "Optional project id or slug to link the task to. When set, the task becomes a git worktree under the project's primary repo with a deterministic branch (project slug + task id), instead of a random branch."
+        },
+        "triage": {
+          "type": "boolean",
+          "description": "If true, task lands in 'triage' instead of 'todo' \u2014 a specifier profile is expected to flesh out the body before work starts."
+        },
+        "idempotency_key": {
+          "type": "string",
+          "description": "If a non-archived task with this key already exists, return that task's id instead of creating a duplicate. Useful for retry-safe automation."
+        },
+        "max_runtime_seconds": {
+          "type": "integer",
+          "description": "Per-task runtime cap. When exceeded, the dispatcher SIGTERMs the worker and re-queues the task with outcome='timed_out'."
+        },
+        "initial_status": {
+          "type": "string",
+          "enum": [
+            "running",
+            "blocked"
+          ],
+          "description": "Initial card status. Use 'blocked' for tasks that require immediate human ops (R3 gate) to skip the brief running-to-blocked transition. Defaults to 'running', which preserves the usual dispatch path."
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Skill names to force-load into the dispatched worker. The kanban lifecycle is already injected automatically; use this to pin a task to a specialist context \u2014 e.g. ['translation'] for a translation task, ['github-code-review'] for a reviewer task. The names must match skills installed on the assignee's profile."
+        },
+        "goal_mode": {
+          "type": "boolean",
+          "description": "Run the dispatched worker in a goal loop. When true, after each turn an auxiliary judge checks the worker's response against this card's title/body; if the work isn't done and budget remains, the worker keeps going in the same session until the judge agrees it's complete (or the goal-turn budget is exhausted, which blocks the task for human review). Use this for open-ended cards where one shot rarely finishes the work. Defaults to false (classic single-shot worker)."
+        },
+        "goal_max_turns": {
+          "type": "integer",
+          "description": "Turn budget for goal_mode workers. Caps how many continuation turns the worker may take before the task is blocked for review. Ignored unless goal_mode is true. Defaults to the goal-engine default (20)."
+        },
+        "model": {
+          "type": "string",
+          "description": "Pin the dispatched worker to this model instead of the assignee profile's configured model. Use the exact model name the target provider expects. Omit to use the profile default."
+        },
+        "provider": {
+          "type": "string",
+          "description": "Provider the 'model' belongs to (e.g. 'openrouter', 'anthropic', 'nous'). Set this whenever the model is not from the assignee profile's configured provider \u2014 a model name alone is resolved against the profile's provider and will fail if it belongs to a different one. Requires 'model'."
+        },
+        "board": {
+          "type": "string",
+          "description": "Kanban board slug to target. When omitted, the call resolves the active board the usual way: HERMES_KANBAN_DB env \u2192 HERMES_KANBAN_BOARD env \u2192 the 'current' symlink under the kanban home \u2192 'default'. Pass an explicit slug only when the caller (e.g. a Telegram routing layer) needs to override the env-pinned active board for this one call."
+        }
+      },
+      "required": [
+        "title",
+        "assignee"
+      ]
+    }
+  },
+  "kanban_attachments": {
+    "name": "kanban_attachments",
+    "description": "List the files attached to a task: id, filename, content_type, size, who uploaded it, and the absolute on-disk path you can read.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "Task id. If omitted, defaults to HERMES_KANBAN_TASK from the env (the task the dispatcher spawned you to work on)."
+        },
+        "board": {
+          "type": "string",
+          "description": "Kanban board slug to target. When omitted, the call resolves the active board the usual way: HERMES_KANBAN_DB env \u2192 HERMES_KANBAN_BOARD env \u2192 the 'current' symlink under the kanban home \u2192 'default'. Pass an explicit slug only when the caller (e.g. a Telegram routing layer) needs to override the env-pinned active board for this one call."
+        }
+      },
+      "required": []
+    }
+  }
+}

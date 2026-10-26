@@ -113,12 +113,6 @@ def _board(args: argparse.Namespace) -> int:
     os.execvp(hermes, board_argv(args.port))
 
 
-def boss_argv(repo: Path, extra: list[str]) -> list[str]:
-    """Build the argv for the boss agent."""
-    plugin_dir = repo / "plugin"
-    return ["claude", "--plugin-dir", str(plugin_dir), "--agent", "boss", *extra]
-
-
 def _free_check(args: argparse.Namespace) -> int:
     """Check a hermes command from a Claude Code PreToolUse hook payload."""
     try:
@@ -464,18 +458,21 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError:
             extra = argv if argv else []
 
-        repo = Path(__file__).resolve().parent.parent
-        os.chdir(repo)
-        claude_path = shutil.which("claude")
-        if claude_path is None:
+        from team.hermes_runtime import boss
+        if shutil.which("claude") is None:
             print("claude not found on PATH", file=sys.stderr)
             return 1
-        boss_argv_list = boss_argv(repo, extra)
-        os.execvp(claude_path, boss_argv_list)
+        return boss(REPO, extra)
+
+    if argv[0] == "optimize":
+        from team.optimizer import main as optimize
+        return optimize(REPO, argv[1:])
 
     # Has a subcommand: parse normally
     parser = argparse.ArgumentParser(prog="team")
     commands = parser.add_subparsers(dest="command", required=True)
+
+    commands.add_parser("optimize", help="discuss evidence-based team improvements; never applies changes")
 
     led = commands.add_parser("ledger", help="the outcomes ledger")
     led_commands = led.add_subparsers(dest="action", required=True)

@@ -20,8 +20,17 @@ def profile_name(role: str) -> str:
 
 def _hermes_profile_dir(profile: str) -> Path:
     """Get the path to a Hermes profile directory."""
-    home = Path.home()
-    return home / ".hermes" / "profiles" / profile
+    from team.hermes_runtime import worker_profile_root
+    return worker_profile_root() / "profiles" / profile
+
+
+def require_turn_budget(profile: str, expected: int) -> None:
+    """Fail before queueing when the installed native runtime has no role cap."""
+    path = _hermes_profile_dir(profile) / "config.yaml"
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    actual = (data or {}).get("agent", {}).get("max_turns")
+    if type(actual) is not int or actual < 1 or actual > expected:
+        raise ValueError(f"{profile} needs agent.max_turns <= {expected}; sync the role profile")
 
 
 def _run_hermes_profile_create(profile: str, clone_from: str, description: str, runner: Any = None) -> None:
@@ -49,24 +58,31 @@ def _write_soul_md(profile: str, text: str) -> None:
     """Write SOUL.md to a Hermes profile."""
     path = _hermes_profile_dir(profile) / "SOUL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    from team.hermes_runtime import FORK
+    upstream = (FORK / "SOUL.md").read_text()
+    existing = path.read_text() if path.exists() else ""
+    combined = existing or text
+    if upstream not in combined:
+        combined = upstream + "\n\n# Team role specialization\n\n" + combined
+    path.write_text(combined)
 
 
 def _write_skills(profile: str, skills: list[dict[str, Any]]) -> None:
-    """Write skills to a Hermes profile, replacing the entire skills/ directory."""
+    """Seed the upstream library and role procedures without deleting learned skills."""
+    from team.hermes_runtime import FORK
     skills_dir = _hermes_profile_dir(profile) / "skills"
-    # Remove existing skills directory
-    if skills_dir.exists():
-        import shutil
-        shutil.rmtree(skills_dir)
     skills_dir.mkdir(parents=True, exist_ok=True)
-    
+    for source in (FORK / "skills").rglob("*"):
+        if source.is_file():
+            destination = skills_dir / source.relative_to(FORK / "skills")
+            if not destination.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
     for skill in skills:
-        skill_name = skill["name"]
-        skill_text = skill["text"]
-        skill_path = skills_dir / skill_name / "SKILL.md"
-        skill_path.parent.mkdir(parents=True, exist_ok=True)
-        skill_path.write_text(skill_text)
+        path = skills_dir / skill["name"] / "SKILL.md"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(skill["text"])
 
 
 def _write_model_default(profile: str, model: str) -> None:
@@ -87,55 +103,28 @@ def _write_model_default(profile: str, model: str) -> None:
         yaml.dump(data, f)
 
 
-def _write_lean_profile_config(profile: str, role_tools: list[str]) -> None:
-    """Write lean profile configuration: platform_toolsets, disabled_toolsets, skills, compression."""
-    import yaml
-
-    config_path = _hermes_profile_dir(profile) / "config.yaml"
-    data = {}
-    if config_path.exists():
-        with config_path.open() as f:
-            data = yaml.safe_load(f) or {}
-
-    # Remove any top-level 'toolsets' key (Hermes ignores it)
+def _write_role_profile_config(profile: str, role_tools: list[str], max_turns: int = 40) -> None:
+    """Keep Hermes learning/context features; specialize the execution tools only."""
+    path = _hermes_profile_dir(profile) / "config.yaml"
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    data = data or {}
+    learning = {"skills", "memory", "session_search", "todo"}
+    enabled = sorted(set(role_tools) | learning)
+    data.setdefault("platform_toolsets", {})["cli"] = enabled
     data.pop("toolsets", None)
-
-    # 1. platform_toolsets.cli = role's tools (sorted)
-    if "platform_toolsets" not in data:
-        data["platform_toolsets"] = {}
-    data["platform_toolsets"]["cli"] = sorted(role_tools)
-
-    # 2. agent.disabled_toolsets = every built-in toolset not in the role's tools
-    # Built-in toolsets from Hermes (hermes_cli/tools_config.py)
-    BUILTIN_TOOLSETS = [
-        "web", "browser", "code_execution", "vision", "image_gen", "tts",
-        "memory", "session_search", "clarify", "delegation", "cronjob",
-        "computer_use", "video", "video_gen", "x_search", "stt",
-        "homeassistant", "spotify", "yuanbao", "context_engine",
-    ]
-    role_tools_set = set(role_tools)
-    disabled = [ts for ts in BUILTIN_TOOLSETS if ts not in role_tools_set]
-    if "agent" not in data:
-        data["agent"] = {}
-    data["agent"]["disabled_toolsets"] = disabled
-
-    # 3. skills: disable project discovery
-    if "skills" not in data:
-        data["skills"] = {}
-    data["skills"]["project_discovery"] = False
-
-    # 4. compression.threshold_tokens: 60000
-    if "compression" not in data:
-        data["compression"] = {}
-    data["compression"]["threshold_tokens"] = 60000
-
-    # 5. Disable coding posture (auto-selects full coding toolset in code workspaces)
-    data["coding_context"] = "off"
-
-    # 6. Keep auxiliary.free_only and fallback_providers untouched (they persist from load)
-
-    with config_path.open("w") as f:
-        yaml.safe_dump(data, f, sort_keys=False)
+    if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
+        raise ValueError("role max_turns must be a positive integer")
+    data.setdefault("agent", {})["max_turns"] = max_turns
+    disabled = data["agent"].get("disabled_toolsets", [])
+    data["agent"]["disabled_toolsets"] = [t for t in disabled if t not in learning]
+    data.setdefault("skills", {})["project_discovery"] = True
+    data.setdefault("memory", {}).update(memory_enabled=True, user_profile_enabled=True)
+    data.setdefault("compression", {})["enabled"] = True
+    data["compression"].pop("threshold_tokens", None)  # inherit upstream's model-aware threshold
+    data.setdefault("auxiliary", {})["free_only"] = True
+    data["auxiliary"].setdefault("background_review", {})["enabled"] = True
+    # Preserve the free profile's credential and no-paid-fallback policy.
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
 
 
 def _get_role_skills(root: Path, role: str) -> list[dict[str, Any]]:
@@ -182,6 +171,9 @@ def sync(root: Path, role: str, runner: Any = None) -> str:
     
     # Check if model is free
     role_data = _read_role_toml(root, role)
+    if role_data.get("runs_on", {}).get("harness") == "hermes-subscription":
+        from team.hermes_runtime import prepare_profile
+        return f"native subscription profile: {prepare_profile(role, root)}"
     model = role_data.get("runs_on", {}).get("model", "")
     if not is_free_model(model):
         raise ValueError(f"refused: model '{model}' is not free")
@@ -203,19 +195,18 @@ def sync(root: Path, role: str, runner: Any = None) -> str:
     
     # Write skills
     skills = _get_role_skills(root, role)
-    if skills:
-        _write_skills(profile, skills)
-        changes.append(f"wrote {len(skills)} skills")
+    _write_skills(profile, skills)
+    changes.append(f"seeded upstream library and {len(skills)} role skills; kept existing skills")
     
     # Write model.default
     if model:
         _write_model_default(profile, model)
         changes.append(f"set model.default={model}")
     
-    # Write lean profile config (toolsets, skills settings, compression)
+    # Preserve native learning while specializing execution capabilities.
     role_tools = role_data.get("tools", [])
-    _write_lean_profile_config(profile, role_tools)
-    changes.append("wrote lean profile config")
+    _write_role_profile_config(profile, role_tools, role_data.get("budget", {}).get("max_turns", 40))
+    changes.append("enabled native Hermes memory, skills, session search and compression")
     
     return "; ".join(changes) if changes else "no changes"
 

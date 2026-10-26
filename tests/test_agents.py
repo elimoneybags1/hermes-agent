@@ -66,7 +66,7 @@ def temp_ledger(tmp_path):
 class TestAgentNames:
     def test_agent_names_sorted(self, temp_repo):
         names = agents.agent_names(temp_repo)
-        assert names == ["boss", "implement", "review", "spec", "test"]
+        assert names == ["boss", "implement", "optimizer", "review", "spec", "test"]
         assert names == sorted(names)
 
     def test_agent_names_missing_roles_dir(self, tmp_path):

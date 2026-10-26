@@ -24,6 +24,9 @@ class AgentError(ValueError):
 
 TOOLSETS = [
     "terminal",
+    "read-only",
+    "orchestrator",
+    "kanban",
     "file",
     "code_execution",
     "todo",
@@ -37,7 +40,7 @@ TOOLSETS = [
 
 SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 VALID_STATUSES = {"active", "planned"}
-VALID_HARNESSES = {"hermes", "claude-code", "crew"}
+VALID_HARNESSES = {"hermes", "claude-code", "crew", "team", "hermes-subscription"}
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 

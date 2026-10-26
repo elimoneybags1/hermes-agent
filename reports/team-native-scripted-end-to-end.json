@@ -1,0 +1,123 @@
+{
+  "scripted_model": true,
+  "plan_id": "7b8720c1-0b69-45bc-a70b-9f3b165a432d",
+  "goal_id": 1,
+  "task_id": "t_6d0dd3ee",
+  "dispatch": {
+    "reclaimed": 0,
+    "crashed": [],
+    "timed_out": [],
+    "stale": [],
+    "auto_blocked": [],
+    "promoted": 0,
+    "spawned": [
+      {
+        "task_id": "t_6d0dd3ee",
+        "assignee": "team-implement",
+        "workspace": "/private/var/folders/yb/63hk703s2nj1h4j4c0mz44z00000gn/T/team-e2e-rpgpgbtq/state/worktrees/probe/normalize-whitespace-team-plan-task-7b87"
+      }
+    ],
+    "skipped_unassigned": [],
+    "skipped_nonspawnable": [],
+    "skipped_per_profile_capped": [],
+    "auto_assigned_default": []
+  },
+  "statuses": [
+    "running",
+    "review"
+  ],
+  "goal_outcome": "pass",
+  "detail": "landed f6393d7647a87b267f627540c583d9b6ac20bb2f",
+  "landed_source": "def normalize_label(value):\n    return value.strip().upper()\n",
+  "tests_unchanged": true,
+  "jobs": [
+    {
+      "id": 1,
+      "target": "probe",
+      "target_commit": "7fed48df7dd63c80e98c844a8a83e4752fa3113d",
+      "role": "implement",
+      "role_version": "4fbd58dd1b51e03c1bf7a96bbe1dd6832a837130",
+      "attempt": 1,
+      "started": "2026-10-26T20:08:21+00:00",
+      "ended": "2026-10-26T20:08:26+00:00",
+      "outcome": "pass",
+      "grader": "/Users/fullmoney/work/Team/.venv/bin/python -m unittest -q",
+      "grader_detail": "----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK",
+      "task_ref": "t_6d0dd3ee"
+    }
+  ],
+  "calls": [
+    {
+      "id": 1,
+      "job_id": 1,
+      "provider": "custom",
+      "model": "tier-medium",
+      "task_class": "implement",
+      "tokens_in": 80,
+      "tokens_out": 40,
+      "latency_ms": null,
+      "ok": 1,
+      "error": null,
+      "ts": "2026-10-26T20:08:26+00:00",
+      "api_calls": 8
+    }
+  ],
+  "model_calls": [
+    {
+      "tool_count": 0,
+      "last_result": null,
+      "requested_tools": []
+    },
+    {
+      "tool_count": 18,
+      "last_result": null,
+      "requested_tools": [
+        "kanban_show"
+      ]
+    },
+    {
+      "tool_count": 18,
+      "last_result": "{\"task\": {\"id\": \"t_6d0dd3ee\", \"title\": \"Normalize whitespace\", \"body\": \"Normalize whitespace\\n\\nTeam plan task: 7b8720c1-0b69-45bc-a70b-9f3b165a432d:fix\\nRead widget.py and test_widget.py. Change normalize_label to strip surrounding whitespace before uppercasing. Modify only widget.py. Run the check, commit and request review.\\n\\nTeam scoped assign",
+      "requested_tools": [
+        "read_file",
+        "read_file"
+      ]
+    },
+    {
+      "tool_count": 18,
+      "last_result": "{\"content\": \"1|import unittest\\n2|from widget import normalize_label\\n3|class TestLabel(unittest.TestCase):\\n4|    def test_spaces(self):\\n5|        self.assertEqual(normalize_label(\\\" hi \\\"), \\\"HI\\\")\\n6|\", \"total_lines\": 5, \"file_size\": 170, \"truncated\": false, \"is_binary\": false, \"is_image\": false}",
+      "requested_tools": [
+        "patch"
+      ]
+    },
+    {
+      "tool_count": 18,
+      "last_result": "{\"success\": true, \"diff\": \"--- a//private/var/folders/yb/63hk703s2nj1h4j4c0mz44z00000gn/T/team-e2e-rpgpgbtq/state/worktrees/probe/normalize-whitespace-team-plan-task-7b87/widget.py\\n+++ b//private/var/folders/yb/63hk703s2nj1h4j4c0mz44z00000gn/T/team-e2e-rpgpgbtq/state/worktrees/probe/normalize-whitespace-team-plan-task-7b87/widget.py\\n@@ -1,2 +1,2 ",
+      "requested_tools": [
+        "terminal"
+      ]
+    },
+    {
+      "tool_count": 18,
+      "last_result": "{\"output\": \"----------------------------------------------------------------------\\nRan 1 test in 0.000s\\n\\nOK\\n[team/normalize-whitespace-team-plan-task-7b87 8c8a324] fix\\n 1 file changed, 1 insertion(+), 1 deletion(-)\", \"exit_code\": 0, \"error\": null}",
+      "requested_tools": [
+        "kanban_request_review"
+      ]
+    },
+    {
+      "tool_count": 18,
+      "last_result": "{\"ok\": true, \"task_id\": \"t_6d0dd3ee\", \"run_id\": 1, \"status\": \"review\"}",
+      "requested_tools": []
+    },
+    {
+      "tool_count": 18,
+      "last_result": "{\"ok\": true, \"task_id\": \"t_6d0dd3ee\", \"run_id\": 1, \"status\": \"review\"}",
+      "requested_tools": []
+    },
+    {
+      "tool_count": 18,
+      "last_result": "{\"ok\": true, \"task_id\": \"t_6d0dd3ee\", \"run_id\": 1, \"status\": \"review\"}",
+      "requested_tools": []
+    }
+  ]
+}

@@ -31,7 +31,7 @@ from textual.widgets import (
 )
 from textual.worker import Worker, get_current_worker
 
-from team import ledger
+from team import ledger, runtime
 from team.dash import snapshot
 from team.roles import load_roles
 
@@ -99,6 +99,16 @@ class TeamDeck(App):
     #log-table {
         height: 1fr;
     }
+    #runtime-summary {
+        height: auto;
+        padding: 0 1;
+    }
+    #runtime-sessions {
+        height: 2fr;
+    }
+    #runtime-proposals {
+        height: 1fr;
+    }
     DataTable {
         height: 1fr;
     }
@@ -127,6 +137,7 @@ class TeamDeck(App):
         Binding("f2", "switch_tab('inbox')", "Inbox", show=True),
         Binding("f3", "switch_tab('agents')", "Agents", show=True),
         Binding("f4", "switch_tab('log')", "Log", show=True),
+        Binding("f5", "switch_tab('runtime')", "Runtime", show=True),
         Binding("g", "new_goal", "New Goal", show=True),
         Binding("q", "quit", "Quit", show=True),
     ]
@@ -158,6 +169,10 @@ class TeamDeck(App):
                 yield DataTable(id="agents-table")
             with TabPane("Log", id="log-tab"):
                 yield DataTable(id="log-table")
+            with TabPane("Runtime", id="runtime-tab"):
+                yield Static("", id="runtime-summary")
+                yield DataTable(id="runtime-sessions")
+                yield DataTable(id="runtime-proposals")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -165,6 +180,26 @@ class TeamDeck(App):
         self._start_refresh()
         self._start_run_checker()
         self._refresh_ui()
+
+    # Actions bound in BINDINGS
+
+    def action_switch_tab(self, tab_id: str) -> None:
+        """Switch to a tab by its short name (`pipeline`, `inbox`, `agents`, `log`, `runtime`)."""
+        tabs = self.query_one("#tabs", TabbedContent)
+        tabs.active = tab_id if tab_id.endswith("-tab") else f"{tab_id}-tab"
+
+    def action_new_goal(self) -> None:
+        """Show new goal form."""
+        self.push_screen(NewGoalScreen(self._roles))
+
+    def action_quit(self) -> None:
+        self._stop_refresh.set()
+        self.exit()
+
+    def on_unmount(self) -> None:
+        self._stop_refresh.set()
+        if self._run_checker:
+            self._run_checker.cancel()
 
     def _load_roles(self) -> None:
         repo_root = Path(__file__).resolve().parent.parent
@@ -191,18 +226,9 @@ class TeamDeck(App):
             await asyncio.sleep(REFRESH_INTERVAL)
 
     async def _check_team_run(self) -> None:
-        """Check if `team run` process is alive."""
-        import psutil
-        is_running = False
-        for proc in psutil.process_iter(["cmdline"]):
-            try:
-                cmdline = proc.info.get("cmdline")
-                if cmdline and "team" in cmdline and "run" in cmdline:
-                    is_running = True
-                    break
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        self._update_run_status(is_running)
+        """Check if a `team run` process is alive (team.runtime.team_run, off the UI thread)."""
+        status = await asyncio.to_thread(runtime.team_run)
+        self._update_run_status(status["alive"])
 
     def _update_run_status(self, is_running: bool) -> None:
         status_widget = self.query_one("#header-title", Static)
@@ -233,6 +259,78 @@ class TeamDeck(App):
         self._update_inbox_tab(data)
         self._update_agents_tab(data)
         self._update_log_tab(data)
+        self._update_runtime_tab(self._runtime_data())
+
+    def _runtime_data(self) -> dict:
+        """The Hermes runtime picture, without the process scan (the header does that)."""
+        conn = self._get_ledger_conn()
+        try:
+            calls = runtime.calls_summary(conn)
+        finally:
+            if conn is not None:
+                conn.close()
+        return {
+            "profiles": runtime.profiles(),
+            "calls": calls,
+            "proposals": runtime.proposals_summary(),
+        }
+
+    def _update_runtime_tab(self, data: dict) -> None:
+        """Runtime tab: Hermes profiles and sessions, model calls, optimizer proposals."""
+        profiles = data.get("profiles", [])
+        proposals = data.get("proposals", [])
+        calls = data.get("calls", {}) or {}
+
+        n_sessions = sum(p["sessions"]["count"] for p in profiles)
+        n_active = sum(p["sessions"]["active"] for p in profiles)
+        n_proposed = sum(1 for p in proposals if p.get("status") == "proposed")
+        call_bits = [
+            f"{c['provider']}/{str(c['model']).split('/')[-1]} {c['ok']}/{c['calls']} ok"
+            for c in calls.get("providers", [])
+        ]
+        summary = (
+            f"Profiles: {len(profiles)}  |  Sessions: {n_sessions} ({n_active} active)  |  "
+            f"Proposals: {n_proposed} open / {len(proposals)}  |  "
+            f"Calls {calls.get('window_h', 24)}h: {', '.join(call_bits) if call_bits else 'none'}"
+        )
+        self.query_one("#runtime-summary", Static).update(summary)
+
+        sessions = self.query_one("#runtime-sessions", DataTable)
+        sessions.clear(columns=True)
+        sessions.add_columns("Role", "Started", "Title", "Status", "Model", "Msgs", "Tools", "API", "In/Out", "Session")
+        for p in profiles:
+            s = p["sessions"]
+            if s.get("error"):
+                sessions.add_row(p["role"], "", f"can't read sessions: {s['error']}"[:60], "", "", "", "", "", "", "")
+                continue
+            for x in s["items"]:
+                status = "active" if x["active"] else (x.get("end_reason") or "ended")
+                sessions.add_row(
+                    p["role"],
+                    self._format_age(x["started_at"]) if x.get("started_at") else "?",
+                    (x.get("title") or "untitled")[:50],
+                    status,
+                    str(x.get("model") or "").split("/")[-1],
+                    str(x.get("message_count", 0)),
+                    str(x.get("tool_call_count", 0)),
+                    str(x.get("api_call_count", 0)),
+                    f"{x.get('input_tokens', 0)}/{x.get('output_tokens', 0)}",
+                    str(x.get("id") or "")[:8],
+                )
+            if not s["items"]:
+                model = p.get("model", {}) or {}
+                sessions.add_row(p["role"], "", "no sessions yet", "", str(model.get("default") or ""), "", "", "", "", "")
+
+        table = self.query_one("#runtime-proposals", DataTable)
+        table.clear(columns=True)
+        table.add_columns("Status", "Created", "Subject", "Where")
+        for pr in proposals:
+            table.add_row(
+                pr.get("status", ""),
+                self._format_age(pr["created_at"]) if pr.get("created_at") else "?",
+                (pr.get("subject") or "")[:70],
+                (pr.get("location") or "")[:50],
+            )
 
     def _update_header(self, data: dict) -> None:
         """Update the header with summary stats."""
@@ -875,26 +973,6 @@ class NewGoalScreen(Screen):
     @on(Button.Pressed, "#cancel-btn")
     def cancel(self) -> None:
         self.app.pop_screen()
-
-
-# Actions (these belong to TeamDeck, not NewGoalScreen)
-    def action_switch_tab(self, tab_id: str) -> None:
-        """Switch to a tab by id."""
-        tabs = self.query_one("#tabs", TabbedContent)
-        tabs.active = tab_id
-
-    def action_new_goal(self) -> None:
-        """Show new goal form."""
-        self.push_screen(NewGoalScreen(self._roles))
-
-    def action_quit(self) -> None:
-        self._stop_refresh.set()
-        self.exit()
-
-    def on_unmount(self) -> None:
-        self._stop_refresh.set()
-        if self._run_checker:
-            self._run_checker.cancel()
 
 
 def main() -> int:

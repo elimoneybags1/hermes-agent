@@ -1,5 +1,8 @@
 # `team run`: the autonomous loop
 
+Claude execution update: `docs/HARNESS.md` supersedes the Claude Code build-mode
+plugin/hook sections below. The orchestrator now invokes the native Hermes runtime with Team overlays and subscription-only inference.
+
 Design and reasons: `docs/KANBAN.md`. This file is the contract for the code.
 Built in two rounds: three modules with no dependency on each other, then
 `team/run.py`, which uses them.

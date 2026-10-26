@@ -6,6 +6,7 @@ import os
 import http.client
 import json
 import shutil
+import sys
 import subprocess
 import threading
 import time
@@ -425,7 +426,7 @@ class TestEvents:
         try:
             assert stream.resp.status == 200
             assert stream.resp.getheader("Content-Type") == "text/event-stream"
-            assert stream.next_fingerprint() == agents.fingerprint(temp_repo, db)
+            assert stream.next_fingerprint() == ui.fingerprint(temp_repo, db)
         finally:
             stream.close()
 
@@ -786,3 +787,157 @@ class TestDecisions:
             )
             assert status == 415
             assert "error" in data
+
+
+class TestRuntime:
+    """GET /api/runtime and the `run` key on /api/state (docs/UI.md, Runtime)."""
+
+    @pytest.fixture
+    def runtime_state(self, tmp_path, monkeypatch):
+        state = tmp_path / "state"  # the `db` fixture's ledger lives here too
+        monkeypatch.setenv("TEAM_STATE", str(state))
+        home = state / "hermes" / "profiles" / "boss"
+        (home / "logs").mkdir(parents=True)
+        (home / "config.yaml").write_text("model:\n  provider: custom\n  default: opus\n")
+        (home / "logs" / "agent.log").write_text("INFO boss started\n")
+        props = state / "optimizer" / "proposals"
+        props.mkdir(parents=True)
+        (props / "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json").write_text(json.dumps({
+            "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "created_at": "2026-10-26T16:00:00+00:00",
+            "status": "proposed", "subject": "retry less", "scope": "implement", "location": "team/run.py",
+            "before": "b", "after": "a", "reason": "r", "validation": "v", "uncertainty": "u",
+            "evidence_ids": ["job:1"], "evidence": [{"id": "job:1"}],
+        }))
+        return state
+
+    def test_runtime_snapshot(self, runtime_state, server):
+        status, data = request(server, "GET", "/api/runtime")
+        assert status == 200
+        assert set(data) == {"generated_at", "state_dir", "run", "profiles", "calls", "proposals"}
+        assert data["state_dir"] == str(runtime_state)
+        [boss] = data["profiles"]
+        assert boss["role"] == "boss"
+        assert boss["model"] == {"provider": "custom", "default": "opus"}
+        assert boss["sessions"]["count"] == 0
+        assert boss["logs"]["agent.log"]["last"] == "INFO boss started"
+        [prop] = data["proposals"]
+        assert prop["subject"] == "retry less" and "evidence" not in prop
+        assert isinstance(data["run"]["alive"], bool)
+
+    def test_state_has_run(self, runtime_state, server):
+        status, data = request(server, "GET", "/api/state")
+        assert status == 200
+        assert set(data["run"]) == {"alive", "pids"}
+
+    def test_runtime_is_read_only(self, server):
+        for method in ("POST", "PATCH", "PUT", "DELETE"):
+            status, _ = request(server, method, "/api/runtime", {})
+            assert status == 404, method
+
+    def test_runtime_change_sends_new_fingerprint(self, runtime_state, server):
+        stream = EventStream(server)
+        try:
+            first = stream.next_fingerprint()
+            (runtime_state / "optimizer" / "proposals" / "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.json").write_text("{}")
+            assert stream.next_fingerprint() != first
+        finally:
+            stream.close()
+
+
+class TestFlowAndBoss:
+    """GET /api/flow and the boss chat routes (docs/UI.md, Flow and Talk)."""
+
+    FAKE = [sys.executable, str(Path(__file__).with_name("fake_boss.py"))]
+
+    @pytest.fixture
+    def state_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+        return tmp_path / "state"
+
+    @pytest.fixture
+    def boss_server(self, state_env, server):
+        server.boss_command = self.FAKE
+        return server
+
+    def test_flow(self, state_env, server):
+        status, data = request(server, "GET", "/api/flow")
+        assert status == 200
+        assert set(data) == {"generated_at", "stations", "agents", "goals", "plans", "counts"}
+        assert data["stations"][0] == "boss" and data["stations"][-1] == "landed"
+        assert [a["name"] for a in data["agents"]][:1] == ["boss"]
+        assert data["counts"]["made"] == 0
+
+    def test_boss_status_before_start_shows_saved_transcript(self, state_env, boss_server):
+        (state_env / "boss").mkdir(parents=True)
+        (state_env / "boss" / "ui-transcript.jsonl").write_text(json.dumps({"ts": "t", "who": "you", "text": "earlier"}) + "\n")
+        status, data = request(boss_server, "GET", "/api/boss")
+        assert status == 200
+        assert data["started"] is False and data["alive"] is False
+        assert [e["text"] for e in data["transcript"]] == ["earlier"]
+
+    def test_start_send_reply_stop(self, boss_server):
+        status, data = request(boss_server, "POST", "/api/boss/start", {})
+        assert status == 200 and data["alive"] and data["session_id"] == "fake-session-0001"
+        status, data = request(boss_server, "POST", "/api/boss/send", {"text": "hello"})
+        assert status == 200 and data["busy"]
+        boss = boss_server.get_boss()
+        assert _wait_for(lambda: not boss.busy)
+        status, data = request(boss_server, "GET", "/api/boss")
+        assert [e["text"] for e in data["transcript"]] == ["hello", "echo: hello"]
+        status, data = request(boss_server, "POST", "/api/boss/stop", {})
+        assert status == 200 and not data["alive"]
+
+    def test_first_message_starts_the_boss(self, boss_server):
+        status, data = request(boss_server, "POST", "/api/boss/send", {"text": "hello"})
+        assert status == 200 and data["alive"] and data["busy"]
+        boss = boss_server.get_boss()
+        assert _wait_for(lambda: not boss.busy)
+        assert [e["text"] for e in boss.transcript] == ["hello", "echo: hello"]
+
+    def test_send_while_busy_is_409(self, boss_server):
+        request(boss_server, "POST", "/api/boss/send", {"text": "slow one"})
+        status, data = request(boss_server, "POST", "/api/boss/send", {"text": "two"})
+        assert status == 409 and "still answering" in data["error"]
+        assert _wait_for(lambda: not boss_server.get_boss().busy)
+
+    def test_send_when_the_boss_cannot_start_is_503(self, state_env, server):
+        server.boss_command = ["/nonexistent/boss"]
+        status, data = request(server, "POST", "/api/boss/send", {"text": "hello"})
+        assert status == 503 and data["error"]
+
+    def test_send_empty_is_400_and_does_not_start_the_boss(self, boss_server):
+        status, _ = request(boss_server, "POST", "/api/boss/send", {"text": "  "})
+        assert status == 400
+        assert not boss_server.get_boss().alive()
+
+    def test_boss_routes_need_json(self, boss_server):
+        status, _ = request(boss_server, "POST", "/api/boss/start", {}, json_type=False)
+        assert status == 415
+
+    def test_unknown_boss_action_is_404(self, boss_server):
+        status, _ = request(boss_server, "POST", "/api/boss/dance", {})
+        assert status == 404
+
+    def test_turn_changes_the_fingerprint(self, boss_server):
+        stream = EventStream(boss_server)
+        try:
+            first = stream.next_fingerprint()
+            request(boss_server, "POST", "/api/boss/start", {})
+            assert stream.next_fingerprint() != first
+        finally:
+            stream.close()
+
+    def test_server_close_stops_the_boss(self, state_env, temp_repo, db, index):
+        srv = ui.make_server(temp_repo, db, port=0, index=index, poll_s=0.05, ping_s=0.2)
+        srv.boss_command = self.FAKE
+        thread = threading.Thread(target=srv.serve_forever, args=(0.05,), daemon=True)
+        thread.start()
+        try:
+            request(srv, "POST", "/api/boss/start", {})
+            boss = srv.get_boss()
+            assert boss.alive()
+        finally:
+            srv.shutdown()
+            srv.server_close()
+            thread.join(timeout=5)
+        assert not boss.alive()

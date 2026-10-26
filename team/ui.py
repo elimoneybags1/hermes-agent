@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from team import agents, dash, ledger, settings, targets
+from team import agents, boss_chat, dash, flow, ledger, runtime, settings, targets
 from team.roles import load_roles
 from team.decisions import list_open, answer, dismiss
 
@@ -23,6 +23,16 @@ DEFAULT_PORT = 7341
 INDEX = Path(__file__).resolve().parent / "ui" / "index.html"
 POLL_S = 1.0
 PING_S = 15.0
+
+
+def fingerprint(root: Path, db: Path, boss: boss_chat.BossChat | None = None) -> str:
+    """What the live stream watches: the agents' files and ledger, the Hermes
+    runtime state (profile sessions, logs, optimizer proposals), the kanban
+    boards and saved plans behind the Flow view, and the boss chat."""
+    parts = [agents.fingerprint(root, db), runtime.fingerprint(), flow.fingerprint()]
+    if boss is not None:
+        parts.append(boss.fingerprint())
+    return "|".join(p for p in parts if p)
 
 
 class UIServer(ThreadingHTTPServer):
@@ -48,10 +58,26 @@ class UIServer(ThreadingHTTPServer):
         self.stopping = threading.Event()
         self.streams = 0
         self.streams_lock = threading.Lock()
+        # The live boss behind the Talk tab: created on first use, one per server.
+        self.boss: boss_chat.BossChat | None = None
+        self.boss_command: list[str] | None = None  # tests inject a fake boss
+        self.boss_lock = threading.Lock()
+
+    def get_boss(self, create: bool = False) -> boss_chat.BossChat | None:
+        with self.boss_lock:
+            if self.boss is None and create:
+                self.boss = boss_chat.BossChat(self.root, command=self.boss_command)
+            return self.boss
 
     def shutdown(self) -> None:
         self.stopping.set()
         super().shutdown()
+
+    def server_close(self) -> None:
+        boss = self.get_boss()
+        if boss is not None:
+            boss.stop()
+        super().server_close()
 
     def connect(self):
         """A fresh ledger connection per request (sqlite3 objects stay in one thread)."""
@@ -132,6 +158,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._state
         if method == "GET" and rest == ["events"]:
             return self._events
+        if method == "GET" and rest == ["runtime"]:
+            return self._runtime
+        if method == "GET" and rest == ["flow"]:
+            return self._flow
+        # The boss chat
+        if method == "GET" and rest == ["boss"]:
+            return self._boss_status
+        if method == "POST" and len(rest) == 2 and rest[0] == "boss" and rest[1] in ("start", "send", "stop", "new"):
+            return lambda: self._boss_action(rest[1])
         # Settings routes (before agents check)
         if method == "GET" and rest == ["settings"]:
             return self._settings
@@ -181,6 +216,67 @@ class Handler(BaseHTTPRequestHandler):
             if conn is not None:
                 conn.close()
         data["pipeline"] = agents.pipeline(roles)
+        data["run"] = runtime.team_run()
+        self._json(200, data)
+
+    def _runtime(self) -> None:
+        conn = self.server.connect()
+        try:
+            data = runtime.snapshot(conn)
+        finally:
+            if conn is not None:
+                conn.close()
+        self._json(200, data)
+
+    def _flow(self) -> None:
+        roles = load_roles(self.server.root)
+        conn = self.server.connect()
+        try:
+            data = flow.snapshot(conn, roles, agents.pipeline(roles))
+        finally:
+            if conn is not None:
+                conn.close()
+        self._json(200, data)
+
+    # --- the boss chat (Talk tab)
+
+    def _boss_status(self) -> None:
+        boss = self.server.get_boss()
+        if boss is None:
+            # Nothing running yet: the saved transcript is still worth showing.
+            boss = boss_chat.BossChat(self.server.root, command=self.server.boss_command)
+            data = boss.status()
+            data["started"] = False
+        else:
+            data = boss.status()
+            data["started"] = True
+        self._json(200, data)
+
+    def _boss_action(self, action: str) -> None:
+        body = self._body()
+        boss = self.server.get_boss(create=True)
+        try:
+            if action == "start":
+                data = boss.start()
+            elif action == "send":
+                text = self._need_str(body, "text")
+                if not text.strip():
+                    raise HTTPError(400, "say something")
+                if not boss.alive():
+                    # The first message wakes the boss: nobody should have to press Start.
+                    started = boss.start()
+                    if not started["alive"]:
+                        raise HTTPError(503, started.get("error") or "the boss did not start")
+                data = boss.send(text)
+            elif action == "stop":
+                data = boss.stop()
+            else:
+                data = boss.new_session()
+        except ValueError as e:
+            raise HTTPError(400, str(e)) from e
+        except RuntimeError as e:
+            raise HTTPError(409, str(e)) from e
+        data["started"] = True
         self._json(200, data)
 
     def _detail(self, name: str) -> None:
@@ -334,7 +430,7 @@ class Handler(BaseHTTPRequestHandler):
         next_ping = time.monotonic() + server.ping_s
         try:
             while not server.stopping.is_set():
-                fp = agents.fingerprint(server.root, server.db)
+                fp = fingerprint(server.root, server.db, server.get_boss())
                 if fp != last:
                     self._event(f"data: {json.dumps({'fingerprint': fp})}\n\n")
                     last = fp

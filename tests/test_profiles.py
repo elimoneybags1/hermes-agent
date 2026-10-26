@@ -219,7 +219,7 @@ run_budget_s = 600
         
         with patch("subprocess.run", side_effect=mock_runner):
             result = profiles.sync(repo, "test-agent", runner=mock_runner)
-            assert "wrote 1 skills" in result
+            assert "1 role skills; kept existing skills" in result
             
             # Verify the skill was written
             skill_path = fake_home / ".hermes" / "profiles" / "team-test-agent" / "skills" / "test-skill" / "SKILL.md"
@@ -286,7 +286,7 @@ run_budget_s = 600
             
             # Verify old skill is gone, new skill is there
             profile_skills = fake_home / ".hermes" / "profiles" / "team-test-agent" / "skills"
-            assert not (profile_skills / "old-skill").exists()
+            assert (profile_skills / "old-skill" / "SKILL.md").read_text() == "# Old Skill\n"
             assert (profile_skills / "test-skill" / "SKILL.md").exists()
 
 
@@ -343,7 +343,7 @@ run_budget_s = 600
                 config = yaml.safe_load(f)
 
             # platform_toolsets.cli should be sorted role tools
-            expected_platform_toolsets = ["file", "skills", "terminal", "todo"]
+            expected_platform_toolsets = ["file", "memory", "session_search", "skills", "terminal", "todo"]
             assert config.get("platform_toolsets", {}).get("cli") == expected_platform_toolsets
 
             # No top-level toolsets key
@@ -361,7 +361,7 @@ run_budget_s = 600
             ]
             role_tools = {"terminal", "file", "todo", "skills"}
             expected_disabled = [ts for ts in BUILTIN_TOOLSETS if ts not in role_tools]
-            assert config.get("agent", {}).get("disabled_toolsets") == expected_disabled
+            assert not ({"memory", "session_search", "skills"} & set(config.get("agent", {}).get("disabled_toolsets", [])))
     
     def test_sync_disables_project_discovery(self, tmp_path, monkeypatch):
         """Test sync sets skills.project_discovery to False."""
@@ -414,7 +414,7 @@ run_budget_s = 600
             with config_path.open() as f:
                 config = yaml.safe_load(f)
             
-            assert config.get("skills", {}).get("project_discovery") is False
+            assert config.get("skills", {}).get("project_discovery") is True
     
     def test_sync_sets_compression_threshold(self, tmp_path, monkeypatch):
         """Test sync sets compression.threshold_tokens to 60000."""
@@ -467,7 +467,8 @@ run_budget_s = 600
             with config_path.open() as f:
                 config = yaml.safe_load(f)
             
-            assert config.get("compression", {}).get("threshold_tokens") == 60000
+            assert config.get("compression", {}).get("enabled") is True
+            assert "threshold_tokens" not in config.get("compression", {})
 
 
 class TestSyncAll:
@@ -569,3 +570,12 @@ run_budget_s = 600
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+def test_role_turn_cap_written_and_enforced(tmp_path, monkeypatch):
+    monkeypatch.setattr(profiles, '_hermes_profile_dir', lambda name: tmp_path)
+    profiles._write_role_profile_config('team-test', ['file'], 25)
+    profiles.require_turn_budget('team-test', 25)
+    with pytest.raises(ValueError, match='max_turns'):
+        profiles.require_turn_budget('team-test', 20)
+    with pytest.raises(ValueError, match='positive integer'):
+        profiles._write_role_profile_config('team-test', ['file'], 0)

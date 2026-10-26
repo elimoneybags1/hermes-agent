@@ -196,3 +196,131 @@ Design: `docs/PLANNER.md`, "New agents". Code in `team/agents.py` and
   instructions}` → `{"sha"}`, then `profiles.sync` for it. Each agent's
   Overview shows its profile (`team-<name>`, exists or not) and a **Sync
   profile** button: `POST /api/agents/<name>/sync`.
+
+## Runtime (Eli, 2026-10-26)
+
+"Surface the new Hermes runtime": what the boss, the workers and the
+optimizer are doing, from the state they leave on disk. Read-only. Data in
+`team/runtime.py` (`python -m team.runtime --json` prints the same snapshot);
+the page shows it under a **Runtime** button in the header, next to Settings
+and Inbox, and the deck under its Runtime tab (`docs/DECK.md`).
+
+Sources, all under `$TEAM_STATE`:
+
+| What | Where | Shown as |
+|---|---|---|
+| `team run` alive | the process table: an argv token whose basename is `team` followed by `run` | header chip (always visible) and the Loop row |
+| Model calls | ledger `calls`, last 24 h, grouped by provider and model | calls, ok/calls, tokens in and out, API requests, last call |
+| Hermes profiles | `hermes/profiles/<role>/`: `config.yaml` (provider, model), native `state.db` (`sessions`, read-only), `memories/`, `skills/team/`, `logs/agent.log`, `logs/errors.log` | one card per role: model, session counts, memories, team skills, the 10 newest sessions (title, active or end reason, messages, tool calls, API calls, tokens, duration; click a row for the id, cwd, branch, last activity and the resume command), last log line with its age; a recent errors.log line is red |
+| Optimizer proposals | `optimizer/proposals/*.json` via `optimizer.proposals()` (status `proposed` or `superseded`), evidence payload left out | one card per proposal, newest first: status, subject, scope, location, supersedes links, evidence count; Details opens before, after, reason, validation, uncertainty, evidence ids, file |
+
+API: `GET /api/runtime` → `runtime.snapshot(conn)`:
+`{"generated_at", "state_dir", "run": {"alive", "pids"}, "profiles": [...],
+"calls": {"window_h", "providers": [...]}, "proposals": [...]}`. `GET /api/state`
+also carries `"run"`. The live stream's fingerprint is `ui.fingerprint(root, db)`:
+`agents.fingerprint` plus `runtime.fingerprint()` (profile `state.db`, its WAL,
+the two logs, `memories/`, and the proposal file names), so a session that
+starts or ends, a log line, or a saved proposal refreshes the view; a new
+proposal also raises a toast.
+
+Not shown, on purpose: Claude stop counters (`claude/stops/`, one number per
+session) and the free workers' `~/.hermes/profiles/team-*` state, which is not
+under `$TEAM_STATE`.
+
+## Flow and Talk (Eli, 2026-10-26)
+
+"I want to see the boss I talk to, plan projects with it, and watch the goals
+it makes go to the agents: each agent with its pending goals and the one it is
+working on, the goal moving from agent to agent, independent goals running at
+the same time, and the model next to each, live." Decided the same day: one
+live boss process behind the page, and the flow built on what exists now
+(a goal goes boss → its role → landed; the stages of `docs/PIPELINE.md`
+become more stations when that pipeline is built).
+
+### Flow view (`team/flow.py`, `GET /api/flow`)
+
+The landing view (header button **Flow**). Read-only; joins the ledger
+(`goals`, `jobs`, `calls`), each target's kanban board
+(`$TEAM_STATE/kanban/kanban/boards/<target>/kanban.db`, read-only: task
+status, model override, worker pid, parent links) and the boss's saved plans
+(`$TEAM_STATE/planning/<uuid>.json`).
+
+Look and feel (Eli, 2026-10-26, from a screenshot of the Hermes kanban
+board): the board in `vendor/hermes-agent/plugins/kanban/dashboard` is the
+original. Its column, lane, card and status-dot rules are copied into the
+page (monospace, compact cards with a dot, id row, two-line title and a
+meta row; a left border and a travelling arc on a card an agent is actually
+working; dashed lanes inside a column), then bent to our pipeline: columns
+are agents, not statuses.
+
+- One column per station: **boss** (lilac cards: plans being made, and how
+  many goals it has sent), each role in pipeline order, **landed**. A role's
+  column has lanes **In progress**, **Blocked** (when any), **To do** in
+  dispatch order, and its last three **Done**; its sub-header carries the
+  model it is running on right now (the kanban task's model; for a proxy
+  tier such as `team-auto`, the real model the LiteLLM proxy last served
+  that task with, from `$TEAM_STATE/litellm/usage.db`) or else its
+  configured one. Idle planned roles are slim.
+- Dots, as on the kanban board: **green** working, **amber** waiting for
+  something else to finish first (kanban holds a task until its parents are
+  done), grey queued and next up, red blocked, cyan under review (Team is
+  grading), blue done or landed, lilac still being planned.
+- A card: dot, `#id` (and its plan task), attempt, target, the title, a
+  stage word (`running 4m`, `waits for 1 task`, `next up`, `grading`,
+  `landed 2h ago`), the model (green when live), and a three-segment
+  **track** underneath: the stations in order, lit as the goal passes them.
+  Clicking a card opens a **drawer** on the right with the full description,
+  where it is (task, worker pid, what it waits for, branch), the model and
+  where that is known from, every attempt with its outcome and model, the
+  outcome text and the plan it came from.
+- Stages: `waiting` (a parent task is not done), `queued` (no task yet, or a
+  task not started), `running`, `review`, `blocked`, `landed`, `failed`. A
+  plan task that is not sent yet is `planned`, or `waiting` when something
+  it depends on has not landed.
+- **Plans**: each saved plan with its tasks grouped into waves by
+  `depends_on`: wave 1 can start together, later waves wait for earlier
+  ones. Each task shows its stage, role, model and goal number once sent.
+- The agent list on the left shows under each agent the goal it is working
+  on with its live model, and how many are queued or blocked.
+- Live: the stream's fingerprint includes the boards and plans
+  (`flow.fingerprint`), so a task starting, finishing or changing model
+  refreshes the view; a new goal or a stage change raises a toast.
+
+`snapshot(conn, roles, pipeline)` returns `{"generated_at", "stations",
+"agents": [{name, title, status, model, live_model, running, queued, blocked,
+done}], "goals": [card...], "plans": [{id, target, objective, revision,
+tasks: [{id, title, role, depends_on, goal_id, stage, model}], waves,
+dispatched}], "counts": {made, queued, running, review, blocked, landed,
+failed}}`.
+
+### Talk tab (`team/boss_chat.py`, `/api/boss`)
+
+The boss agent's first tab. The dashboard server keeps **one live boss**: the
+same `team/hermes_native.py` process plain `team` starts (profile,
+subscription check, local inference gateway, clean environment), with stdin
+and stdout piped. Protocol: the banner `Hermes-backed Team boss · <session>`,
+`you> ` when it waits for a line, `boss> ` before a reply, a bare `> ` after a
+clarifying question (shown with a hint to answer by number or sentence).
+
+- The Hermes session id is saved in `$TEAM_STATE/boss/ui-session.json`, so a
+  restart resumes the same session; a session the profile no longer knows
+  falls back to a new one with a system line saying so. The transcript is
+  appended to `$TEAM_STATE/boss/ui-transcript.jsonl` and survives reloads.
+- Goals created while the boss answers (its `planning_dispatch`) appear as
+  system lines: `sent goal 19 to implement on team: <title>`; the Flow view
+  picks them up through the live stream.
+- API: `GET /api/boss` → `{alive, busy, awaiting: "you"|"ask"|null,
+  session_id, started_at, error, transcript: [{ts, who: you|boss|system,
+  text}], started}`; `POST /api/boss/start|send|stop|new` (JSON; `send`
+  takes `{"text"}`; 409 while the boss is still answering or not running,
+  400 for an empty line). The server stops the boss when it closes.
+- Page: status (not started, ready, thinking, asking you, stopped), session,
+  Start/Resume, Stop, New session (forgets the session and the transcript),
+  a transcript of bubbles, a box where Enter sends. The box is always open:
+  the first message starts the boss (resuming the saved session) and is then
+  delivered, so nobody has to press Start (`send` on a stopped boss starts
+  it; 503 with the reason if it cannot). While the boss is busy the page
+  polls every 1.5 s on top of the live events.
+
+Not built here, on purpose: the multi-stage pipeline (spec, test, review as
+stations), and the deck's view of the same flow.

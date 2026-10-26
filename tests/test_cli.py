@@ -43,100 +43,10 @@ def test_list_shows_jobs(state, capsys):
     assert row["target"] == "team" and row["outcome"] == "pass"
 
 
-def test_boss_argv():
-    repo = Path("/fake/repo")
-    extra = ["--dangerously-skip-permissions"]
-    argv = cli.boss_argv(repo, extra)
-    assert argv == [
-        "claude",
-        "--plugin-dir",
-        str(repo / "plugin"),
-        "--agent",
-        "boss",
-        "--dangerously-skip-permissions",
-    ]
-
-
 def test_board_argv_is_the_free_worker_profile():
     argv = cli.board_argv(9129)
     assert argv[:3] == ["hermes", "-p", "team-worker"]
     assert argv[3:] == ["dashboard", "--isolated", "--port", "9129", "--no-open"]
-
-
-def test_boss_argv_no_extra():
-    repo = Path("/fake/repo")
-    argv = cli.boss_argv(repo, [])
-    assert argv == [
-        "claude",
-        "--plugin-dir",
-        str(repo / "plugin"),
-        "--agent",
-        "boss",
-    ]
-
-
-def test_team_no_subcommand_execvp(monkeypatch, capsys):
-    """Test that team with no subcommand calls os.execvp with the right argv and chdirs."""
-    repo = Path("/fake/repo")
-
-    execvp_called = {}
-    chdir_called = {}
-
-    def mock_execvp(cmd, argv):
-        execvp_called["cmd"] = cmd
-        execvp_called["argv"] = argv
-        raise SystemExit(0)  # simulate exec replacing process
-
-    def mock_chdir(path):
-        chdir_called["path"] = path
-
-    monkeypatch.setattr(os, "execvp", mock_execvp)
-    monkeypatch.setattr(os, "chdir", mock_chdir)
-    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/claude")
-
-    # Mock the module's __file__ to control the repo path
-    with patch("team.cli.__file__", "/fake/repo/team/cli.py"):
-        with pytest.raises(SystemExit):
-            cli.main([])
-
-    assert chdir_called["path"] == repo
-    assert execvp_called["cmd"] == "/usr/bin/claude"
-    assert execvp_called["argv"] == [
-        "claude",
-        "--plugin-dir",
-        str(repo / "plugin"),
-        "--agent",
-        "boss",
-    ]
-
-
-def test_team_no_subcommand_with_extra_args(monkeypatch, capsys):
-    """Test that team -- --arg passes extra args to claude."""
-    repo = Path("/fake/repo")
-
-    execvp_called = {}
-
-    def mock_execvp(cmd, argv):
-        execvp_called["argv"] = argv
-        raise SystemExit(0)
-
-    monkeypatch.setattr(os, "execvp", mock_execvp)
-    monkeypatch.setattr(os, "chdir", lambda _: None)
-    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/claude")
-
-    with patch("team.cli.__file__", "/fake/repo/team/cli.py"):
-        with pytest.raises(SystemExit):
-            cli.main(["--", "--dangerously-skip-permissions", "--resume"])
-
-    assert execvp_called["argv"] == [
-        "claude",
-        "--plugin-dir",
-        str(repo / "plugin"),
-        "--agent",
-        "boss",
-        "--dangerously-skip-permissions",
-        "--resume",
-    ]
 
 
 def test_team_help_exits_via_argparse(monkeypatch, capsys):
@@ -584,3 +494,12 @@ def test_hook_pretool_handles_invalid_json(monkeypatch, capsys):
     
     result = cli.main(["hook", "pretool"])
     assert result == 0
+
+def test_team_starts_own_boss(monkeypatch):
+    from team import hermes_runtime as harness
+    calls = []
+    monkeypatch.setattr(shutil, "which", lambda _: "/bin/claude")
+    monkeypatch.setattr(harness, "boss", lambda root, argv: calls.append((root, argv)) or 0)
+    assert cli.main([]) == 0
+    assert cli.main(["--", "--model", "opus"]) == 0
+    assert calls == [(cli.REPO, []), (cli.REPO, ["--model", "opus"])]

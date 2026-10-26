@@ -170,3 +170,60 @@ def test_deck_compose_has_correct_widgets():
     # Just test that the class can be instantiated and compose doesn't error
     # The actual compose is tested via Textual's run_test in integration tests
     assert app is not None
+
+def test_deck_runtime_binding_and_tab_switch_targets_pane_ids():
+    """F5 opens the Runtime tab; action_switch_tab maps short names to pane ids."""
+    app = deck.TeamDeck()
+    assert "f5" in {b.key for b in app.BINDINGS}
+    # The switch action lives on the App (not on a pushed screen) so F-keys work.
+    assert callable(getattr(deck.TeamDeck, "action_switch_tab"))
+    assert not hasattr(deck.NewGoalScreen, "action_switch_tab")
+
+
+@pytest.mark.asyncio
+async def test_runtime_tab_lists_sessions_and_proposals(tmp_path, monkeypatch):
+    """The Runtime tab shows Hermes sessions per profile and saved proposals from TEAM_STATE."""
+    import json
+    import sqlite3
+    import time
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("TEAM_STATE", str(state))
+    home = state / "hermes" / "profiles" / "optimizer"
+    home.mkdir(parents=True)
+    (home / "config.yaml").write_text("model:\n  provider: custom\n  default: opus\n")
+    conn = sqlite3.connect(home / "state.db")
+    conn.execute(
+        "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, model TEXT, title TEXT, started_at REAL,"
+        " ended_at REAL, end_reason TEXT, message_count INTEGER, tool_call_count INTEGER, api_call_count INTEGER,"
+        " input_tokens INTEGER, output_tokens INTEGER, last_activity_at REAL)"
+    )
+    conn.execute(
+        "INSERT INTO sessions VALUES ('s1', 'cli', 'opus', 'Evidence review', ?, NULL, NULL, 3, 2, 1, 10, 2, ?)",
+        (time.time() - 30, time.time()),
+    )
+    conn.commit()
+    conn.close()
+    props = state / "optimizer" / "proposals"
+    props.mkdir(parents=True)
+    (props / "p1.json").write_text(json.dumps({
+        "id": "p1", "created_at": "2026-10-26T16:00:00+00:00", "status": "proposed",
+        "subject": "gate failures should not count", "location": "team/run.py", "evidence": [],
+    }))
+
+    app = deck.TeamDeck()
+    async with app.run_test() as pilot:
+        await pilot.press("f5")
+        await pilot.pause()
+        from textual.widgets import DataTable, Static, TabbedContent
+        assert app.query_one("#tabs", TabbedContent).active == "runtime-tab"
+        sessions = app.query_one("#runtime-sessions", DataTable)
+        assert sessions.row_count == 1
+        row = sessions.get_row_at(0)
+        assert row[0] == "optimizer" and row[2] == "Evidence review" and row[3] == "active"
+        proposals = app.query_one("#runtime-proposals", DataTable)
+        assert proposals.row_count == 1
+        assert proposals.get_row_at(0)[2] == "gate failures should not count"
+        summary = str(app.query_one("#runtime-summary", Static).render())
+        assert "Sessions: 1 (1 active)" in summary
+        assert "Proposals: 1 open / 1" in summary

@@ -34,7 +34,8 @@ def _run_kanban(
     runner=subprocess.run,
 ) -> subprocess.CompletedProcess:
     """Run a hermes kanban command with the required environment."""
-    base_env = os.environ.copy()
+    from team.hermes_runtime import worker_environment
+    base_env = worker_environment()
     base_env["HERMES_KANBAN_HOME"] = str(_kanban_home())
     if env:
         base_env.update(env)
@@ -75,8 +76,10 @@ def create_task(
     workspace: str | None = None,
     branch: str | None = None,
     max_runtime: int | None = None,
+    max_retries: int | None = None,
     skills: tuple[str, ...] = (),
     model: str | None = None,
+    parents: tuple[str, ...] = (),
     runner=subprocess.run,
 ) -> dict:
     """Create a kanban task and return the parsed task dict."""
@@ -91,12 +94,18 @@ def create_task(
         assignee,
         "--json",
     ]
+    for parent in parents:
+        args.extend(["--parent", parent])
     if workspace:
         args.extend(["--workspace", workspace])
     if branch:
         args.extend(["--branch", branch])
     if max_runtime is not None:
         args.extend(["--max-runtime", f"{max_runtime}s"])
+    if max_retries is not None:
+        if max_retries < 1:
+            raise ValueError("max_retries is a failure limit and must be at least 1")
+        args.extend(["--max-retries", str(max_retries)])
     if skills:
         for skill in skills:
             args.extend(["--skill", skill])
@@ -317,7 +326,8 @@ def session_for_task(
         "sessions",
         "list",
     ]
-    env = os.environ.copy()
+    from team.hermes_runtime import worker_environment
+    env = worker_environment()
     env["HERMES_KANBAN_HOME"] = str(_kanban_home())
 
     list_result = runner(list_cmd, capture_output=True, text=True, env=env)

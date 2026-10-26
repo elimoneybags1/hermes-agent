@@ -62,18 +62,35 @@ class FakeHermes:
         self.dispatches: list[list[str]] = []
         self.logs: dict[str, str] = {}
         self.unblocked: list[str] = []
-        self.profiles = ["default", "team-worker"]
+        self.profiles = ["default", "team-worker", "team-implement"]
         self.claude = None  # fn(cwd) -> dict payload
         self.claude_env = None
 
     def __call__(self, cmd, **kwargs):
+        if len(cmd) > 1 and cmd[1].endswith("/team/hermes_native.py"):
+            self.calls.append(cmd)
+            self.claude_env = kwargs.get("env")
+            launch = json.loads(Path(cmd[2]).read_text())
+            payload = self.claude(kwargs["cwd"])
+            action = payload.get("structured_output") or {}
+            if action.get("kind") == "decision":
+                Path(launch["decision_file"]).write_text(action["arguments"])
+            Path(launch["result_file"]).write_text(json.dumps({
+                "ok": not payload.get("is_error", False), "result": payload.get("result", action.get("text", "done")),
+                "session_id": payload.get("session_id", "native-test-session"), "num_turns": 1,
+                "usage": payload.get("usage"), "structured": None}))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
         if cmd[0] == "hermes":
             self.calls.append(cmd)
             return self._hermes(cmd[1:])
         if cmd[0] == "claude":
             self.calls.append(cmd)
             self.claude_env = kwargs.get("env")
+            if cmd[1:3] == ["auth", "status"]:
+                return self._ok({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"})
             payload = self.claude(kwargs["cwd"])
+            if not payload.get("is_error") and "structured_output" not in payload:
+                payload["structured_output"] = {"kind": "final", "name": "", "arguments": "{}", "text": payload.get("result", "done")}
             return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
         return subprocess.run(cmd, **kwargs)
 
@@ -179,6 +196,10 @@ class FakeHermes:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("TEAM_STATE", str(tmp_path / "state"))
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    (profile_dir / "config.yaml").write_text("agent:\n  max_turns: 40\n")
+    monkeypatch.setattr(run.profiles, "_hermes_profile_dir", lambda name: profile_dir)
     repo = init_repo(tmp_path / "demo")
     targets.attach(repo, "demo")
     root = init_repo(tmp_path / "team")
@@ -231,7 +252,8 @@ def test_start_goal_creates_worktree_task_job_and_goal(env):
     assert argv[argv.index("--workspace") + 1] == f"worktree:{wt}"
     assert argv[argv.index("--branch") + 1] == g["branch"]
     assert argv[argv.index("--max-runtime") + 1] == "900s"
-    assert task["assignee"] == "team-worker"
+    assert task["assignee"] == "team-implement"
+    assert argv[argv.index("--max-retries") + 1] == "1"
     assert CHECK in task["body"]
     # Check that skills and model are passed
     assert "commit-before-done" in task.get("skills", [])
@@ -242,7 +264,7 @@ def test_start_goal_creates_worktree_task_job_and_goal(env):
     assert job["target_commit"] == git(env.repo, "rev-parse", "main")
     assert job["role_version"] == git(env.root, "rev-parse", "HEAD")
     assert (g["attempt"], g["job_id"], g["check_cmd"]) == (1, job["id"], CHECK)
-    assert settings.target_settings("demo")["check"] == CHECK
+    assert settings.target_settings("demo")["check"] is None  # per-task check does not rewrite target default
 
 
 def test_start_goal_uses_role_profile_and_a_free_slug(env):
@@ -354,31 +376,37 @@ def test_escalates_to_claude_after_free_attempts_and_lands(env, monkeypatch):
                 "num_turns": 4, "usage": {"input_tokens": 9, "output_tokens": 3}}
 
     env.fake.claude = claude
+    checks = []
+    original_check = run.grade.run_check
+    def count_check(*args, **kwargs):
+        checks.append(args)
+        return original_check(*args, **kwargs)
+    monkeypatch.setattr(run.grade, "run_check", count_check)
     g = env.goal()
     fail_free_attempts(env, g)
+    assert len(checks) == 3  # one authoritative check per attempt, including Claude
 
     jobs = env.jobs()
     assert [(j["attempt"], j["outcome"]) for j in jobs] == [(1, "fail"), (2, "fail"), (3, "pass")]
-    assert jobs[2]["task_ref"] == "claude:sess-1"
+    assert jobs[2]["task_ref"].startswith("claude:")
     assert "ANTHROPIC_API_KEY" not in env.fake.claude_env
     assert env.get(g["id"])["outcome"] == "pass"
     assert (env.repo / "result.txt").read_text() == "ok\n"
     assert env.fake.blocked == {}
     claude_call = env.conn.execute("SELECT * FROM calls WHERE job_id = ?", (jobs[2]["id"],)).fetchone()
     assert (claude_call["provider"], claude_call["tokens_in"]) == ("claude-code-subscription", 9)
-    cmd = next(c for c in env.fake.calls if c[0] == "claude")
-    assert cmd[cmd.index("--agent") + 1] == "team-implement:implement"
-    assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
-    assert "kanban_request_review" not in cmd[2]
-    assert env.fake.claude_env["TEAM_CHECK"] == CHECK
+    cmd = next(c for c in env.fake.calls if len(c) > 1 and c[1].endswith("/team/hermes_native.py"))
+    assert "hermes" in cmd[0]
+    assert env.fake.claude_env["HERMES_HOME"].endswith("/hermes/profiles/implement")
+    assert env.fake.claude_env["OPENAI_BASE_URL"].startswith("http://127.0.0.1:")
 
 
 def test_claude_decision_goes_to_eli(env):
     def claude(cwd):
-        Path(env.fake.claude_env["TEAM_DECISION_FILE"]).write_text(json.dumps({
-            "question": "Store results in SQLite or JSON?", "context": "no store yet",
-            "options": ["SQLite", "JSON"], "recommendation": "SQLite"}))
-        return {"is_error": False, "result": "asked", "session_id": "s3"}
+        return {"structured_output": {"kind": "decision", "name": "", "text": "asked",
+            "arguments": json.dumps({"question": "Store results in SQLite or JSON?", "context": "no store yet",
+            "options": ["SQLite", "JSON"], "recommendation": "SQLite"})}}
+
 
     env.fake.claude = claude
     g = env.goal()
@@ -892,3 +920,94 @@ def test_api_calls_are_recorded(env):
     env.fake.done(g["current_task"])
     env.loop().tick()
     assert env.conn.execute("SELECT api_calls FROM calls").fetchone()["api_calls"] == 3
+
+
+def test_hermes_boss_create_keeps_team_worktree_and_grading(env, monkeypatch):
+    from team import hermes_boss
+    monkeypatch.setattr(hermes_boss, 'verify_source', lambda source: None)
+    env.fake.profiles.append('team-implement')
+    args = {'board': 'demo', 'title': 'Native-shaped goal', 'body': 'Write ok into result.txt',
+            'assignee': 'team-implement', 'check': CHECK}
+    result = json.loads(hermes_boss.execute(env.root, 'kanban_create', args, runner=env.fake))
+    goal = env.get(result['goal_id'])
+    assert goal['current_task'] == result['task_id']
+    assert Path(goal['worktree']).is_dir()
+    assert goal['check_cmd'] == CHECK
+    assert env.jobs()[0]['task_ref'] == result['task_id']
+
+
+def test_hermes_boss_refuses_pending_parent_without_new_job(env, monkeypatch):
+    from team import hermes_boss
+    monkeypatch.setattr(hermes_boss, 'verify_source', lambda source: None)
+    env.fake.profiles.append('team-implement')
+    parent = env.goal()
+    with pytest.raises(ValueError, match='not passed and landed'):
+        hermes_boss.execute(env.root, 'kanban_create', {
+            'board': 'demo', 'title': 'Dependent goal', 'body': 'Needs parent',
+            'assignee': 'team-implement', 'parents': [parent['current_task']]}, runner=env.fake)
+    assert len(env.jobs()) == 1
+
+
+def test_hermes_boss_landed_parent_recorded_as_native_dependency(env, monkeypatch):
+    from team import hermes_boss
+    monkeypatch.setattr(hermes_boss, 'verify_source', lambda source: None)
+    env.fake.profiles.append('team-implement')
+    parent = env.goal()
+    commit(parent['worktree'], 'result.txt', 'ok\n')
+    env.fake.done(parent['current_task'])
+    env.loop().tick()
+    assert env.get(parent['id'])['outcome'] == 'pass'
+    result = json.loads(hermes_boss.execute(env.root, 'kanban_create', {
+        'board': 'demo', 'title': 'Dependent goal', 'body': 'Build on parent',
+        'assignee': 'team-implement', 'parents': [parent['current_task']]}, runner=env.fake))
+    argv = env.fake.tasks[result['task_id']]['task']['argv']
+    assert argv[argv.index('--parent') + 1] == parent['current_task']
+
+
+def test_missing_role_profile_fails_closed(env):
+    env.fake.profiles.remove("team-implement")
+    with pytest.raises(run.RunError, match="missing Hermes profile"):
+        env.goal()
+    assert not env.fake.tasks
+
+
+def test_planned_role_is_not_dispatchable(env):
+    manifest = env.root / "roles/implement/role.toml"
+    manifest.write_text(ROLE.replace('status = "active"', 'status = "planned"'))
+    with pytest.raises(run.RunError, match="not active"):
+        env.goal()
+    assert not env.fake.tasks
+
+
+def test_unbounded_profile_refused_before_task(env):
+    (env.tmp / 'profile/config.yaml').write_text('agent: {}')
+    with pytest.raises(ValueError, match='agent.max_turns'):
+        env.goal()
+    assert not env.fake.tasks
+
+
+@pytest.mark.parametrize('changed,passed', [('result.txt', True), ('outside.txt', False)])
+def test_saved_plan_ownership_checked_before_landing(env, changed, passed):
+    import uuid
+    from team import planning
+    plan_id = str(uuid.uuid4())
+    g = env.goal(f'Change result\nTeam plan task: {plan_id}:one', check='true')
+    planning.write_json(planning.Planner(env.root).path(plan_id), {
+        'target': 'demo', 'task_goals': {'one': g['id']},
+        'contract': {'tasks': [{'id': 'one', 'files': ['result.txt']}]}})
+    commit(g['worktree'], changed, 'ok\n')
+    ok, detail = env.loop().grade(g)
+    assert ok is passed
+    if not passed:
+        assert 'outside assigned files' in detail
+        assert not (env.repo / changed).exists()
+
+
+def test_landing_cleans_branch_when_native_kanban_already_removed_worktree(env):
+    g=env.goal()
+    commit(g['worktree'],'result.txt','ok\n')
+    git(env.repo,'worktree','remove',g['worktree'])
+    env.loop()._land(g)
+    assert env.get(g['id'])['outcome']=='pass'
+    assert git(env.repo,'branch','--list',g['branch'])==''
+    assert not env.logs

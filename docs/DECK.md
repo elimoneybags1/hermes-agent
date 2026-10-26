@@ -26,7 +26,7 @@ Header, always visible: `team run` alive or stopped (a process whose argv is
 `team run`), goals open / landed today, pass rate as `14/28 · base 18/30`
 (never a bare percentage), open decisions count.
 
-Tabs (keys 1–4, or click):
+Tabs (F1–F5, or click):
 
 1. **Pipeline**: the role strip (boss → spec → test → implement → review) with
    how many goals are at each; below, a table of open goals: id, target, role,
@@ -46,6 +46,12 @@ Tabs (keys 1–4, or click):
 4. **Log**: what Team did, newest first, from the ledger: jobs started and
    finished (outcome, grader, detail tail), goals landed, decisions answered;
    one line each with time and target.
+5. **Runtime** (added 2026-10-26, `docs/UI.md` "Runtime"): the Hermes runtime
+   from `team/runtime.py`. A summary line (profiles, sessions and how many are
+   active, proposals open / total, model calls in the last 24 h by provider),
+   a table of the newest sessions per profile (role, started, title, status,
+   model, messages, tool calls, API calls, tokens in/out, session id) and a
+   table of optimizer proposals (status, created, subject, where). Read-only.
 
 `g` anywhere: new goal (a form: target from attached targets, goal text, role)
 → `team.run.start_goal`. `q` quits.

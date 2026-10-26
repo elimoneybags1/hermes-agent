@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from team import claude_roles, claude_run, decisions, grade, kanban, ledger, proxy_tier, proxy_usage, settings, targets
+from team import claude_roles, claude_run, decisions, grade, kanban, ledger, profiles, proxy_tier, proxy_usage, settings, targets
 from team.free import PROXY_MODEL, PROXY_MODELS, is_free_model
 from team.roles import load_roles
 
@@ -87,6 +87,8 @@ def role_info(root: Path, name: str) -> dict:
         raise RunError(f"unknown role: {name}")
     if role.get("runs_on", {}).get("harness") != "hermes":
         raise RunError(f"role {name} does not run on hermes workers")
+    if role.get("status") != "active":
+        raise RunError(f"role {name} is not active")
     return role
 
 
@@ -113,15 +115,16 @@ def role_version(root: Path, name: str, runner: Runner) -> str:
 
 
 def assignee_for(role: str, runner: Runner) -> str:
-    """`team-<role>` when that Hermes profile exists, else `team-worker`."""
+    """Require the dedicated profile; a generic worker loses role configuration."""
     profile = f"team-{role}"
-    r = runner(["hermes", "profile", "list"], capture_output=True, text=True)
+    from team.hermes_runtime import worker_environment
+    r = runner(["hermes", "profile", "list"], capture_output=True, text=True, env=worker_environment())
     if r.returncode == 0:
         names = {line.strip().lstrip("◆*").split()[0]
                  for line in r.stdout.splitlines() if line.strip()}
         if profile in names:
             return profile
-    return "team-worker"
+    raise RunError(f"missing Hermes profile {profile}; run team agents sync first")
 
 
 def slugify(text: str, limit: int = 40) -> str:
@@ -143,6 +146,7 @@ def _free_slug(repo: Path, target: str, base: str, runner: Runner) -> str:
 def _brief(goal: dict, attempt: int, failure: str | None, claude: bool = False) -> str:
     text = (
         f"{goal['goal']}\n\n"
+        f"Workspace: {goal['worktree']}. Resolve file paths and run commands in this directory. "
         f"You work in a git worktree on branch {goal['branch']}. Done means this "
         f"check passes there: `{goal['check_cmd']}`. Commit your work on this "
         "branch: uncommitted work is lost and does not count."
@@ -430,9 +434,11 @@ class Loop:
 
     # -- free attempts ---------------------------------------------------------
 
-    def free_attempt(self, goal: dict, attempt: int, failure: str | None = None) -> str:
+    def free_attempt(self, goal: dict, attempt: int, failure: str | None = None, *, parents: tuple[str, ...] = ()) -> str:
         """A kanban task for attempt `attempt` on the goal's branch; returns its id."""
         role = role_info(self.root, goal["role"])
+        assignee = assignee_for(goal["role"], self.runner)
+        profiles.require_turn_budget(assignee, int(role.get("budget", {}).get("max_turns", 40)))
         self._ensure_worktree(goal)
         title = goal["goal"].splitlines()[0][:80]
         if attempt > 1:
@@ -447,12 +453,14 @@ class Loop:
             self.log(f"goal {goal['id']}: attempt {attempt} on {model} ({why})")
         task = kanban.create_task(
             goal["target"], title, _brief(goal, attempt, failure),
-            assignee=assignee_for(goal["role"], self.runner),
+            assignee=assignee,
             workspace=f"worktree:{goal['worktree']}",
             branch=goal["branch"],
             max_runtime=run_budget_s(role),
+            max_retries=1,  # Team owns retries; native retries would multiply the budget.
             skills=skills,
             model=model,
+            parents=parents,
             runner=self.runner,
         )
         job = self._start_job(goal, attempt, task["id"])
@@ -602,7 +610,6 @@ class Loop:
             runner=self.runner,
             role=goal["role"],
             root=self.root,
-            check=goal["check_cmd"],
             decision_file=decision_file,
         )
         ledger.set_task_ref(self.conn, job, f"claude:{result.get('session_id') or 'unknown'}")
@@ -700,6 +707,18 @@ class Loop:
             _git(self.runner, wt, "merge", "--abort")
             return False, ("merge conflict with main:\n"
                            + (conflicts or (merge.stdout + merge.stderr).strip()))
+        from team.planning import owned_paths_for_goal
+        try:
+            owned = owned_paths_for_goal(self.root, goal)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            return False, f"cannot verify scoped assignment: {exc}"
+        if owned is not None:
+            diff = _git(self.runner, wt, "diff", "--no-renames", "--name-only", "-z", "main...HEAD")
+            if diff.returncode:
+                return False, "cannot inspect changed paths"
+            outside = sorted(set(filter(None, diff.stdout.split("\0"))) - owned)
+            if outside:
+                return False, "changes outside assigned files: " + ", ".join(outside)
         ok, output = grade.run_check(wt, goal["check_cmd"],
                                      timeout_s=self.cfg["grading.check_timeout_s"],
                                      runner=self.runner)
@@ -720,7 +739,13 @@ class Loop:
             ledger.finish_goal(self.conn, goal["id"], "error", reason)
             return
         try:
-            grade.remove_worktree(repo, goal["worktree"], goal["branch"], runner=self.runner)
+            if Path(goal["worktree"]).exists():
+                grade.remove_worktree(repo, goal["worktree"], goal["branch"], runner=self.runner)
+            else:
+                # Native kanban_complete may already have removed its worktree.
+                # Team has landed the branch; only branch cleanup remains.
+                _git(self.runner, repo, "worktree", "prune")
+                _git(self.runner, repo, "branch", "-d", goal["branch"])
         except grade.GradeError as e:
             self.log(f"goal {goal['id']}: landed, but {e}")
         ledger.finish_goal(self.conn, goal["id"], "pass", f"landed {sha}")
@@ -745,15 +770,14 @@ def start_goal(
     role: str = "implement",
     check: str | None = None,
     runner: Runner = subprocess.run,
+    parents: tuple[str, ...] = (),
 ) -> dict:
     """`team goal`: a worktree, a kanban task, a ledger job and a goals row."""
     record = targets.get(target) if targets.NAME_RE.fullmatch(target) else None
     if record is None:
         raise RunError(f"unknown target: {target}")
     role_info(root, role)
-    if check is not None:
-        settings.set_target(target, "check", check)
-    check_cmd = settings.check_for(root, target)
+    check_cmd = check if check is not None else settings.check_for(root, target)
     repo = Path(record["path"])
 
     kanban.ensure_board(target, runner=runner)
@@ -761,7 +785,7 @@ def start_goal(
     path, branch = grade.create_worktree(repo, target, slug, runner=runner)
     goal_id = ledger.create_goal(conn, target, goal, role, branch, str(path), check_cmd)
     try:
-        Loop(root, conn, runner=runner).free_attempt(ledger.get_goal(conn, goal_id), 1)
+        Loop(root, conn, runner=runner).free_attempt(ledger.get_goal(conn, goal_id), 1, parents=parents)
     except Exception as e:
         ledger.finish_goal(conn, goal_id, "error", f"could not create the first task: {e}")
         raise
