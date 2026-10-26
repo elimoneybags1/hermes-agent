@@ -4,7 +4,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/z-ai/glm-5.3
     api_key: os.environ/NVIDIA_API_KEY
-    order: 1
+    order: 2
     timeout: 90
     stream_timeout: 45
   model_info:
@@ -87,7 +87,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/deepseek-ai/deepseek-v4.1-flash
     api_key: os.environ/NVIDIA_API_KEY
-    order: 2
+    order: 3
     timeout: 90
     stream_timeout: 45
   model_info:
@@ -103,7 +103,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/meta/muse-glimmer-30b
     api_key: os.environ/NVIDIA_API_KEY
-    order: 1
+    order: 2
     timeout: 90
     stream_timeout: 45
   model_info:
@@ -119,7 +119,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/z-ai/glm-5.3-flash
     api_key: os.environ/NVIDIA_API_KEY
-    order: 2
+    order: 3
     timeout: 90
     stream_timeout: 45
   model_info:
@@ -135,7 +135,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/nvidia/nemotron-3.5-super-vl-120b-a12b
     api_key: os.environ/NVIDIA_API_KEY
-    order: 1
+    order: 2
     timeout: 90
     stream_timeout: 45
   model_info:
@@ -184,7 +184,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b
     api_key: os.environ/NVIDIA_API_KEY
-    order: 2
+    order: 3
     timeout: 90
     stream_timeout: 45
   model_info:
@@ -234,7 +234,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/poolside/laguna-xs-2.1
     api_key: os.environ/NVIDIA_API_KEY
-    order: 1
+    order: 2
     timeout: 90
     stream_timeout: 45
   model_info:
@@ -267,7 +267,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/google/gemma-4-31b-it
     api_key: os.environ/NVIDIA_API_KEY
-    order: 2
+    order: 3
     timeout: 90
     stream_timeout: 45
   model_info:
@@ -419,7 +419,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/nvidia/nemotron-3.5-lightning-30b-a3b
     api_key: os.environ/NVIDIA_API_KEY
-    order: 1
+    order: 2
     timeout: 90
     stream_timeout: 45
   model_info:
@@ -519,7 +519,7 @@ model_list:
   litellm_params:
     model: nvidia_nim/openai/gpt-oss-20b
     api_key: os.environ/NVIDIA_API_KEY
-    order: 2
+    order: 3
     timeout: 90
     stream_timeout: 45
   model_info:

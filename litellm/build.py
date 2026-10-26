@@ -70,7 +70,8 @@ def deployments(catalog: dict) -> list[dict]:
         params = {
             "model": f"{PREFIX[m['provider']]}/{m['id']}",
             "api_key": f"os.environ/{p['key']}",
-            "order": int(m["order"]),
+            # A provider having a bad stretch moves down its tiers without editing every model.
+            "order": int(m["order"]) + int(p.get("order_offset", 0)),
             # A hung free endpoint (seen on NVIDIA) must fail over, not stall a worker.
             "timeout": 90,
             "stream_timeout": 45,

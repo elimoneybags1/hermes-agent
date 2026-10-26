@@ -21,7 +21,9 @@
     "per": "provider",
     "window": "minute",
     "requests": 40
-   }
+   },
+   "order_offset": 1,
+   "order_offset_why": "2026-10-26: 33 of 44 calls ok, ResourceExhausted/timeouts up to 181s; back to 0 when NVIDIA recovers"
   },
   "gemini": {
    "key": "GEMINI_API_KEY",
