@@ -2,6 +2,8 @@
  "about": "Every model Team may call, and which providers serve it, with why each is free. Hand-edited; the one source of truth. build.py turns it into Portkey configs (one per model, one per tier), LiteLLM's config.yaml and Portkey's conf.json, and refuses any served_by whose free is not 'yes' or 'allowance', any blocked or unknown provider, any OpenRouter id that is not a ':free' variant. Model rows researched 2026-10-26 from each provider's own pricing and terms pages (archived as git show before-fresh-start:litellm/free-models.json) and folded into one row per model on 2026-10-27. tier/order: which LiteLLM tier group the model serves and its priority there (1 first; higher orders only when lower ones are cooling down or failing). tier null = free but not routed; 'unrouted' says why, or 'unavailable' when no provider serves it today. served_by: the providers that serve the model, in Portkey's failover order; 'unavailable' entries are kept on record and skipped by build.py.",
  "gateway": {
   "port": 8788,
+  "portkey_port": 8789,
+  "portkey_port_why": "where the unpatched Portkey process listens (loopback); gateway-rs proxy listens on 'port', resolves config names and writes requests.jsonl, then forwards here",
   "port_why": "PLAN.md says 8787, but 127.0.0.1:8787 is held by the launchd job com.fullmoney.myprof-gateway (another project's node gateway, running since 2026-10-09). Change this number and rebuild to move; nothing else hardcodes it.",
   "host": "127.0.0.1"
  },

@@ -7,6 +7,12 @@ publish = false
 
 [dependencies]
 serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "io-util", "fs", "signal", "time"] }
+hyper = { version = "1", features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
+http-body-util = "0.1"
+bytes = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [profile.release]
 lto = true
