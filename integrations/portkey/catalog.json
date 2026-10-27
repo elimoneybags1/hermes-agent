@@ -36,7 +36,8 @@
    "key_env": "GEMINI_API_KEY",
    "free_basis": "'Free of charge' in the Free Tier column (https://ai.google.dev/gemini-api/docs/pricing)",
    "limits": "per project, shown only in AI Studio",
-   "notes": "free only while billing is OFF on the key's Google Cloud project; free-tier prompts may be used to improve Google products and read by reviewers"
+   "notes": "free only while billing is OFF on the key's Google Cloud project; free-tier prompts may be used to improve Google products and read by reviewers. 2026-10-27: free-tier latency 6-32 s on flash-lite and two 60 s timeouts on 3.8-flash, so the Portkey target timeout is 120 s",
+   "request_timeout_ms": 120000
   },
   "mistral": {
    "portkey": "mistral-ai",
