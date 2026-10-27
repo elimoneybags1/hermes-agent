@@ -57,6 +57,9 @@ FAILURE_CHARS = 4000
 QUOTA_ERROR = "free-models-per-day"
 QUOTA_RESET_RE = re.compile(r"'X-RateLimit-Reset': '(\d+)'")
 LOG_TAIL_BYTES = 8000
+# A Claude 429 (subscription limit) pauses the target this long, then retries the same attempt.
+CLAUDE_LIMIT = "claude usage limit"
+CLAUDE_LIMIT_PAUSE_S = 3600
 QUOTA_END_CHARS = 2000
 
 
@@ -331,6 +334,13 @@ class Loop:
         if job["ended"] is not None:
             if job["outcome"] == "pass":
                 self._land(goal)
+            elif claude and (job["grader_detail"] or "").startswith(CLAUDE_LIMIT):
+                if (
+                    ledger.active_pause(self.conn, goal["target"], self.now())
+                    is not None
+                ):
+                    return False
+                self._claude_attempt(goal, goal["attempt"], job["grader_detail"])
             elif claude:
                 self._give_up(
                     goal, "the Claude attempt failed too", job["grader_detail"]
@@ -626,6 +636,19 @@ class Loop:
             )
             self._give_up(
                 goal, f"Claude needs a decision from Eli (decision {asked})", None
+            )
+            return
+        if not result["ok"] and claude_run.usage_limited(result):
+            # Not a failed attempt: the subscription is out of quota. Pause the
+            # target and keep the goal at this attempt; step() retries Claude
+            # once the pause ends.
+            detail = f"{CLAUDE_LIMIT}: {_tail(str(result['result']), 300)}"
+            ledger.finish_job(self.conn, job, "error", "claude", detail)
+            ledger.add_pause(
+                self.conn, goal["target"], self.now() + CLAUDE_LIMIT_PAUSE_S, detail
+            )
+            self.log(
+                f"goal {goal['id']}: Claude usage limit; paused {CLAUDE_LIMIT_PAUSE_S // 60} min"
             )
             return
         if not result["ok"]:

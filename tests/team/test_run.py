@@ -145,6 +145,10 @@ class FakeHermes:
                 stdout=json.dumps({"loggedIn": True, "authMethod": "claude.ai"}),
                 stderr="",
             )
+        if getattr(self, "claude_json", None):
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=json.dumps(self.claude_json), stderr=""
+            )
         behaviour = self.claude_behaviour or (lambda wt, env: None)
         behaviour(Path(kwargs["cwd"]), kwargs["env"])
         out = {
@@ -402,6 +406,56 @@ def test_claude_fails_then_eli_decides(world):
     [decision] = ledger.list_decisions(world["conn"], "team")
     assert decision["goal_id"] == goal["id"] and decision["source"] == "run"
     assert grade.branch_exists(world["repo"], goal["branch"])
+
+
+def test_claude_usage_limit_pauses_instead_of_giving_up(world):
+    goal = run.start_goal(
+        world["root"],
+        world["conn"],
+        "team",
+        "Set VALUE to 2",
+        runner=world["hermes"],
+        cat=CATALOG,
+    )
+    hermes = world["hermes"]
+    limited = {
+        "is_error": True,
+        "result": "You've hit your session limit · resets 4:20pm",
+        "session_id": "s-429",
+        "num_turns": 1,
+        "api_error": "usage_limit_reached",
+        "api_error_status": 429,
+        "usage": {},
+    }
+    hermes.claude_json = limited
+    for n in range(2):
+        hermes.tasks["t_1"]["status"] = "review"
+        worker_commits(world, goal, f"VALUE = {7 + n}\n")
+        world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] is None and g["attempt"] == 3
+    job = ledger.get_job(world["conn"], g["job_id"])
+    assert job["outcome"] == "error" and job["grader_detail"].startswith(
+        "claude usage limit"
+    )
+    assert ledger.list_decisions(world["conn"], "team") == []
+    pause = ledger.active_pause(world["conn"], "team", 2000.0)
+    assert pause and "claude usage limit" in pause["reason"]
+    world["loop"].tick()  # still paused: nothing happens
+    assert ledger.get_goal(world["conn"], goal["id"])["job_id"] == job["id"]
+
+    hermes.claude_json = None
+
+    def claude_fixes(worktree, env):
+        (worktree / "app.py").write_text("VALUE = 2\n")
+        git(worktree, "commit", "-q", "-am", "claude fixed it")
+
+    hermes.claude_behaviour = claude_fixes
+    world["loop"].now = lambda: 2000.0 + 3601
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["attempt"] == 3
+    assert [j["attempt"] for j in ledger.list_jobs(world["conn"])][:2] == [3, 3]
 
 
 def test_claude_writes_a_decision_for_eli(world):
