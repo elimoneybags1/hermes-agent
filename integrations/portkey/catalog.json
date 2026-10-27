@@ -1,0 +1,1038 @@
+{
+ "about": "Every model Team may call, and which providers serve it, with why each is free. Hand-edited; the one source of truth. build.py turns it into Portkey configs (one per model, one per tier), LiteLLM's config.yaml and Portkey's conf.json, and refuses any served_by whose free is not 'yes' or 'allowance', any blocked or unknown provider, any OpenRouter id that is not a ':free' variant. Model rows researched 2026-10-26 from each provider's own pricing and terms pages (archived as git show before-fresh-start:litellm/free-models.json) and folded into one row per model on 2026-10-27. tier/order: which LiteLLM tier group the model serves and its priority there (1 first; higher orders only when lower ones are cooling down or failing). tier null = free but not routed; 'unrouted' says why. served_by: the providers that serve the model, in Portkey's failover order; 'unavailable' entries are kept on record and skipped by build.py.",
+ "gateway": {
+  "port": 8788,
+  "port_why": "PLAN.md says 8787, but 127.0.0.1:8787 is held by the launchd job com.fullmoney.myprof-gateway (another project's node gateway, running since 2026-10-09). Change this number and rebuild to move; nothing else hardcodes it.",
+  "host": "127.0.0.1"
+ },
+ "litellm": {
+  "port": 4000,
+  "host": "127.0.0.1"
+ },
+ "blocked_providers": {
+  "anthropic": "paid API key; Claude runs through the subscription only",
+  "minimax": "Eli: billing is set up on this account",
+  "dashscope": "1M free tokens per model, then billed unless 'Free Quota Only' is switched on per model in the Model Studio console; unblock only after that is done"
+ },
+ "providers": {
+  "openrouter": {
+   "portkey": "openrouter",
+   "key_env": "OPENROUTER_API_KEY",
+   "free_basis": "':free' models are priced $0 (GET /api/v1/models)",
+   "limits": "shared per-account daily cap on free models (HTTP 429 free-models-per-day)",
+   "notes": "this key holds credit ($3.198 used as of 2026-10-26); the spend guard trips if usage rises"
+  },
+  "nvidia": {
+   "portkey": "openai",
+   "custom_host": "https://integrate.api.nvidia.com/v1",
+   "key_env": "NVIDIA_API_KEY",
+   "free_basis": "Developer Program members get free hosted NIM endpoints; credits system removed 2025 (https://forums.developer.nvidia.com/t/cannot-find-the-amount-of-credits-left-on-nim-api/337051)",
+   "limits": "~40 RPM per account across models (NVIDIA forum moderator, 2026-05-13); no RPD/TPM published",
+   "notes": "terms: prototyping/research/development/testing only; trial ToS may let NVIDIA use inputs. 2026-10-26: 33 of 44 calls ok, ResourceExhausted/timeouts up to 181s",
+   "request_timeout_ms": 90000
+  },
+  "gemini": {
+   "portkey": "google",
+   "key_env": "GEMINI_API_KEY",
+   "free_basis": "'Free of charge' in the Free Tier column (https://ai.google.dev/gemini-api/docs/pricing)",
+   "limits": "per project, shown only in AI Studio",
+   "notes": "free only while billing is OFF on the key's Google Cloud project; free-tier prompts may be used to improve Google products and read by reviewers"
+  },
+  "mistral": {
+   "portkey": "mistral-ai",
+   "key_env": "MISTRAL_API_KEY",
+   "free_basis": "Free mode: 'included monthly usage within the limits shown on the Limits page' (https://docs.mistral.ai/admin/billing-usage/usage-limits)",
+   "limits": "per model, shown only in admin.mistral.ai; third-party: 1 RPS, 500K TPM, 1B tokens/month",
+   "notes": "free API data may be used for training unless switched off (Admin Console > Privacy)"
+  },
+  "groq": {
+   "portkey": "groq",
+   "key_env": "GROQ_API_KEY",
+   "free_basis": "$0 Free plan; card needed only to upgrade (https://console.groq.com/docs/billing-faqs)",
+   "limits": "30 RPM, 1K RPD, 8K TPM, 200K TPD per model (https://console.groq.com/docs/rate-limits)",
+   "notes": "8K TPM means any request over ~8K tokens fails; served_by rows carry max_input 6000"
+  },
+  "zai": {
+   "portkey": "z-ai",
+   "key_env": "ZAI_API_KEY",
+   "free_basis": "only GLM-4.7-Flash and GLM-4.5-Flash are listed Free (https://docs.z.ai/guides/overview/pricing); every other GLM, including glm-5.3-flash, is paid",
+   "limits": "not published; see z.ai/manage-apikey/rate-limits",
+   "notes": "the two free models did not appear in this key's /models list on 2026-10-26"
+  },
+  "cohere": {
+   "portkey": "cohere",
+   "key_env": "COHERE_API_KEY",
+   "free_basis": "'API calls made from a Trial API key are free' (https://cohere.com/pricing)",
+   "limits": "20 RPM per chat model; 1,000 calls/month per trial key (https://docs.cohere.com/docs/rate-limits)",
+   "notes": "trial keys are not for production or commercial use; last resort only, so it is last in every served_by list"
+  },
+  "cerebras": {
+   "portkey": "cerebras",
+   "key_env": "CEREBRAS_API_KEY",
+   "free_basis": "one-time $5 trial credit, expires 30 days after grant; access stops when used up (https://inference-docs.cerebras.ai/support/rate-limits)",
+   "limits": "5 RPM, 30K uncached TPM, 1M tokens/day; trial context 64K, output 32K",
+   "notes": "not a lasting free tier; 'Payment required' since 2026-10-26, every cerebras served_by row is unavailable"
+  }
+ },
+ "tiers": [
+  "simple",
+  "medium",
+  "complex",
+  "reasoning"
+ ],
+ "tier_fallbacks": {
+  "reasoning": [
+   "complex",
+   "medium"
+  ],
+  "complex": [
+   "reasoning",
+   "medium"
+  ],
+  "medium": [
+   "complex",
+   "simple"
+  ],
+  "simple": [
+   "medium"
+  ]
+ },
+ "models": [
+  {
+   "id": "glm-5.3",
+   "tier": "reasoning",
+   "order": 1,
+   "context": 1048576,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "size": "753B / ~40B active",
+   "strength": "Z.ai flagship agentic coder",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "z-ai/glm-5.3",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "mistral-medium",
+   "tier": "reasoning",
+   "order": 2,
+   "context": 262144,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "128B dense",
+   "strength": "Medium 3.5; SWE-bench Verified 77.6 (secondary source)",
+   "served_by": [
+    {
+     "provider": "mistral",
+     "provider_model_id": "mistral-medium-latest",
+     "free": "allowance"
+    }
+   ]
+  },
+  {
+   "id": "gemini-3.8-flash",
+   "tier": "reasoning",
+   "order": 2,
+   "context": 1048576,
+   "max_output": 65536,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "strength": "Google's long-horizon SWE Flash; Terminal-Bench 2.1 89.4 (third-party)",
+   "served_by": [
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemini-3.8-flash",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "nemotron-3-ultra-550b",
+   "tier": "reasoning",
+   "order": 3,
+   "context": 1000000,
+   "max_output": 65536,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "size": "550B / 55B active",
+   "strength": "SWE-bench Verified 71.9",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "nvidia/nemotron-3-ultra-550b-a55b",
+     "free": "yes"
+    },
+    {
+     "provider": "openrouter",
+     "provider_model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "command-a-plus",
+   "tier": "reasoning",
+   "order": 4,
+   "context": 128000,
+   "max_output": 64000,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "218B / 25B active",
+   "strength": "Cohere's strongest model",
+   "served_by": [
+    {
+     "provider": "cohere",
+     "provider_model_id": "command-a-plus-05-2026",
+     "free": "allowance"
+    }
+   ]
+  },
+  {
+   "id": "muse-glimmer-30b",
+   "tier": "complex",
+   "order": 1,
+   "context": 131072,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "~30B dense",
+   "strength": "SWE-bench Verified 76.0, Terminal-Bench 2.1 51.7",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "meta/muse-glimmer-30b",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "nemotron-3.5-super-vl-120b",
+   "tier": "complex",
+   "order": 1,
+   "context": 1000000,
+   "max_output": 131072,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "120B / 12B active",
+   "strength": "SWE-bench Verified 71.1, Terminal-Bench 2.1 60.8",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "nvidia/nemotron-3.5-super-vl-120b-a12b",
+     "free": "yes"
+    },
+    {
+     "provider": "openrouter",
+     "provider_model_id": "nvidia/nemotron-3.5-super-vl:free",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "deepseek-v4.1-flash",
+   "tier": "complex",
+   "order": 2,
+   "context": 1048576,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "552B / 8-16B active",
+   "strength": "Terminal-Bench 2.1 90.6, DeepSWE v1.1 74.2",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "deepseek-ai/deepseek-v4.1-flash",
+     "free": "yes",
+     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered"
+    }
+   ]
+  },
+  {
+   "id": "glm-5.3-flash",
+   "tier": "complex",
+   "order": 2,
+   "context": 1048576,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "320B / 18B active",
+   "strength": "fast agentic coder (free on NVIDIA; paid on Z.ai)",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "z-ai/glm-5.3-flash",
+     "free": "yes",
+     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered"
+    }
+   ]
+  },
+  {
+   "id": "gemini-3.6-flash",
+   "tier": "complex",
+   "order": 2,
+   "context": 1048576,
+   "max_output": 65536,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "strength": "previous-generation Flash",
+   "served_by": [
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemini-3.6-flash",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "mistral-small",
+   "tier": "complex",
+   "order": 2,
+   "context": 262144,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "119B / 6.5B active",
+   "strength": "Small 4: instruct + reasoning + coding in one",
+   "served_by": [
+    {
+     "provider": "mistral",
+     "provider_model_id": "mistral-small-latest",
+     "free": "allowance"
+    }
+   ]
+  },
+  {
+   "id": "laguna-xs-2.1",
+   "tier": "medium",
+   "order": 1,
+   "context": 262144,
+   "max_output": 32768,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "size": "33B / 3B active",
+   "strength": "SWE-bench Verified 70.9",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "poolside/laguna-xs-2.1",
+     "free": "yes"
+    },
+    {
+     "provider": "openrouter",
+     "provider_model_id": "poolside/laguna-xs-2.1:free",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "laguna-s-2.1",
+   "tier": "medium",
+   "order": 1,
+   "context": 262144,
+   "max_output": 32768,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "size": "118B / 8B active",
+   "strength": "Terminal-Bench 2.1 70.2",
+   "served_by": [
+    {
+     "provider": "openrouter",
+     "provider_model_id": "poolside/laguna-s-2.1:free",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "gemma-4-31b",
+   "tier": "medium",
+   "order": 2,
+   "context": 262144,
+   "max_output": 32768,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "30.7B dense",
+   "strength": "LiveCodeBench v6 80.0, SWE-bench Verified 66.6",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "google/gemma-4-31b-it",
+     "free": "yes",
+     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered"
+    },
+    {
+     "provider": "openrouter",
+     "provider_model_id": "google/gemma-4-31b-it:free",
+     "free": "yes"
+    },
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemma-4-31b-it",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "gemini-2.5-flash",
+   "tier": "medium",
+   "order": 2,
+   "context": 1048576,
+   "max_output": 65536,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "strength": "price-performance Flash with reasoning",
+   "served_by": [
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemini-2.5-flash",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "gemini-3-flash-preview",
+   "tier": "medium",
+   "order": 2,
+   "context": 1048576,
+   "max_output": 65536,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "strength": "older-generation Flash preview",
+   "served_by": [
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemini-3-flash-preview",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "ministral-14b",
+   "tier": "medium",
+   "order": 2,
+   "context": 262144,
+   "tools": true,
+   "vision": true,
+   "reasoning": false,
+   "size": "14B",
+   "strength": "Ministral 3 14B",
+   "served_by": [
+    {
+     "provider": "mistral",
+     "provider_model_id": "ministral-14b-latest",
+     "free": "allowance"
+    }
+   ]
+  },
+  {
+   "id": "glm-4.7-flash",
+   "tier": "medium",
+   "order": 2,
+   "context": 200000,
+   "max_output": 128000,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "strength": "Z.ai's free coder",
+   "served_by": [
+    {
+     "provider": "zai",
+     "provider_model_id": "glm-4.7-flash",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "north-mini-code",
+   "tier": "medium",
+   "order": 3,
+   "context": 256000,
+   "max_output": 64000,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "size": "30B / 3B active",
+   "strength": "agentic coding",
+   "served_by": [
+    {
+     "provider": "openrouter",
+     "provider_model_id": "cohere/north-mini-code:free",
+     "free": "yes"
+    },
+    {
+     "provider": "cohere",
+     "provider_model_id": "north-mini-code-1-0",
+     "free": "allowance"
+    }
+   ]
+  },
+  {
+   "id": "gemini-3.5-flash-lite",
+   "tier": "simple",
+   "order": 1,
+   "context": 1048576,
+   "max_output": 65536,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "strength": "fastest 3.5 model",
+   "served_by": [
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemini-3.5-flash-lite",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "gemini-3.1-flash-lite",
+   "tier": "simple",
+   "order": 1,
+   "context": 1048576,
+   "max_output": 65536,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "strength": "cheap, fast",
+   "served_by": [
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemini-3.1-flash-lite",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "nemotron-3.5-lightning-30b",
+   "tier": "simple",
+   "order": 1,
+   "context": 1000000,
+   "max_output": 65536,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "size": "30B / 3B active",
+   "strength": "high throughput; SWE-bench Verified 51.6",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "nvidia/nemotron-3.5-lightning-30b-a3b",
+     "free": "yes"
+    },
+    {
+     "provider": "openrouter",
+     "provider_model_id": "nvidia/nemotron-3.5-lightning:free",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "gpt-oss-20b",
+   "tier": "simple",
+   "order": 2,
+   "context": 131072,
+   "max_output": 2048,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "size": "21B / 3.6B active",
+   "strength": "SWE-bench Verified 60.7",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "openai/gpt-oss-20b",
+     "free": "yes"
+    },
+    {
+     "provider": "groq",
+     "provider_model_id": "openai/gpt-oss-20b",
+     "free": "yes",
+     "max_input": 6000
+    }
+   ]
+  },
+  {
+   "id": "gpt-oss-120b",
+   "tier": "simple",
+   "order": 2,
+   "context": 131072,
+   "max_output": 32768,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "size": "120B / 5.1B active",
+   "strength": "SWE-bench Verified 62.4; small requests only (8K TPM)",
+   "served_by": [
+    {
+     "provider": "groq",
+     "provider_model_id": "openai/gpt-oss-120b",
+     "free": "yes",
+     "max_input": 6000
+    },
+    {
+     "provider": "cerebras",
+     "provider_model_id": "gpt-oss-120b",
+     "free": "allowance",
+     "unavailable": "'Payment required' - trial credit gone (2026-10-26)"
+    }
+   ]
+  },
+  {
+   "id": "gemini-2.5-flash-lite",
+   "tier": "simple",
+   "order": 2,
+   "context": 1048576,
+   "max_output": 65536,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "strength": "fast, budget Flash",
+   "served_by": [
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemini-2.5-flash-lite",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "ministral-8b",
+   "tier": "simple",
+   "order": 2,
+   "context": 262144,
+   "tools": true,
+   "vision": true,
+   "reasoning": false,
+   "size": "8B",
+   "strength": "efficient small model",
+   "served_by": [
+    {
+     "provider": "mistral",
+     "provider_model_id": "ministral-8b-latest",
+     "free": "allowance"
+    }
+   ]
+  },
+  {
+   "id": "glm-4.5-flash",
+   "tier": "simple",
+   "order": 2,
+   "vision": false,
+   "strength": "older free Flash",
+   "served_by": [
+    {
+     "provider": "zai",
+     "provider_model_id": "glm-4.5-flash",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "gemma-4-26b-a4b",
+   "tier": "simple",
+   "order": 3,
+   "context": 262144,
+   "max_output": 32768,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "25.2B / 3.8B active",
+   "strength": "small Gemma MoE",
+   "served_by": [
+    {
+     "provider": "openrouter",
+     "provider_model_id": "google/gemma-4-26b-a4b-it:free",
+     "free": "yes"
+    },
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemma-4-26b-a4b-it",
+     "free": "yes"
+    }
+   ]
+  },
+  {
+   "id": "kimi-k2.6",
+   "tier": null,
+   "order": null,
+   "context": 262144,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "1T / 32B active",
+   "strength": "SWE-bench Verified 80.2, SWE-bench Pro 58.6, Terminal-Bench 2.0 66.7",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "moonshotai/kimi-k2.6",
+     "free": "yes",
+     "unavailable": "404 Function not found for this key (health check 2026-10-26)"
+    }
+   ],
+   "unrouted": "404 Function not found for this key (health check 2026-10-26)"
+  },
+  {
+   "id": "inkling",
+   "tier": null,
+   "order": null,
+   "context": 1048576,
+   "max_output": 262144,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "975B / 41B active",
+   "strength": "general reasoning, coding, tool use",
+   "served_by": [
+    {
+     "provider": "openrouter",
+     "provider_model_id": "thinkingmachines/inkling:free",
+     "free": "yes",
+     "unavailable": "'only available on agentic harnesses' (2026-10-26)"
+    }
+   ],
+   "unrouted": "'only available on agentic harnesses' (2026-10-26)"
+  },
+  {
+   "id": "inkling-small",
+   "tier": null,
+   "order": null,
+   "context": 1048576,
+   "max_output": 262144,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "276B / 12B active",
+   "strength": "smaller Inkling",
+   "served_by": [
+    {
+     "provider": "openrouter",
+     "provider_model_id": "thinkingmachines/inkling-small:free",
+     "free": "yes",
+     "unavailable": "'only available on agentic harnesses' (2026-10-26)"
+    }
+   ],
+   "unrouted": "'only available on agentic harnesses' (2026-10-26)"
+  },
+  {
+   "id": "gemini-2.5-pro",
+   "tier": null,
+   "order": null,
+   "context": 1048576,
+   "max_output": 65536,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "strength": "older Pro, deep reasoning and coding",
+   "served_by": [
+    {
+     "provider": "gemini",
+     "provider_model_id": "gemini-2.5-pro",
+     "free": "yes",
+     "unavailable": "'no longer available to new users' (2026-10-26)"
+    }
+   ],
+   "unrouted": "'no longer available to new users' (2026-10-26)"
+  },
+  {
+   "id": "nemotron-3-super-120b",
+   "tier": null,
+   "order": null,
+   "context": 1000000,
+   "max_output": 235929,
+   "tools": true,
+   "vision": false,
+   "reasoning": true,
+   "size": "120B / 12B active",
+   "strength": "SWE-bench (OpenHands) 60.5",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "nvidia/nemotron-3-super-120b-a12b",
+     "free": "yes",
+     "unavailable": "404 Function not found for this key (2026-10-26)"
+    },
+    {
+     "provider": "openrouter",
+     "provider_model_id": "nvidia/nemotron-3-super-120b-a12b:free",
+     "free": "yes",
+     "unavailable": "404 from upstream (2026-10-26)"
+    }
+   ],
+   "unrouted": "404 Function not found for this key (2026-10-26)"
+  },
+  {
+   "id": "qwen-3.8-27b",
+   "tier": null,
+   "order": null,
+   "context": 131072,
+   "max_output": 32768,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "27B dense",
+   "strength": "SWE-bench Pro 61.7 (Groq card), ~1,850 tokens/s",
+   "served_by": [
+    {
+     "provider": "cerebras",
+     "provider_model_id": "qwen-3.8-27b",
+     "free": "allowance",
+     "unavailable": "'Payment required' - trial credit gone (2026-10-26)"
+    },
+    {
+     "provider": "groq",
+     "provider_model_id": "qwen/qwen3.8-27b",
+     "free": "yes",
+     "max_input": 6000
+    }
+   ],
+   "unrouted": "'Payment required' - trial credit gone (2026-10-26)"
+  },
+  {
+   "id": "flint-v1.0",
+   "tier": null,
+   "order": null,
+   "context": 262144,
+   "max_output": 235929,
+   "tools": true,
+   "reasoning": true,
+   "size": "40B / 2.5B active",
+   "strength": "coding-agent model; no benchmark found",
+   "served_by": [
+    {
+     "provider": "openrouter",
+     "provider_model_id": "recursive/flint-v1.0:free",
+     "free": "yes"
+    }
+   ],
+   "unrouted": "coding-agent model; no benchmark found"
+  },
+  {
+   "id": "xing4.0-29b-a4b",
+   "tier": null,
+   "order": null,
+   "context": 262144,
+   "max_output": 235929,
+   "tools": true,
+   "reasoning": true,
+   "size": "29B / 4B active",
+   "strength": "TeleAI; no benchmark found",
+   "served_by": [
+    {
+     "provider": "openrouter",
+     "provider_model_id": "xingchen-agi/xing4.0-29b-a4b:free",
+     "free": "yes"
+    }
+   ],
+   "unrouted": "TeleAI; no benchmark found"
+  },
+  {
+   "id": "dots-3-note-preview",
+   "tier": null,
+   "order": null,
+   "context": 512000,
+   "max_output": 460800,
+   "tools": true,
+   "reasoning": true,
+   "size": "280B / 16B active",
+   "strength": "preview; no benchmark found",
+   "served_by": [
+    {
+     "provider": "openrouter",
+     "provider_model_id": "dots-studio/dots-3-note-preview:free",
+     "free": "yes"
+    }
+   ],
+   "unrouted": "preview; no benchmark found"
+  },
+  {
+   "id": "nemotron-3-nano-omni-30b",
+   "tier": null,
+   "order": null,
+   "context": 262144,
+   "max_output": 65536,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "30B / 3B active",
+   "strength": "omni-modal, not a coder",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+     "free": "yes"
+    },
+    {
+     "provider": "openrouter",
+     "provider_model_id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+     "free": "yes"
+    }
+   ],
+   "unrouted": "omni-modal, not a coder"
+  },
+  {
+   "id": "lfm-2.5-2.6b",
+   "tier": null,
+   "order": null,
+   "context": 65536,
+   "max_output": 8192,
+   "tools": true,
+   "reasoning": true,
+   "size": "2.6B",
+   "strength": "Liquid advises against agentic coding",
+   "served_by": [
+    {
+     "provider": "openrouter",
+     "provider_model_id": "liquid/lfm-2.5-2.6b:free",
+     "free": "yes"
+    }
+   ],
+   "unrouted": "Liquid advises against agentic coding"
+  },
+  {
+   "id": "minimax-m3.1-flash",
+   "tier": null,
+   "order": null,
+   "context": 1000000,
+   "vision": true,
+   "reasoning": true,
+   "size": "428B / 23B active",
+   "strength": "DeepSWE v1.1 73.7; off until tool calling is confirmed",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "minimaxai/minimax-m3.1-flash",
+     "free": "yes"
+    }
+   ],
+   "unrouted": "DeepSWE v1.1 73.7; off until tool calling is confirmed"
+  },
+  {
+   "id": "llama-3.1-nemotron-ultra-253b",
+   "tier": null,
+   "order": null,
+   "context": 131072,
+   "tools": true,
+   "reasoning": true,
+   "size": "253B dense",
+   "strength": "2025 reasoner, superseded",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+     "free": "yes"
+    }
+   ],
+   "unrouted": "2025 reasoner, superseded"
+  },
+  {
+   "id": "nemotron-3.5-bolt-e4b",
+   "tier": null,
+   "order": null,
+   "context": 65536,
+   "tools": true,
+   "reasoning": true,
+   "size": "8B / 4B effective",
+   "strength": "one tool call per turn",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "nvidia/nemotron-3.5-bolt-e4b",
+     "free": "yes"
+    }
+   ],
+   "unrouted": "one tool call per turn"
+  },
+  {
+   "id": "diffusiongemma-26b-a4b",
+   "tier": null,
+   "order": null,
+   "context": 262144,
+   "tools": true,
+   "vision": true,
+   "reasoning": true,
+   "size": "25.2B / 3.8B active",
+   "strength": "text-diffusion, very fast; LiveCodeBench v6 69.1",
+   "served_by": [
+    {
+     "provider": "nvidia",
+     "provider_model_id": "google/diffusiongemma-26b-a4b-it",
+     "free": "yes"
+    }
+   ],
+   "unrouted": "text-diffusion, very fast; LiveCodeBench v6 69.1"
+  },
+  {
+   "id": "ministral-3b",
+   "tier": null,
+   "order": null,
+   "context": 131072,
+   "tools": true,
+   "vision": true,
+   "size": "3B",
+   "strength": "too small for Team's prompts",
+   "served_by": [
+    {
+     "provider": "mistral",
+     "provider_model_id": "ministral-3b-latest",
+     "free": "allowance"
+    }
+   ],
+   "unrouted": "too small for Team's prompts"
+  },
+  {
+   "id": "command-a-reasoning",
+   "tier": null,
+   "order": null,
+   "context": 256000,
+   "max_output": 32000,
+   "tools": true,
+   "reasoning": true,
+   "size": "111B",
+   "strength": "agent reasoning; Cohere calls are capped at 1,000/month",
+   "served_by": [
+    {
+     "provider": "cohere",
+     "provider_model_id": "command-a-reasoning-08-2025",
+     "free": "allowance"
+    }
+   ],
+   "unrouted": "agent reasoning; Cohere calls are capped at 1,000/month"
+  },
+  {
+   "id": "command-a",
+   "tier": null,
+   "order": null,
+   "context": 256000,
+   "max_output": 8000,
+   "tools": true,
+   "strength": "weak at coding",
+   "served_by": [
+    {
+     "provider": "cohere",
+     "provider_model_id": "command-a-03-2025",
+     "free": "allowance"
+    }
+   ],
+   "unrouted": "weak at coding"
+  }
+ ],
+ "excluded": {
+  "not free": "gemini-4-argon, gemini-3.1-pro-preview(-customtools); every Z.ai model except glm-4.7-flash and glm-4.5-flash; DashScope glm-5.3-prime, glm-5.2-fast-preview, kimi-k3, kimi-k2.7-code; all non-':free' OpenRouter models",
+  "free status unknown": "gemini-*-latest aliases, gemini-3.5-flash and 3.7-flash (dated, routed to 3.6/3.8), gemini-3.1-flash-lite-preview; mistral codestral-latest; groq allam-2-7b; nvidia stepfun-ai/step-5-preview, gemma-3-*",
+  "dashscope (blocked)": "qwen3.8-max, qwen3.8-2.4t-a95b, qwen3.8-flash, qwen3.8-27b, qwen3.7-max/plus/flash, qwen3.6-plus/flash/27b/35b-a3b, qwen3.5-*, deepseek-v4-pro, deepseek-v4.1-flash, glm-5.3, glm-5.2, glm-5.1 all have 1M free tokens for 90 days; usable once 'Free Quota Only' is on"
+ }
+}
