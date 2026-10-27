@@ -7,7 +7,7 @@
       "panes": [
         {"label": "Team", "cwd": "", "claude": true},
         {"label": "boss", "cwd": "", "command": "team/bin/team-hermes -p boss"},
-        {"label": "dashboard", "cwd": "", "command": "open http://127.0.0.1:9119/team"},
+        {"label": "dashboard", "cwd": "", "web": "http://127.0.0.1:9119/kanban"},
         {"label": "shell", "cwd": ""}
       ]
     }
