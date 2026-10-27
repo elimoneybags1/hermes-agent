@@ -1,0 +1,24 @@
+name = "implement"
+title = "Implement"
+does = "Builds one task on its own branch: only the files it owns, until the check passes, then commits."
+graded_by = "The target's check passes in the worktree after main is merged in; only owned files changed; the work is committed."
+status = "active"
+hands_to = "review"
+tools = ["terminal", "file", "todo", "skills", "kanban"]
+
+[runs_on]
+harness = "hermes"
+
+[escalation]
+harness = "claude"
+after_failures = 2
+
+[budget]
+max_turns = 40
+run_budget_s = 900
+
+[models]
+# Specs the catalog must resolve: tier-<t> lets LiteLLM pick inside the tier,
+# <provider>:<id> pins one catalog model. Attempt n uses candidate n.
+candidates = ["tier-medium", "tier-complex"]
+pinned = ""
