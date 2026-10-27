@@ -248,8 +248,11 @@ keyed by target, so the loop tunes each target separately.
   set. The closest existing version of Team's loop; swap its PR step for
   Team's commit-against-base-rate gate.
 - **GEPA** `optimize_anything`: the propose step, reflection on a free model.
-- **brain's `llm.py`**: the proven free-only policy, ranked routing by
-  quota/speed/latency, cooldowns, usage ledger. Copy it.
+- **The free gate is Team's own**, written fresh: a catalog of allowed
+  models with the reason each is free, a generator that writes the gateway
+  routing from that catalog and refuses anything else, and a Hermes hook
+  that blocks any request for a model not in it. Not copied from any other
+  project.
 - Ideas, not code: TensorZero's function / variant / feedback model for
   choosing models per stage; mini-swe-agent as a bash-only baseline worker
   for free models weak at tool calling; Agentless's "sample N patches, keep
