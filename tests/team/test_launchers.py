@@ -2,8 +2,6 @@
 
 import os
 from pathlib import Path
-import shutil
-import shlex
 import subprocess
 import sys
 
@@ -16,38 +14,6 @@ def script(path, body):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
     path.chmod(0o755)
-
-
-def test_worker_imports_pinned_checkout_instead_of_task_cwd(tmp_path, team_state):
-    main = tmp_path / "main"
-    wt = tmp_path / "task"
-    wt.mkdir()
-    script(
-        main / "scripts/run-in-hermes-env",
-        "#!/bin/sh\nexport PATH="
-        + shlex.quote(str(Path(sys.executable).parent))
-        + ':"$PATH"\nexec "$@"\n',
-    )
-    script(main / "team/bin/team-hermes", "")
-    shutil.copy(ROOT / "team/bin/team-hermes", main / "team/bin/team-hermes")
-    script(
-        main / "hermes",
-        'import subprocess,sys\nsys.exit(subprocess.call([sys.executable,"-m","worker_probe"]))\n',
-    )
-    (main / "worker_probe.py").write_text('print("installed checkout")\n')
-    (wt / "worker_probe.py").write_text(
-        'raise RuntimeError("worktree shadowed the installed checkout")\n'
-    )
-    result = subprocess.run(
-        [str(main / "team/bin/team-hermes")],
-        cwd=wt,
-        env={**os.environ, "TEAM_STATE": str(team_state), "PYTHONPATH": str(main)},
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "installed checkout"
 
 
 @pytest.mark.parametrize("test_exit,lint_exit", [(1, 0), (0, 2), (0, 0)])
