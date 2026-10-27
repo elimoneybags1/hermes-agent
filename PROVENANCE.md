@@ -12,7 +12,7 @@ here with file and line.
 | NousResearch/hermes-agent | repo root | `git merge --allow-unrelated-histories upstream/main` on 2026-10-27, merge commit `8ee29e6d` | `e5ea5fd9` (upstream main, 2026-10-26) | `git fetch upstream main && git merge upstream/main` |
 | NousResearch/hermes-agent-self-evolution | `self-evolution/` | `git subtree add --squash`, 2026-10-27 | `0a929e3a` (main) | `git subtree pull --prefix=self-evolution <url> main --squash` |
 | Portkey-AI/gateway | `portkey/` | `git subtree add` (full history) on 2026-10-27, commit `f2cfba42` | `v1.15.2` = `ca771294` (2026-01-12) | `git subtree pull --prefix=portkey https://github.com/Portkey-AI/gateway.git <tag>` (the two `[team]` patches below merge forward) |
-| BerriAI/litellm | `litellm/` | `git subtree add --squash`, by the gateway session | `v1.106.4` | `git subtree pull --prefix=litellm <url> <tag> --squash` |
+| BerriAI/litellm | `litellm/` | `git subtree add --squash` on 2026-10-27, commit `0c3f0dc4` (squash `68eb04f3`); fetched through a depth-1 clone because GitHub served the tag's full-history pack at ~50 KB/s, so `.git/shallow` lists `ea7ca16d` (the squash has no parent link to it; harmless). 13 files then renormalized to LF by the root `.gitattributes`, commit `51200db6` | `v1.106.4` = `ea7ca16d` (2026-10-25) | `git subtree pull --prefix=litellm https://github.com/BerriAI/litellm.git <tag> --squash` |
 
 Remotes: `upstream` = `https://github.com/NousResearch/hermes-agent.git`. No
 `origin` is set; pushing is only ever on Eli's say-so, and the intended target
