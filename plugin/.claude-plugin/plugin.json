@@ -1,5 +1,0 @@
-{
-  "name": "team",
-  "version": "0.1.0",
-  "description": "Team's boss agent: the foreman Eli talks to, which runs free-model workers and lands what passes."
-}

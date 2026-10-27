@@ -1,3 +1,0 @@
-[submodule "vendor/hermes-agent"]
-	path = vendor/hermes-agent
-	url = https://github.com/elimoneybags1/hermes-agent.git
