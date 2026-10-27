@@ -432,7 +432,7 @@ fn litellm_config(catalog: &Map<String, Value>, models: &[Routed]) -> Value {
             "telemetry": false,
             "callbacks": ["forward_headers.forward", "session_pin.pin", "usage_log.logger"],
         },
-        "general_settings": {"master_key": "os.environ/LITELLM_MASTER_KEY"},
+        "general_settings": {"master_key": "os.environ/LITELLM_MASTER_KEY", "disable_model_info_refresh": true},
     })
 }
 

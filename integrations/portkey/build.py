@@ -288,7 +288,12 @@ def litellm_config(catalog: dict, models: list[dict]) -> dict:
             "telemetry": False,
             "callbacks": ["forward_headers.forward", "session_pin.pin", "usage_log.logger"],
         },
-        "general_settings": {"master_key": "os.environ/LITELLM_MASTER_KEY"},
+        "general_settings": {
+            "master_key": "os.environ/LITELLM_MASTER_KEY",
+            # Otherwise the proxy sweeps every deployment's /v1/models on start and on a timer,
+            # which Portkey forwards to every provider (109 such calls on 2026-10-27 before this).
+            "disable_model_info_refresh": True,
+        },
     }
 
 
