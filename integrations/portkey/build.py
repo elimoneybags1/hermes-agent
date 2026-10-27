@@ -18,7 +18,7 @@ Stale team-*.json files in configs/ are removed on build and count as drift on -
 No PyYAML: the YAML is written by the small emitter below so a port (the Rust one) can
 match it byte for byte. Standard library only.
 
-TEAM_STATE_DIR overrides $HOME/state/team (used by the tests).
+TEAM_STATE overrides $HOME/state/team (used by the tests).
 """
 
 from __future__ import annotations
@@ -34,8 +34,9 @@ CATALOG = HERE / "catalog.json"
 FREE = {"yes", "allowance"}
 NAME = re.compile(r"^[a-z0-9-]+$")
 MAX_CONFIG_BYTES = 12 * 1024
-# Portkey only falls over on a listed status; a target timeout is 408 (REQUEST_TIMEOUT_STATUS_CODE), so it is listed.
-ON_STATUS = [408, 429, 500, 502, 503, 504, 529]
+# Portkey only falls over on a listed status. A dead or revoked key is 401/403, an exhausted trial is 402,
+# a model the provider no longer serves is 404, a target timeout is 408: every one means 'try the next provider'.
+ON_STATUS = [401, 402, 403, 404, 408, 429, 500, 502, 503, 504, 529]
 # One in-target retry only for transient server errors; 408 and 429 go straight to the next provider.
 RETRY_STATUS = [500, 502, 503, 504]
 DEFAULT_TIMEOUT_MS = 60000
@@ -53,7 +54,7 @@ def refuse(msg: str) -> None:
 
 
 def state_dir() -> Path:
-    return Path(os.environ.get("TEAM_STATE_DIR") or Path.home() / "state" / "team")
+    return Path(os.environ.get("TEAM_STATE") or Path.home() / "state" / "team")
 
 
 def read_env(path: Path) -> dict[str, str]:

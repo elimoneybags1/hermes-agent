@@ -17,7 +17,7 @@ from pathlib import Path
 
 from litellm.integrations.custom_logger import CustomLogger
 
-DB = Path(os.environ.get("TEAM_STATE_DIR") or Path.home() / "state" / "team") / "litellm" / "usage.db"
+DB = Path(os.environ.get("TEAM_STATE") or Path.home() / "state" / "team") / "litellm" / "usage.db"
 log = logging.getLogger("team.usage_log")
 
 SCHEMA = """
