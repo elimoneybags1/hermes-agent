@@ -56,20 +56,21 @@ def row(kwargs: dict, ok: bool) -> dict:
     group = meta.get("deployment_model_name") or slo.get("model_group") or ""
     tier = group.removeprefix("tier-") if group.startswith("tier-") else None
     err = slo.get("error_information") or {}
+    deployment = slo.get("model_id") or ""
     error = None if ok else (err.get("error_message") or slo.get("error_str") or "")[:500]
     limited = not ok and (
         str(err.get("error_code")) == "429"
         or err.get("error_class") == "RateLimitError"
         or "rate limit" in (error or "").lower()
     )
-    headers = (kwargs.get("extra_headers") or lp.get("extra_headers") or {})
     return {
         "ts": datetime.now(UTC).isoformat(timespec="seconds"),
         "session": meta.get("session_id") or slo.get("session_id") or slo.get("trace_id"),
         "group": group,
         "tier": tier,
-        "deployment": slo.get("model_id") or "",
-        "config": headers.get("x-portkey-config"),
+        "deployment": deployment,
+        # build.py names the Portkey config after the deployment slug: <slug> or tier-<t>/<slug>.
+        "config": f"team-model-{deployment.rsplit('/', 1)[-1]}" if deployment else None,
         "model": slo.get("model"),
         "tokens_in": slo.get("prompt_tokens"),
         "tokens_out": slo.get("completion_tokens"),

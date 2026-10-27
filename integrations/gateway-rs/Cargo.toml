@@ -1,0 +1,13 @@
+[package]
+name = "gateway-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Team's connection layer between LiteLLM and Portkey: catalog generator, config-by-name resolver, request log, trace join, status"
+publish = false
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
