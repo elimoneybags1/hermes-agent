@@ -8,6 +8,7 @@
 # in Portkey's state. The environment itself is provisioned and synced by
 # upstream's PM through scripts/run-in-hermes-env (pinned uv, pinned Python).
 set -eu
+ENTRY="$(basename "$0")"
 SELF="$0"
 while [ -L "$SELF" ]; do
     _target="$(readlink "$SELF")"
@@ -34,4 +35,7 @@ unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
       CEREBRAS_API_KEY ZAI_API_KEY MINIMAX_API_KEY DASHSCOPE_API_KEY \
       NOUS_API_KEY 2>/dev/null || true
 
+if [ "$ENTRY" = team ]; then
+    exec "$REPO/scripts/run-in-hermes-env" python3 -P -m team "$@"
+fi
 exec "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" "$@"

@@ -694,8 +694,15 @@ class Loop:
             return
         try:
             task = kanban.show(goal["target"], goal["current_task"], runner=self.runner)
-            if task.get("status") in {"done", "cancelled"}:
+            if task.get("status") in {"done", "archived", "blocked"}:
                 return
+            if task.get("status") == "review":
+                kanban.reopen_review(
+                    goal["target"],
+                    goal["current_task"],
+                    reason=reason,
+                    runner=self.runner,
+                )
             kanban.block(
                 goal["target"], goal["current_task"], reason, runner=self.runner
             )

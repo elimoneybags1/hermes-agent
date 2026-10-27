@@ -107,6 +107,10 @@ class FakeHermes:
             self.comments[rest[0]].append(rest[1])
             return self._ok(args)
         if verb == "block":
+            if self.tasks[rest[0]]["status"] not in {"ready", "running"}:
+                return subprocess.CompletedProcess(
+                    args, 1, stdout="", stderr="cannot block"
+                )
             self.tasks[rest[0]]["status"] = "blocked"
             self.events[rest[0]].append(
                 {"kind": "blocked", "payload": {"reason": rest[1]}}
@@ -559,7 +563,8 @@ def test_quota_reset_parsing():
     assert run.quota_reset("free-models-per-day", 86400 * 3 + 5) == 86400 * 4
 
 
-def test_block_leaves_completed_task_done(world):
+@pytest.mark.parametrize("status", ["done", "archived", "blocked"])
+def test_block_leaves_completed_task_done(world, status):
     goal = run.start_goal(
         world["root"],
         world["conn"],
@@ -568,6 +573,6 @@ def test_block_leaves_completed_task_done(world):
         runner=world["hermes"],
         cat=CATALOG,
     )
-    world["hermes"].tasks[goal["current_task"]]["status"] = "done"
+    world["hermes"].tasks[goal["current_task"]]["status"] = status
     world["loop"]._block(goal, "landing needs attention")
-    assert world["hermes"].tasks[goal["current_task"]]["status"] == "done"
+    assert world["hermes"].tasks[goal["current_task"]]["status"] == status
