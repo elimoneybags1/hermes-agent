@@ -1,0 +1,8 @@
+name: team
+version: "0.1.0"
+description: "Team's layer inside Hermes: records every model call a profile makes into Team's ledger ($TEAM_STATE/team.db) and marks anything that reached a non-catalog model or an off-gateway URL as a violation, so `team run` can block the task. Opt-in per profile through plugins.enabled; every Team profile enables it."
+author: "Team"
+kind: standalone
+provides_hooks:
+  - post_api_request
+  - api_request_error
