@@ -111,9 +111,24 @@ def _result(ok: bool, result: Any, duration_ms: int, **more: Any) -> dict[str, A
         "duration_ms": duration_ms,
         "usage": None,
         "structured": None,
+        "api_error": None,
+        "api_error_status": None,
     }
     out.update(more)
     return out
+
+
+USAGE_LIMIT = "usage_limit_reached"
+
+
+def usage_limited(result: dict[str, Any]) -> bool:
+    """True when Claude refused because Eli's subscription limit is reached (HTTP 429)."""
+    return (
+        result.get("api_error") == USAGE_LIMIT
+        or result.get("api_error_status") == 429
+        or "usage limit" in str(result.get("result") or "").lower()
+        or "session limit" in str(result.get("result") or "").lower()
+    )
 
 
 def run(
@@ -202,5 +217,7 @@ def run(
         session_id=data.get("session_id"),
         num_turns=data.get("num_turns"),
         usage=data.get("usage"),
+        api_error=data.get("api_error"),
+        api_error_status=data.get("api_error_status"),
         structured=data.get("structured_output"),
     )
