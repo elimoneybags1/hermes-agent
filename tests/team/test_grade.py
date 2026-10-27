@@ -127,8 +127,10 @@ def test_land_success_and_refusals(repo, team_state):
     assert len(git(repo, "rev-list", "--parents", "-1", "HEAD").stdout.split()) == 3
 
     (repo / "README.md").write_text("dirty\n")
-    with pytest.raises(grade.GradeError, match="uncommitted"):
+    git(repo, "add", "README.md")
+    with pytest.raises(grade.GradeError, match="staged"):
         grade.land(repo, branch, "again")
+    git(repo, "reset", "HEAD", "README.md")
     git(repo, "checkout", "-q", "--", "README.md")
 
     git(repo, "checkout", "-q", "-b", "elsewhere")
@@ -177,3 +179,20 @@ def test_commit_paths_only_commits_named_paths(repo):
     assert sha == grade.head(repo)
     assert git(repo, "show", "--stat", "--format=", "HEAD").stdout.count("|") == 1
     assert "README.md" in git(repo, "status", "--porcelain").stdout
+
+
+def test_land_preserves_unrelated_edits_and_refuses_overwriting(repo, team_state):
+    path, branch = grade.create_worktree(repo, "team", "shared")
+    commit_in(path, "a.py", "x = 2\n")
+    (repo / "README.md").write_text("another session\n")
+    (repo / "notes.txt").write_text("untracked\n")
+    (repo / "a.py").write_text("in progress\n")
+    with pytest.raises(grade.GradeError):
+        grade.land(repo, branch, "must refuse overlapping edits")
+    assert (repo / "a.py").read_text() == "in progress\n"
+    git(repo, "restore", "a.py")
+    grade.land(repo, branch, "land with unrelated edits")
+    assert (repo / "a.py").read_text() == "x = 2\n"
+    assert (repo / "README.md").read_text() == "another session\n"
+    assert (repo / "notes.txt").read_text() == "untracked\n"
+    assert git(repo, "show", "HEAD:README.md").stdout == "# Test\n"

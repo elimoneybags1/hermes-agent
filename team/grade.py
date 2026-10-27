@@ -2,7 +2,7 @@
 
 "Done" is decided here, never by a model: the target's check runs in the
 worktree against current ``base`` and its exit code is the verdict. Landing is
-a ``--no-ff`` merge that refuses a dirty tree, a wrong checked-out branch, or
+a ``--no-ff`` merge that refuses staged changes, a wrong checked-out branch, or
 a conflict.
 
 Every subprocess goes through an injectable ``runner`` (default
@@ -225,18 +225,30 @@ def land(
 ) -> str:
     """Merge ``branch`` into ``base`` with ``--no-ff``; returns the merge sha.
 
-    Refuses when the repo has uncommitted tracked changes, when ``base`` is
+    Refuses staged changes (which could enter the merge commit), when ``base`` is
     not the checked-out branch, or when the merge conflicts (aborted cleanly).
     """
     repo = Path(repo)
-    if not is_clean(repo, runner):
-        raise GradeError("repository has uncommitted changes")
+    if _must(
+        _git(repo, "diff", "--cached", "--name-only", runner=runner), "git diff failed"
+    ):
+        raise GradeError("repository has staged changes")
     current = _must(
         _git(repo, "branch", "--show-current", runner=runner), "git branch failed"
     )
     if current != base:
         raise GradeError(f"checked-out branch is {current!r}, not {base!r}")
-    result = _git(repo, "merge", "--no-ff", "-m", message, branch, runner=runner)
+    result = _git(
+        repo,
+        "-c",
+        "merge.autostash=false",
+        "merge",
+        "--no-ff",
+        "-m",
+        message,
+        branch,
+        runner=runner,
+    )
     if result.returncode != 0:
         _git(repo, "merge", "--abort", runner=runner)
         raise GradeError(f"merge conflict: {(result.stderr or result.stdout).strip()}")

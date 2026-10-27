@@ -692,6 +692,9 @@ class Loop:
         if not goal.get("current_task"):
             return
         try:
+            task = kanban.show(goal["target"], goal["current_task"], runner=self.runner)
+            if task.get("status") in {"done", "cancelled"}:
+                return
             kanban.block(
                 goal["target"], goal["current_task"], reason, runner=self.runner
             )

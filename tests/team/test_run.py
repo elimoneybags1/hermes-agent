@@ -552,3 +552,17 @@ def test_quota_reset_parsing():
         == 1700000000.0
     )
     assert run.quota_reset("free-models-per-day", 86400 * 3 + 5) == 86400 * 4
+
+
+def test_block_leaves_completed_task_done(world):
+    goal = run.start_goal(
+        world["root"],
+        world["conn"],
+        "team",
+        "finish",
+        runner=world["hermes"],
+        cat=CATALOG,
+    )
+    world["hermes"].tasks[goal["current_task"]]["status"] = "done"
+    world["loop"]._block(goal, "landing needs attention")
+    assert world["hermes"].tasks[goal["current_task"]]["status"] == "done"
