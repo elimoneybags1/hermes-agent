@@ -20,7 +20,7 @@ Verified facts this plan rests on (dated 2026-10-27):
 - **LiteLLM proxy**: `model_list[].litellm_params` supports `model: openai/<id>`, `api_base`, `api_key`, `extra_headers: {...}`, and `os.environ/<VAR>` for any value. The archived `litellm/config.yaml` (59 free models across 8 providers, four `tier-*` groups, `session_pin`, `usage_log`, `spend_guard` callbacks) is the starting point.
 - **Machine**: uv 0.12.5, Node 26.7, npm 11.19 (inside Hermes's engine ranges), Python 3.11.16 via uv, `claude auth status` = claude.ai first-party, Docker running, `gh` logged in, ports 4000/8787/9119 free, no Team processes left, LiteLLM still installed at `~/.local/bin/litellm` (will be replaced by the from-source run).
 
-Paths Team owns in the new tree: `team/`, `plugins/team/`, `integrations/`, `tests/team/`, the subtrees `gateway/`, `litellm/`, `self-evolution/` (updated only by `git subtree pull`), `PROVENANCE.md`, `CLAUDE.md`, `.work.json`, `IDEAS.md`, `FRESH-START.md`, `PLAN.md`, plus three lines in `pyproject.toml` and a `# Team` block in `.gitignore`. Upstream files are never edited in place; a subtree is a vendor copy, and any patch to one is a marked, minimal commit recorded in `PROVENANCE.md`.
+Paths Team owns in the new tree: `team/`, `plugins/team/`, `integrations/`, `tests/team/`, the subtrees `portkey/`, `litellm/`, `self-evolution/` (updated only by `git subtree pull`), `PROVENANCE.md`, `CLAUDE.md`, `.work.json`, `IDEAS.md`, `FRESH-START.md`, `PLAN.md`, plus three lines in `pyproject.toml` and a `# Team` block in `.gitignore`. Upstream files are never edited in place; a subtree is a vendor copy, and any patch to one is a marked, minimal commit recorded in `PROVENANCE.md`.
 
 ---
 
@@ -70,14 +70,14 @@ All from `~/work/Team` with `git -C`.
 
 1. `mv ~/state/team ~/state/team-old`; `git worktree prune`.
 2. Sweep: `git submodule deinit -f vendor/hermes-agent`; `git rm -r -q .`; `git checkout HEAD -- IDEAS.md FRESH-START.md PLAN.md`; `rm -rf .git/modules/vendor .venv .pytest_cache`; commit "Sweep for the fresh start; the old tree is tag before-fresh-start". Evidence: `git ls-files` prints three paths.
-3. `git remote add upstream https://github.com/NousResearch/hermes-agent.git`; `git fetch upstream main`; record the sha (expected `e5f2b15`).
+3. `git remote add upstream https://github.com/NousResearch/hermes-agent.git`; `git fetch upstream main`; record the sha. **Done 2026-10-27: `e5ea5fd9`, merged as `8ee29e6d`; 21,450 files; no filename clashes with Team's files.**
 4. `git merge --allow-unrelated-histories --no-edit upstream/main` (upstream has `AGENTS.md`, not `CLAUDE.md`; no conflicts expected).
 5. Subtrees, each pinned and squashed, each verified with `git ls-remote` first:
-   - `git subtree add --prefix=gateway https://github.com/Portkey-AI/gateway.git v1.15.2 --squash`
-   - `git subtree add --prefix=litellm https://github.com/BerriAI/litellm.git <latest stable tag, recorded> --squash`
+   - `git subtree add --prefix=portkey https://github.com/Portkey-AI/gateway.git v1.15.2` (full history, no squash: this subtree gets patched). The prefix is `portkey/` because Hermes already owns a top-level `gateway/` (its messaging gateway).
+   - `git subtree add --prefix=litellm https://github.com/BerriAI/litellm.git v1.106.4 --squash` (latest stable on 2026-10-25)
    - `git subtree add --prefix=self-evolution https://github.com/NousResearch/hermes-agent-self-evolution.git main --squash`
 6. `PROVENANCE.md`: every upstream, its URL, pinned ref and sha, the date, the update command (`git fetch upstream && git merge upstream/main`; `git subtree pull --prefix=<dir> <url> <ref> --squash`), the ownership rule, and the `before-fresh-start` tag sha.
-7. `CLAUDE.md` (Team-owned), `.work.json`, `# Team` block in `.gitignore` (`*.db`, `*.db-wal`, `*.db-shm`, `gateway/build/`, `gateway/node_modules/`, `litellm/.venv/`, `plugins/team/dashboard/node_modules/`, `/self-evolution/.venv/`). Do not touch `AGENTS.md`.
+7. `CLAUDE.md` (Team-owned), `.work.json`, `# Team` block in `.gitignore` (`*.db`, `*.db-wal`, `*.db-shm`, `portkey/build/`, `portkey/node_modules/`, `litellm/.venv/`, `plugins/team/dashboard/node_modules/`, `/self-evolution/.venv/`). Do not touch `AGENTS.md`.
 8. Re-grep at e5f2b15 before writing Team code, line numbers into `PROVENANCE.md`: `[tool.setuptools.packages.find] include`; `plugins.enabled` gating in `hermes_cli/plugins.py`; `VALID_HOOKS`; `kanban create --model/--provider`; `platform_toolsets`; `_discover_dashboard_plugins` and manifest keys in `hermes_cli/web_server.py`; `extra_headers` and `${VAR}` expansion in `hermes_cli/config.py`, `agent/agent_init.py`, `agent/auxiliary_client.py`.
 9. Commit "Merge hermes-agent <sha> at the root; subtrees gateway, litellm, self-evolution; provenance".
 
@@ -95,6 +95,8 @@ All from `~/work/Team` with `git -C`.
 
 This is the first thing that runs. Nothing here needs Hermes.
 
+> **Handed off (Eli, 2026-10-27).** This phase is being built in a separate Claude Code session, briefed by `HANDOFF-GATEWAY.md`. Eli's words: the connection between LiteLLM and Portkey "will be dope", meaning it is the strong, tuned heart of model routing for everything on this machine, not a thin forward. Once it is proven by the acceptance list below, the Team-owned connection layer (the catalog generator, the config-by-name resolver, the request log, the trace join, the status checks) is to be **rewritten in Rust** as one binary with the same catalog in and the same files out, so the same acceptance list passes against it. The gateway session owns `portkey/`, `litellm/`, `integrations/portkey/`, `integrations/litellm/`, `tests/team/test_portkey_build.py` and `$HOME/state/team/{portkey,litellm}`; this session owns everything else and will not touch those paths. Both work on `main` in this working tree and commit only their own paths.
+
 **Layout**
 ```
 integrations/portkey/   catalog.json  build.py  run.sh  install-launchd.sh  status.sh  README.md
@@ -102,12 +104,12 @@ integrations/litellm/   run.sh  install-launchd.sh  usage_log.py  session_pin.py
 ```
 State, outside the repo: `$HOME/state/team/portkey/{.env, configs/, conf.json, requests.jsonl, gateway.log, spend.json}` and `$HOME/state/team/litellm/{.env, config.yaml, usage.db, proxy.log}`. The two `.env` files are the only hand-written secrets: provider keys in Portkey's, the master key in LiteLLM's. Generated files are mode 600.
 
-**The two gateway patches** (in the `gateway/` subtree, each one commit marked `[team]` and listed in `PROVENANCE.md` with the upstream file and line; re-applied by `git subtree pull` merges):
-1. **Config by name.** In `gateway/src/handlers/handlerUtils.ts` where `x-portkey-config` is parsed: if the header value is not JSON and matches `^[a-z0-9-]+$`, read `$PORTKEY_CONFIG_DIR/<name>.json` (cached, re-read on mtime change) and use it as the config; unknown name → 400. Callers never carry keys.
+**The two gateway patches** (in the `portkey/` subtree, each one commit marked `[team]` and listed in `PROVENANCE.md` with the upstream file and line; re-applied by `git subtree pull` merges):
+1. **Config by name.** In `portkey/src/handlers/handlerUtils.ts` where `x-portkey-config` is parsed: if the header value is not JSON and matches `^[a-z0-9-]+$`, read `$PORTKEY_CONFIG_DIR/<name>.json` (cached, re-read on mtime change) and use it as the config; unknown name → 400. Callers never carry keys.
 2. **Durable request log.** After each request completes, append one JSON line to `$PORTKEY_REQUEST_LOG` (time, config name, provider, model requested, model that answered, status, prompt and completion tokens, latency ms, `x-portkey-trace-id`, `x-portkey-metadata`). No prompt text.
 Both are a few dozen lines, each with a jest test in the subtree's own suite.
 
-**`catalog.json` (the one hand-edited source of truth)**: `gateway {port 8787}`, `litellm {port 4000}`, `blocked_providers {anthropic, minimax, dashscope: reason}`, `providers {openrouter {portkey: openrouter, key_env OPENROUTER_API_KEY, free_basis, limits}, nvidia {portkey: openai, custom_host https://integrate.api.nvidia.com/v1, key_env NVIDIA_API_KEY}, groq, gemini, mistral, cohere, cerebras, zai}`, `tiers [simple, medium, complex, reasoning]`, `models [{id, tier, order, context, max_input, tools, reasoning, unavailable, served_by: [{provider, provider_model_id, free yes|allowance, why}]}]`: one catalog model can be served by several providers, in order. Seeded from `git show before-fresh-start:litellm/free-models.json` (59 entries, 8 providers). Portkey slugs are confirmed against `gateway/src/providers/<name>/` in the subtree.
+**`catalog.json` (the one hand-edited source of truth)**: `gateway {port 8787}`, `litellm {port 4000}`, `blocked_providers {anthropic, minimax, dashscope: reason}`, `providers {openrouter {portkey: openrouter, key_env OPENROUTER_API_KEY, free_basis, limits}, nvidia {portkey: openai, custom_host https://integrate.api.nvidia.com/v1, key_env NVIDIA_API_KEY}, groq, gemini, mistral, cohere, cerebras, zai}`, `tiers [simple, medium, complex, reasoning]`, `models [{id, tier, order, context, max_input, tools, reasoning, unavailable, served_by: [{provider, provider_model_id, free yes|allowance, why}]}]`: one catalog model can be served by several providers, in order. Seeded from `git show before-fresh-start:litellm/free-models.json` (59 entries, 8 providers). Portkey slugs are confirmed against `portkey/src/providers/<name>/` in the subtree.
 
 **`build.py` (one catalog, four outputs; refusals ported from the archived `litellm/build.py`)**: every `served_by` entry `free ∈ {yes, allowance}`; provider known and not blocked; OpenRouter ids end in `:free`; every tier non-empty; no duplicate model ids; no config over 12 KB. Outputs:
 1. `$HOME/state/team/portkey/configs/team-model-<slug>.json`, one per catalog model: `strategy {mode fallback, on_status_codes [429, 500, 502, 503, 529]}`, one target per `served_by` provider in order with `provider`, `api_key` (resolved from Portkey's `.env` at build time), `custom_host` where needed, `override_params {model: provider_model_id}`, `retry {attempts 1}`, `request_timeout`, `cb_config`. Portkey picks the provider.
@@ -118,7 +120,7 @@ Both are a few dozen lines, each with a jest test in the subtree's own suite.
 
 **Trace join.** `session_pin.py` already keys on `x-litellm-session-id` (set by Hermes workers to the kanban task id, by the boss to its session). LiteLLM forwards it as `x-portkey-trace-id` and `x-portkey-metadata {"session": ..., "caller": "litellm"}` through `extra_headers` plus a tiny `forward_headers` callback, so `usage.db`, `requests.jsonl` and Team's `calls` table line up on one id.
 
-**Portkey process (`integrations/portkey/run.sh`)**: `set -a; . $HOME/state/team/portkey/.env; set +a`; `unset` the paid-key names; `build.py --check`; `npm --prefix gateway run build` if `gateway/build/` is older than `gateway/src/`; `PORTKEY_CONFIG_DIR=$HOME/state/team/portkey/configs PORTKEY_REQUEST_LOG=$HOME/state/team/portkey/requests.jsonl exec node gateway/build/start-server.js --port=8787` with cwd set so the console finds `conf.json` (confirm the path the built server reads). Loopback: the server has no host flag; verify what `@hono/node-server` binds by default and, if it is all interfaces, add `--host` in patch 1 or run under docker with `-p 127.0.0.1:8787:8787`; record which. `install-launchd.sh` writes `com.fullmoney.team-portkey` (KeepAlive, log at `gateway.log`, paths from `$HOME`), ported from the archived `litellm/install-launchd.sh`.
+**Portkey process (`integrations/portkey/run.sh`)**: `set -a; . $HOME/state/team/portkey/.env; set +a`; `unset` the paid-key names; `build.py --check`; `npm --prefix portkey run build` if `portkey/build/` is older than `portkey/src/`; `PORTKEY_CONFIG_DIR=$HOME/state/team/portkey/configs PORTKEY_REQUEST_LOG=$HOME/state/team/portkey/requests.jsonl exec node portkey/build/start-server.js --port=8787` with cwd set so the console finds `conf.json` (confirm the path the built server reads). Loopback: the server has no host flag; verify what `@hono/node-server` binds by default and, if it is all interfaces, add `--host` in patch 1 or run under docker with `-p 127.0.0.1:8787:8787`; record which. `install-launchd.sh` writes `com.fullmoney.team-portkey` (KeepAlive, log at `gateway.log`, paths from `$HOME`), ported from the archived `litellm/install-launchd.sh`.
 
 **LiteLLM process (`integrations/litellm/run.sh`)**: own venv `uv venv ~/state/team/litellm-venv --python 3.11` and `uv pip install -e "litellm[proxy]"` from the subtree (its pins clash with Hermes's); `set -a; . $HOME/state/team/litellm/.env; set +a`; `build.py --check`; `exec litellm --config $HOME/state/team/litellm/config.yaml --host 127.0.0.1 --port 4000` with cwd `integrations/litellm` so the callbacks import. launchd `com.fullmoney.team-litellm`. `usage_log.py` and `session_pin.py` ported from the tag.
 
@@ -130,7 +132,7 @@ Both are a few dozen lines, each with a jest test in the subtree's own suite.
 - `curl` one chat completion to LiteLLM (`model: tier-simple`, master key, `x-litellm-session-id: smoke-1`) answers; the same call appears in `usage.db`, in `requests.jsonl` with trace id `smoke-1`, and in the console at `http://127.0.0.1:8787/public/`.
 - Kill one provider key in Portkey's `.env`, rebuild: a model served by two providers still answers through the second (Portkey failover); a tier whose first model is unavailable answers with the next (LiteLLM fallback).
 - `build.py --check` passes clean and fails after a hand edit; both `run.sh` refuse to start on drift.
-- Unit tests `tests/team/test_portkey_build.py`: refuses `free: no`, a blocked provider, a non-`:free` OpenRouter id, an oversized config; the four outputs are deterministic. Gateway patch tests pass in the subtree (`npm --prefix gateway run test:gateway -- handlerUtils`).
+- Unit tests `tests/team/test_portkey_build.py`: refuses `free: no`, a blocked provider, a non-`:free` OpenRouter id, an oversized config; the four outputs are deterministic. Gateway patch tests pass in the subtree (`npm --prefix portkey run test:gateway -- handlerUtils`).
 - `grep -rl API_KEY $HOME/state/team/litellm/` returns only its `.env` (the master key); provider keys appear only under `$HOME/state/team/portkey/`.
 
 ---
@@ -217,7 +219,7 @@ Port by reading `git -C ~/work/Team show before-fresh-start:<path>`: `team/ledge
 ## Risks, in the order they bite
 
 1. Portkey from source and the two patches: where the built server reads `conf.json`, what `@hono/node-server` binds by default, the exact parse point of `x-portkey-config` in `handlerUtils.ts`, and whether inline `api_key` targets behave the same on streaming. Verified at execution with real requests; recorded in `integrations/portkey/README.md`.
-2. Provider slugs and NVIDIA via `custom_host`: confirm each against `gateway/src/providers/` in the subtree before writing `catalog.json`.
+2. Provider slugs and NVIDIA via `custom_host`: confirm each against `portkey/src/providers/` in the subtree before writing `catalog.json`.
 3. LiteLLM from source: install size and time; whether `openai/<id>` + `extra_headers` passes `x-portkey-config` and the trace headers through unchanged on streaming calls; whether a callback can set per-request forward headers. Test one streaming and one non-streaming request.
 4. Upstream drift 48c0c3a → e5f2b15 in Hermes: re-grep in Phase 1 step 8.
 5. Assumed Hermes config keys (`compression.threshold`, `agent.max_turns`, `${VAR}` expansion inside `extra_headers`, whether `model.extra_headers` reaches the auxiliary client): one-line greps, pinned by `test_profile_lock.py`.
