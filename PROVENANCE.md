@@ -11,7 +11,7 @@ here with file and line.
 |---|---|---|---|---|
 | NousResearch/hermes-agent | repo root | `git merge --allow-unrelated-histories upstream/main` on 2026-10-27, merge commit `8ee29e6d` | `e5ea5fd9` (upstream main, 2026-10-26) | `git fetch upstream main && git merge upstream/main` |
 | NousResearch/hermes-agent-self-evolution | `self-evolution/` | `git subtree add --squash`, 2026-10-27 | `0a929e3a` (main) | `git subtree pull --prefix=self-evolution <url> main --squash` |
-| Portkey-AI/gateway | `portkey/` | `git subtree add` (full history), by the gateway session | `v1.15.2` | `git subtree pull --prefix=portkey <url> <tag>` |
+| Portkey-AI/gateway | `portkey/` | `git subtree add` (full history) on 2026-10-27, commit `f2cfba42` | `v1.15.2` = `ca771294` (2026-01-12) | `git subtree pull --prefix=portkey https://github.com/Portkey-AI/gateway.git <tag>` (the two `[team]` patches below merge forward) |
 | BerriAI/litellm | `litellm/` | `git subtree add --squash`, by the gateway session | `v1.106.4` | `git subtree pull --prefix=litellm <url> <tag> --squash` |
 
 Remotes: `upstream` = `https://github.com/NousResearch/hermes-agent.git`. No
@@ -31,7 +31,22 @@ its package-data).
 
 ## Marked patches to upstream files
 
-None yet. Each entry: date, directory, file, lines, one-line reason, commit.
+Each entry: date, directory, file, lines, one-line reason, commit. Verify the
+lines with `git -C . log --oneline -- <file>` and `grep -n '\[team\]' <file>`.
+
+| Date | Dir | File | Lines | Why | Commit |
+|---|---|---|---|---|---|
+| 2026-10-27 | `portkey/` | `src/index.ts` | 38, 103-104 | import and `app.use('/v1/*', configByName)` before the first `/v1` route, so `x-portkey-config: <name>` is resolved from `$PORTKEY_CONFIG_DIR/<name>.json` before the validator and handlers see it | `a87204e7` |
+| 2026-10-27 | `portkey/` | `src/start-server.ts` | 19-21, 152, 155 | `--host=` argument passed to `serve({hostname})`; without it `@hono/node-server` listens on every interface | `a87204e7` |
+| 2026-10-27 | `portkey/` | `src/team/configByName.ts`, `src/team/configByName.test.ts` | new | the resolver and its 7 jest tests | `a87204e7` |
+| 2026-10-27 | `portkey/` | `src/middlewares/log/index.ts` | 3, 97-98 | import and one call after `next()`: append a JSON line per `/v1` request to `$PORTKEY_REQUEST_LOG` | `02cd4031` |
+| 2026-10-27 | `portkey/` | `src/team/requestLog.ts`, `src/team/requestLog.test.ts` | new | the line builder and its 3 jest tests | `02cd4031` |
+
+Run the patch tests with
+`npx --prefix portkey jest --config portkey/jest.config.js --rootDir portkey src/team`
+(`npm --prefix portkey run test:gateway` runs `jest src/`, where 8 upstream
+suites already fail at v1.15.2 for want of API keys and of ESM support in
+ts-jest; the two `src/team` suites pass).
 
 ## Facts re-checked against the merged Hermes (e5ea5fd9), 2026-10-27
 
