@@ -1,0 +1,30 @@
+#!/bin/sh
+# The check that decides "done" for the `team` target, runnable inside any
+# worktree of this repo: Team's tests and lint with the main checkout's PM
+# test interpreter. upstream's run-in-hermes-env composes its environment
+# for the repository of its *working directory*, so it must start in the
+# main checkout (a worktree must not provision its own 1 GB environment);
+# the tests then run with the worktree first on sys.path, so the worktree's
+# own `team` package is what gets tested.
+set -eu
+MAIN="${TEAM_MAIN_REPO:-$HOME/work/Team}"
+WORKTREE="$(pwd -P)"
+TEAM_STATE="${TEAM_STATE:-$HOME/state/team}"
+export TEAM_STATE
+export HERMES_HOME="$TEAM_STATE/hermes"
+export HERMES_RUNTIME_DIR="$TEAM_STATE/hermes-runtime"
+cd "$MAIN"
+exec "$MAIN/scripts/run-in-hermes-env" sh -c '
+    WT="$1"; MAIN="$2"
+    cd "$WT" || exit 1
+    PY="$__HERMES_TEST_PYTHON"
+    [ -x "$PY" ] || { echo "team-check: no PM test interpreter (run team-hermes --version in $MAIN first)" >&2; exit 2; }
+    # The worktree replaces the main checkout on PYTHONPATH; upstream modules still resolve from the venv.
+    PYTHONPATH="$WT:$(printf "%s" "$PYTHONPATH" | tr ":" "\n" | grep -v "^$MAIN$" | paste -sd: -)"
+    export PYTHONPATH
+    "$PY" -m pytest tests/team -q -p no:cacheprovider 2>&1 | tail -20
+    status=$?
+    lint="$("$(dirname "$PY")/ruff" check team plugins/team tests/team --output-format concise 2>/dev/null | grep -vE "^warning|^All checks passed" || true)"
+    [ -z "$lint" ] || printf "%s\n" "$lint"
+    [ "$status" -eq 0 ] && [ -z "$lint" ]
+' sh "$WORKTREE" "$MAIN"

@@ -122,8 +122,11 @@ def audit(cfg: dict) -> list[str]:
     for name, entry in (cfg.get("providers") or {}).items():
         if name not in ALLOWED_PROVIDERS:
             out.append(f"providers.{name} is not one of {ALLOWED_PROVIDERS}")
-        if isinstance(entry, dict) and entry.get("api_key"):
-            out.append(f"providers.{name} holds an api_key; use key_env")
+        key = entry.get("api_key") if isinstance(entry, dict) else None
+        if key and not (str(key).startswith("${") and str(key).endswith("}")):
+            out.append(
+                f"providers.{name} holds an api_key value; use ${{VAR}} or key_env"
+            )
         if isinstance(entry, dict) and not str(entry.get("base_url", "")).startswith(
             "http://127.0.0.1"
         ):
@@ -229,7 +232,37 @@ def write_root_config(root: Path) -> bool:
     cfg.setdefault("platform_toolsets", {})["cli"] = sorted(
         set(LEARNING_TOOLSETS) | {"kanban"}
     )
-    return _write(hermes_home() / "config.yaml", yaml.safe_dump(cfg))
+    changed = _write(hermes_home() / "config.yaml", yaml.safe_dump(cfg))
+    return write_env(hermes_home()) or changed
+
+
+def litellm_master_key() -> str | None:
+    """The LiteLLM master key from ``$TEAM_STATE/litellm/.env``, or None."""
+    path = state_dir() / "litellm" / ".env"
+    if not path.exists():
+        return None
+    for line in path.read_text().splitlines():
+        if line.startswith("LITELLM_MASTER_KEY="):
+            return line.split("=", 1)[1].strip().strip("'\"") or None
+    return None
+
+
+def write_env(home: Path) -> bool:
+    """A ``.env`` holding only the loopback secrets Team allows; Hermes loads it on start."""
+    key = litellm_master_key()
+    if key is None:
+        return False
+    path = home / ".env"
+    kept: list[str] = []
+    if path.exists():
+        for line in path.read_text().splitlines():
+            name = line.split("=", 1)[0]
+            if name in ALLOWED_ENV and name != "LITELLM_MASTER_KEY":
+                kept.append(line)
+    text = "\n".join([*kept, f"LITELLM_MASTER_KEY={key}"]) + "\n"
+    changed = _write(path, text)
+    path.chmod(0o600)
+    return changed
 
 
 def sync(
@@ -266,6 +299,8 @@ def sync(
     cfg = role_config(root, role, cat)
     if _write(pdir / "config.yaml", yaml.safe_dump(cfg)):
         changes.append("config.yaml")
+    if write_env(pdir):
+        changes.append(".env")
     soul = roles.soul(root, role_name)
     if soul is not None and _write(pdir / "SOUL.md", soul):
         changes.append("SOUL.md")

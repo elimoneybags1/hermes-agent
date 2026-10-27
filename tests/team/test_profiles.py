@@ -141,6 +141,28 @@ def test_sync_refuses_when_create_fails_or_role_is_bad(root, team_state):
         profiles.sync(root, "ghost", CATALOG, runner=CreatingRunner())
 
 
+def test_sync_writes_the_master_key_env(root, team_state):
+    (team_state / "litellm").mkdir()
+    (team_state / "litellm" / ".env").write_text(
+        "LITELLM_MASTER_KEY=sk-team-1\nOTHER=x\n"
+    )
+    runner = CreatingRunner()
+    changes = profiles.sync(root, "implement", CATALOG, runner=runner)
+    assert ".env" in changes
+    pdir = profiles.profile_dir("implement")
+    assert (pdir / ".env").read_text() == "LITELLM_MASTER_KEY=sk-team-1\n"
+    assert (
+        team_state / "hermes" / ".env"
+    ).read_text() == "LITELLM_MASTER_KEY=sk-team-1\n"
+    assert oct((pdir / ".env").stat().st_mode)[-3:] == "600"
+    (pdir / ".env").write_text("SUBSCRIPTION_TOKEN=tok\nLITELLM_MASTER_KEY=old\n")
+    assert ".env" in profiles.sync(root, "implement", CATALOG, runner=runner)
+    assert (
+        pdir / ".env"
+    ).read_text() == "SUBSCRIPTION_TOKEN=tok\nLITELLM_MASTER_KEY=sk-team-1\n"
+    assert profiles.audit_profiles(root) == {}
+
+
 def test_audit_profiles_reads_every_home(root, team_state):
     assert profiles.audit_profiles(root) == {"default": ["config.yaml is missing"]}
     profiles.sync(root, "implement", CATALOG, runner=CreatingRunner())

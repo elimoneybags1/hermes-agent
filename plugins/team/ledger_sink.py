@@ -22,7 +22,7 @@ if str(_REPO) not in sys.path:
 from team import catalog, ledger
 
 LOOPBACK_PREFIXES = ("http://127.0.0.1:", "http://localhost:")
-ALLOWED_PROVIDERS = ("litellm", "subscription")
+SUBSCRIPTION_PREFIX = "http://127.0.0.1:8790"
 
 
 def _int(value: Any) -> int | None:
@@ -47,15 +47,23 @@ def classify(
     response_model: str | None,
     cat: dict | None,
 ) -> tuple[str | None, str | None]:
-    """(violation kind, detail) for a call outside the catalog, or (None, None)."""
+    """(violation kind, detail) for a call outside the catalog, or (None, None).
+
+    Hermes names a custom provider ``custom``; what matters is where the call
+    went: only Team's loopback gateways may be called.
+    """
     provider = provider or ""
     base_url = base_url or ""
-    if provider not in ALLOWED_PROVIDERS or not base_url.startswith(LOOPBACK_PREFIXES):
+    if not base_url.startswith(LOOPBACK_PREFIXES):
         return (
             "off-gateway",
             f"call went to provider {provider!r} at {base_url!r}, not the loopback gateway",
         )
-    if provider == "subscription" or cat is None:
+    if (
+        base_url.startswith(SUBSCRIPTION_PREFIX)
+        or provider == "subscription"
+        or cat is None
+    ):
         return None, None
     answered = response_model or model or ""
     if answered.startswith("tier-"):
@@ -72,6 +80,17 @@ def classify(
     return "non-catalog", why
 
 
+def profile_name() -> str | None:
+    """The profile this process runs as: HERMES_PROFILE, else the HERMES_HOME profile dir."""
+    name = os.environ.get("HERMES_PROFILE")
+    if name:
+        return name
+    home = Path(os.environ.get("HERMES_HOME") or "")
+    if home.parent.name == "profiles":
+        return home.name
+    return "default" if home.name else None
+
+
 def record(**kw: Any) -> None:
     """The hook body. Takes the keyword payload Hermes passes to ``post_api_request``."""
     try:
@@ -81,7 +100,7 @@ def record(**kw: Any) -> None:
         return
     try:
         task_ref = os.environ.get("HERMES_KANBAN_TASK") or None
-        profile = os.environ.get("HERMES_PROFILE") or None
+        profile = profile_name()
         provider = kw.get("provider")
         base_url = kw.get("base_url")
         model = kw.get("model")

@@ -130,6 +130,19 @@ def test_record_writes_a_call_and_a_violation(team_state, monkeypatch):
     conn.close()
 
 
+def test_profile_name(monkeypatch, tmp_path):
+    sink = load_sink()
+    monkeypatch.delenv("HERMES_PROFILE", raising=False)
+    monkeypatch.setenv(
+        "HERMES_HOME", str(tmp_path / "hermes" / "profiles" / "implement")
+    )
+    assert sink.profile_name() == "implement"
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    assert sink.profile_name() == "default"
+    monkeypatch.setenv("HERMES_PROFILE", "boss")
+    assert sink.profile_name() == "boss"
+
+
 def test_record_never_raises(team_state, monkeypatch):
     sink = load_sink()
     monkeypatch.setattr(

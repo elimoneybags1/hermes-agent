@@ -41,7 +41,7 @@ def test_base_config_is_locked():
         lite["base_url"] == "http://127.0.0.1:4000/v1"
         and lite["key_env"] == "LITELLM_MASTER_KEY"
     )
-    assert "api_key" not in lite
+    assert lite["api_key"] == "${LITELLM_MASTER_KEY}"
     assert lite["session_affinity_header"] == "x-litellm-session-id"
     assert cfg["fallback_providers"] == []
     assert cfg["plugins"]["enabled"] == ["team"]
@@ -79,7 +79,7 @@ def test_audit_catches_every_way_out():
         "model.provider is 'auto'",
         "fallback_providers is not empty",
         "providers.openrouter is not one of",
-        "providers.openrouter holds an api_key",
+        "providers.openrouter holds an api_key value",
         "auxiliary.vision.provider is 'auto'",
         "auxiliary.free_only is not true",
         "auxiliary.background_review.enabled is not false",

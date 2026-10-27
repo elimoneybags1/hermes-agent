@@ -16,6 +16,9 @@ model:
 providers:
   litellm:
     base_url: http://127.0.0.1:4000/v1
+    # Expanded by Hermes from the environment or the profile's .env; the
+    # value itself is never written into a config file.
+    api_key: ${LITELLM_MASTER_KEY}
     key_env: LITELLM_MASTER_KEY
     api_mode: chat_completions
     model: tier-medium
