@@ -1,5 +1,6 @@
 import { Context } from 'hono';
 import { getRuntimeKey } from 'hono/adapter';
+import { teamRequestLog } from '../../team/requestLog';
 
 let logId = 0;
 const MAX_RESPONSE_LENGTH = 100000;
@@ -92,6 +93,9 @@ export const logHandler = () => {
     const start = Date.now();
 
     await next();
+
+    // [team] one JSON line per request to $PORTKEY_REQUEST_LOG, see src/team/requestLog.ts
+    teamRequestLog(c, start).catch(console.error);
 
     const runtime = getRuntimeKey();
 
