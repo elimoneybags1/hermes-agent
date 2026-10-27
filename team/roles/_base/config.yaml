@@ -1,0 +1,89 @@
+# The locked base of every Team Hermes profile. `team roles sync` writes this
+# as the root home's config.yaml and, with the role's overrides, as each
+# role profile's config.yaml. Keys are upstream Hermes's
+# (hermes_cli/config_defaults.py at the pinned commit; see PROVENANCE.md).
+#
+# Free-only, fail closed: the only provider is LiteLLM on loopback, which
+# forwards to Portkey, which holds the keys. No fallback chain, no "auto"
+# anywhere, every side task pinned to a free tier, nothing that could reach
+# a paid model from a default. Validated by tests/team/test_profile_lock.py
+# and by `team gate audit` on every tick.
+
+model:
+  provider: litellm
+  default: tier-medium
+
+providers:
+  litellm:
+    base_url: http://127.0.0.1:4000/v1
+    key_env: LITELLM_MASTER_KEY
+    api_mode: chat_completions
+    model: tier-medium
+    models: [tier-simple, tier-medium, tier-complex, tier-reasoning]
+    # LiteLLM pins one model per session and forwards this id to Portkey as
+    # the trace id, so usage.db, requests.jsonl and Team's ledger line up.
+    session_affinity_header: x-litellm-session-id
+    context_length: 131072
+
+fallback_providers: []
+
+plugins:
+  enabled: [team]
+
+agent:
+  max_turns: 40
+
+compression:
+  enabled: true
+  threshold: 0.5
+
+auxiliary:
+  free_only: true
+  vision: {provider: litellm, model: tier-simple}
+  compression: {provider: litellm, model: tier-simple}
+  skills_hub: {provider: litellm, model: tier-simple}
+  approval: {provider: litellm, model: tier-simple}
+  review: {provider: litellm, model: tier-simple}
+  mcp: {provider: litellm, model: tier-simple}
+  title_generation: {provider: litellm, model: tier-simple}
+  memory_query_rewrite: {provider: litellm, model: tier-simple}
+  tts_audio_tags: {provider: litellm, model: tier-simple}
+  voice_chat: {provider: litellm, model: tier-simple}
+  triage_specifier: {provider: litellm, model: tier-simple}
+  kanban_decomposer: {provider: litellm, model: tier-simple}
+  profile_describer: {provider: litellm, model: tier-simple}
+  goal_judge: {provider: litellm, model: tier-simple}
+  curator: {provider: litellm, model: tier-simple}
+  monitor: {provider: litellm, model: tier-simple}
+  background_review: {enabled: false, provider: litellm, model: tier-simple}
+  moa_reference: {provider: litellm, model: tier-simple}
+  moa_aggregator: {provider: litellm, model: tier-simple}
+
+curator:
+  enabled: false
+
+moa:
+  active_preset: ""
+
+delegation:
+  provider: litellm
+  model: tier-medium
+  fallback_providers: []
+
+cron:
+  model: tier-medium
+  model_provider: litellm
+
+kanban:
+  # Team's loop dispatches and grades; kanban never spawns on its own and
+  # never lets a model be the reviewer.
+  dispatch_in_gateway: false
+  review_dispatch: false
+  auto_decompose: false
+  failure_limit: 2
+  orchestrator_profile: default
+  default_assignee: implement
+  max_in_progress: 3
+
+platform_toolsets:
+  cli: [terminal, file, todo, skills, kanban]
