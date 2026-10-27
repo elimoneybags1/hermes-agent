@@ -89,6 +89,8 @@ All from `~/work/Team` with `git -C`.
 
 **Acceptance:** `git log --oneline -5` shows sweep, merge, three subtrees, provenance; `git ls-files | wc -l` ≈ the four upstreams' file counts plus Team's six files; `~/state/team-old` intact.
 
+**Done 2026-10-27** (Team side): sweep `96972d2`, Hermes merge `8ee29e6d` (upstream `e5ea5fd9`), self-evolution subtree `f3b9f39a` (`0a929e3a`), Team root files `e2b954b7`, wrapper and provenance `0f22d514`. `~/state/team-old` intact. Portkey and LiteLLM subtrees are the gateway session's. Hermes runs from the checkout through PM (`team-hermes --version`: `vgit.626d7d2`, Python 3.14.9, OpenAI SDK 2.54.0; `hermes doctor` clean except the expected missing `.env` and three upstream npm advisories). `team-hermes dashboard --no-open --port 9119` built the web UI and serves on 127.0.0.1:9119 with the kanban plugin listed. Board `team` created at `$HOME/state/team/kanban/kanban/boards/team/kanban.db` with hand task `t_79aef159`; a dispatch tick ran and skipped it as unassigned, which is correct until a locked profile exists (Phase 3).
+
 ---
 
 ## Phase 2: Portkey gateway and LiteLLM from source, the free catalog
