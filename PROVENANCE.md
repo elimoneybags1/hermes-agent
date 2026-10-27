@@ -36,6 +36,7 @@ lines with `git -C . log --oneline -- <file>` and `grep -n '\[team\]' <file>`.
 
 | Date | Dir | File | Lines | Why | Commit |
 |---|---|---|---|---|---|
+| 2026-10-27 | root | `hermes_cli/kanban_db_dispatch.py::_worker_argv` | worker argv | launch with `-P` so a task worktree cannot replace the installed Hermes tree; scoped to the worker, not inherited by owner/PM children; regression in `tests/hermes_cli/test_kanban_worker_import_root.py` | `[team] Pin kanban worker imports to the installed checkout` |
 | 2026-10-27 | `portkey/` | `src/index.ts` | 38, 103-104 | import and `app.use('/v1/*', configByName)` before the first `/v1` route, so `x-portkey-config: <name>` is resolved from `$PORTKEY_CONFIG_DIR/<name>.json` before the validator and handlers see it | `a87204e7` |
 | 2026-10-27 | `portkey/` | `src/start-server.ts` | 19-21, 152, 155 | `--host=` argument passed to `serve({hostname})`; without it `@hono/node-server` listens on every interface | `a87204e7` |
 | 2026-10-27 | `portkey/` | `src/team/configByName.ts`, `src/team/configByName.test.ts` | new | the resolver and its 7 jest tests | `a87204e7` |

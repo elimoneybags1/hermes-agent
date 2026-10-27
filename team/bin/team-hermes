@@ -34,6 +34,4 @@ unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
       CEREBRAS_API_KEY ZAI_API_KEY MINIMAX_API_KEY DASHSCOPE_API_KEY \
       NOUS_API_KEY 2>/dev/null || true
 
-# Apply only after PM activation, whose bootstrap still needs its cwd.
-# Workers must use the pinned checkout, not import Hermes from their task worktree.
-exec "$REPO/scripts/run-in-hermes-env" env PYTHONSAFEPATH=1 python3 "$REPO/hermes" "$@"
+exec "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" "$@"

@@ -2696,9 +2696,9 @@ def _retag_legacy_worker_sessions(workspaces_root_path: str) -> None:
 
 
 def _worker_argv(task: Task, profile_arg: str, hermes_home: Optional[str]) -> list[str]:
-    """The profile owner executes; this subprocess only waits for its receipt."""
+    """Wait for the owner receipt; -P keeps task checkouts from shadowing the pinned Hermes tree."""
     import sys
-    return [sys.executable, "-m", "hermes_cli.kanban_worker_client"]
+    return [sys.executable, "-P", "-m", "hermes_cli.kanban_worker_client"]
 
 
 def _open_worker_log(task: Task, board: Optional[str]):
