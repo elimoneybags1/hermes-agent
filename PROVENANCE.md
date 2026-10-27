@@ -33,9 +33,18 @@ its package-data).
 
 None yet. Each entry: date, directory, file, lines, one-line reason, commit.
 
-## Facts re-checked against the merged Hermes (e5ea5fd9)
+## Facts re-checked against the merged Hermes (e5ea5fd9), 2026-10-27
 
-Filled in as Phase 1 step 8 of `PLAN.md` runs: packages include list,
-`plugins.enabled` gating, `VALID_HOOKS`, `kanban create --model/--provider`,
-`platform_toolsets`, dashboard plugin discovery and manifest keys,
-`extra_headers` and `${VAR}` expansion.
+| Fact | Where now |
+|---|---|
+| Install and run from a checkout go through upstream's package manager: `scripts/run-in-hermes-env CMD` (or `source ./activate`), which runs `setup-hermes.sh --runtime-only`, provisions a pinned Python 3.14, uv, node and tools into `$HERMES_RUNTIME_DIR`, and builds the dependency venv under `$HERMES_HOME/installs/<hash>/environments/<hash>/venv`. The command is `python3 ./hermes`; `PYTHONPATH` is the checkout plus that venv. Raw pip/uv into that environment is forbidden by `pm/AGENTS.md`. | `scripts/_activation.sh`, `setup-hermes.sh:161`, `pm/AGENTS.md` |
+| `requires-python = ">=3.11,<3.15"` in `pyproject.toml:15`; `CONTRIBUTING.md:118` says PM provides 3.14 and it did (`python-3.14.9`). Node `>=26` (`package.json` engines). | `pyproject.toml`, `package.json` |
+| Core `dependencies` no longer carry `openai` for Python < 3.14; PM prepares extras on demand. `[all]` and the `dev` dependency group exist; `dev` is a group, not an extra. | `pyproject.toml:34-44, 506, 539-553` |
+| Packages are an explicit include list; `team` and `team.*` appended (`[team]`). | `pyproject.toml:672-699` |
+| A `standalone` plugin (the default kind) is opt-in via `plugins.enabled`, bundled or not; kinds are `standalone, backend, exclusive, platform, model-provider`. | `hermes_cli/plugins_manifest.py:27, 359-363` |
+| Hook names (`VALID_HOOKS`): `pre_tool_call`, `post_tool_call`, `transform_*`, `pre_verify`, `pre_api_request`, `post_api_request`, `api_request_error`, and the rest. `llm_request` middleware. | `hermes_cli/plugins.py:110-119`, `hermes_cli/middleware.py:21` |
+| `kanban create --model` / `--provider` (dest `model_override`, `provider_override`) still bypass the profile pin. | `hermes_cli/kanban_parser.py:199-203` |
+| `platform_toolsets` per profile. | `cli-config.yaml.example:1408-1417` |
+| Dashboard plugin discovery moved to `hermes_cli/web_server_dashboard.py` (`_discover_dashboard_plugins`). | `hermes_cli/web_server_dashboard.py:604` |
+| `extra_headers` per custom provider, `model.extra_headers` / `model.default_headers` merge, `${VAR}` and `${env:VAR}` expansion. | `hermes_cli/config.py:593-598, 880-887, 1443-1462` |
+| `compression.threshold` is a fraction of `context_length` (default 0.50), not a token count; `agent.max_turns` default 500. | `cli-config.yaml.example:654-700, 1190-1195` |

@@ -1,0 +1,37 @@
+#!/bin/sh
+# Run Hermes from this fork inside Team's isolated home.
+#
+# Everything Team runs goes through here: HERMES_HOME, the runtime/tool store
+# and the kanban home live under $TEAM_STATE (default $HOME/state/team), never
+# ~/.hermes, and every paid-provider or Anthropic variable is removed so a
+# stray key in the shell can never reach a profile. Provider keys exist only
+# in Portkey's state. The environment itself is provisioned and synced by
+# upstream's PM through scripts/run-in-hermes-env (pinned uv, pinned Python).
+set -eu
+SELF="$0"
+while [ -L "$SELF" ]; do
+    _target="$(readlink "$SELF")"
+    case "$_target" in /*) SELF="$_target" ;; *) SELF="$(dirname "$SELF")/$_target" ;; esac
+done
+REPO="$(cd "$(dirname "$SELF")/../.." && pwd)"
+TEAM_STATE="${TEAM_STATE:-$HOME/state/team}"
+export TEAM_STATE
+export HERMES_HOME="$TEAM_STATE/hermes"
+export HERMES_RUNTIME_DIR="$TEAM_STATE/hermes-runtime"
+export HERMES_KANBAN_HOME="$TEAM_STATE/kanban"
+mkdir -p "$HERMES_HOME" "$HERMES_RUNTIME_DIR" "$HERMES_KANBAN_HOME"
+
+# The LiteLLM master key is the only credential a Hermes profile may use.
+if [ -r "$TEAM_STATE/litellm/.env" ]; then
+    LITELLM_MASTER_KEY="$(sed -n 's/^LITELLM_MASTER_KEY=//p' "$TEAM_STATE/litellm/.env" | tail -1)"
+    [ -n "$LITELLM_MASTER_KEY" ] && export LITELLM_MASTER_KEY
+fi
+
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
+      CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX \
+      OPENAI_API_KEY OPENROUTER_API_KEY NVIDIA_API_KEY GROQ_API_KEY \
+      GEMINI_API_KEY GOOGLE_API_KEY MISTRAL_API_KEY COHERE_API_KEY \
+      CEREBRAS_API_KEY ZAI_API_KEY MINIMAX_API_KEY DASHSCOPE_API_KEY \
+      NOUS_API_KEY 2>/dev/null || true
+
+exec "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" "$@"
