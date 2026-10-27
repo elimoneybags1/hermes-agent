@@ -16,6 +16,9 @@ const portArg = args.find((arg) => arg.startsWith('--port='));
 const port = portArg ? parseInt(portArg.split('=')[1]) : defaultPort;
 
 const isHeadless = args.includes('--headless');
+// [team] `--host=127.0.0.1` binds loopback only; without it @hono/node-server listens on every interface.
+const hostArg = args.find((arg) => arg.startsWith('--host='));
+const host = hostArg ? hostArg.split('=')[1] : undefined;
 
 // Setup static file serving only if not in headless mode
 if (
@@ -146,9 +149,10 @@ app.get(
 const server = serve({
   fetch: app.fetch,
   port: port,
+  hostname: host,
 });
 
-const url = `http://localhost:${port}`;
+const url = `http://${host ?? 'localhost'}:${port}`;
 
 injectWebSocket(server);
 

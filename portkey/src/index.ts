@@ -35,6 +35,7 @@ import { messagesHandler } from './handlers/messagesHandler';
 import { imageEditsHandler } from './handlers/imageEditsHandler';
 import { messagesCountTokensHandler } from './handlers/messagesCountTokensHandler';
 import modelResponsesHandler from './handlers/modelResponsesHandler';
+import { configByName } from './team/configByName';
 
 // utils
 import { logger } from './apm';
@@ -98,6 +99,9 @@ app.use('*', prettyJSON());
 if (getRuntimeKey() === 'node') {
   app.use(logHandler());
 }
+
+// [team] Resolve `x-portkey-config: <name>` from $PORTKEY_CONFIG_DIR, see src/team/configByName.ts
+app.use('/v1/*', configByName);
 
 // Support the /v1/models endpoint
 app.get('/v1/models', modelsHandler);
