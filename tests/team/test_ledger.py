@@ -30,27 +30,89 @@ def test_init_creates_every_table_with_the_agreed_columns(conn):
         return [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")]
 
     assert cols("jobs") == [
-        "id", "target", "target_commit", "role", "role_version", "attempt",
-        "started", "ended", "outcome", "grader", "grader_detail", "task_ref",
-        "model_choice", "part_id",
+        "id",
+        "target",
+        "target_commit",
+        "role",
+        "role_version",
+        "attempt",
+        "started",
+        "ended",
+        "outcome",
+        "grader",
+        "grader_detail",
+        "task_ref",
+        "model_choice",
+        "part_id",
     ]
     assert cols("calls") == [
-        "id", "job_id", "task_ref", "session_id", "profile", "provider", "model",
-        "response_model", "base_url", "task_class", "tokens_in", "tokens_out",
-        "latency_ms", "ok", "error", "ts", "api_calls",
+        "id",
+        "job_id",
+        "task_ref",
+        "session_id",
+        "profile",
+        "provider",
+        "model",
+        "response_model",
+        "base_url",
+        "task_class",
+        "tokens_in",
+        "tokens_out",
+        "latency_ms",
+        "ok",
+        "error",
+        "ts",
+        "api_calls",
     ]
     assert cols("goals")[-3:] == ["part_id", "base", "needs_commits"]
     assert cols("decisions") == [
-        "id", "target", "created", "question", "context", "options", "recommendation",
-        "goal_id", "task_id", "source", "status", "answer", "answered_at",
+        "id",
+        "target",
+        "created",
+        "question",
+        "context",
+        "options",
+        "recommendation",
+        "goal_id",
+        "task_id",
+        "source",
+        "status",
+        "answer",
+        "answered_at",
     ]
-    assert cols("plans") == ["id", "target", "title", "created", "updated", "status", "path", "summary"]
+    assert cols("plans") == [
+        "id",
+        "target",
+        "title",
+        "created",
+        "updated",
+        "status",
+        "path",
+        "summary",
+    ]
     assert cols("parts") == [
-        "id", "plan_id", "target", "title", "stage", "branch", "depends_on",
-        "owned_paths", "status", "created", "finished",
+        "id",
+        "plan_id",
+        "target",
+        "title",
+        "stage",
+        "branch",
+        "depends_on",
+        "owned_paths",
+        "status",
+        "created",
+        "finished",
     ]
-    assert cols("reviews") == ["id", "target", "created", "source", "summary",
-                               "decisions_created", "actions", "drift"]
+    assert cols("reviews") == [
+        "id",
+        "target",
+        "created",
+        "source",
+        "summary",
+        "decisions_created",
+        "actions",
+        "drift",
+    ]
     assert cols("pauses") == ["id", "target", "until", "reason", "created"]
     assert cols("violations") == ["id", "ts", "target", "task_ref", "kind", "detail"]
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -63,9 +125,22 @@ def test_init_is_idempotent(conn):
 
 
 def test_job_lifecycle_with_model_choice(conn):
-    choice = {"spec": "tier-medium", "provider": "litellm", "model": "tier-medium", "why": "first candidate"}
-    job = ledger.start_job(conn, "team", "abc123", "implement", "def456", attempt=2,
-                           task_ref="t_1", model_choice=choice)
+    choice = {
+        "spec": "tier-medium",
+        "provider": "litellm",
+        "model": "tier-medium",
+        "why": "first candidate",
+    }
+    job = ledger.start_job(
+        conn,
+        "team",
+        "abc123",
+        "implement",
+        "def456",
+        attempt=2,
+        task_ref="t_1",
+        model_choice=choice,
+    )
     [row] = ledger.list_jobs(conn)
     assert row["id"] == job and row["attempt"] == 2
     assert row["model_choice"] == choice
@@ -102,10 +177,23 @@ def test_open_job_for_task(conn):
 
 
 def test_record_call_without_a_job_then_attach(conn):
-    cid = ledger.record_call(conn, None, "litellm", "tier-medium", "implement", 120, 8, 340, True,
-                             task_ref="t_1", session_id="s1", profile="implement",
-                             response_model="z-ai/glm-5.3", base_url="http://127.0.0.1:4000/v1",
-                             api_calls=1)
+    cid = ledger.record_call(
+        conn,
+        None,
+        "litellm",
+        "tier-medium",
+        "implement",
+        120,
+        8,
+        340,
+        True,
+        task_ref="t_1",
+        session_id="s1",
+        profile="implement",
+        response_model="z-ai/glm-5.3",
+        base_url="http://127.0.0.1:4000/v1",
+        api_calls=1,
+    )
     [row] = ledger.calls_for(conn, task_ref="t_1")
     assert row["id"] == cid and row["job_id"] is None
     assert row["response_model"] == "z-ai/glm-5.3" and row["profile"] == "implement"
@@ -134,18 +222,26 @@ def test_list_jobs_filters_and_orders(conn):
     c = ledger.start_job(conn, "team", "c3", "review", "v1")
     assert [j["id"] for j in ledger.list_jobs(conn)] == [c, b, a]
     assert [j["id"] for j in ledger.list_jobs(conn, target="team")] == [c, a]
-    assert [j["id"] for j in ledger.list_jobs(conn, target="team", role="implement")] == [a]
+    assert [
+        j["id"] for j in ledger.list_jobs(conn, target="team", role="implement")
+    ] == [a]
     assert [j["id"] for j in ledger.list_jobs(conn, limit=1)] == [c]
 
 
 def test_goal_lifecycle(conn):
     job = ledger.start_job(conn, "team", "c", "implement", "v", task_ref="t_1")
-    goal = ledger.create_goal(conn, "team", "do x", "implement", "team/x", "/wt/x", "pytest")
+    goal = ledger.create_goal(
+        conn, "team", "do x", "implement", "team/x", "/wt/x", "pytest"
+    )
     assert ledger.get_goal(conn, goal)["base"] == "main"
     assert ledger.get_goal(conn, goal)["needs_commits"] == 1
     ledger.update_goal(conn, goal, attempt=2, current_task="t_1", job_id=job)
     [active] = ledger.active_goals(conn, "team")
-    assert (active["attempt"], active["current_task"], active["job_id"]) == (2, "t_1", job)
+    assert (active["attempt"], active["current_task"], active["job_id"]) == (
+        2,
+        "t_1",
+        job,
+    )
     assert ledger.active_goals(conn, "other") == []
     with pytest.raises(ValueError):
         ledger.update_goal(conn, goal, branch="nope")
@@ -158,11 +254,26 @@ def test_goal_lifecycle(conn):
 
 
 def test_decisions_inbox_and_paused_goals(conn):
-    goal = ledger.create_goal(conn, "team", "do x", "implement", "team/x", "/wt/x", "pytest")
-    d = ledger.create_decision(conn, "team", "Trail by % or ATR?", "entries use ATR(14)",
-                               ["%", "ATR"], "ATR", goal_id=goal, task_id="t_1", source="boss")
+    goal = ledger.create_goal(
+        conn, "team", "do x", "implement", "team/x", "/wt/x", "pytest"
+    )
+    d = ledger.create_decision(
+        conn,
+        "team",
+        "Trail by % or ATR?",
+        "entries use ATR(14)",
+        ["%", "ATR"],
+        "ATR",
+        goal_id=goal,
+        task_id="t_1",
+        source="boss",
+    )
     [open_] = ledger.list_decisions(conn, "team")
-    assert open_["id"] == d and open_["options"] == ["%", "ATR"] and open_["status"] == "open"
+    assert (
+        open_["id"] == d
+        and open_["options"] == ["%", "ATR"]
+        and open_["status"] == "open"
+    )
     assert ledger.paused_goals(conn, "team") == {goal}
     ledger.answer_decision(conn, d, "ATR, log every adjustment")
     assert ledger.list_decisions(conn, "team") == []
@@ -172,17 +283,30 @@ def test_decisions_inbox_and_paused_goals(conn):
         ledger.dismiss_decision(conn, d)
     e = ledger.create_decision(conn, "team", "q", "c", ["a"], "a")
     ledger.dismiss_decision(conn, e)
-    assert [x["status"] for x in ledger.list_decisions(conn, status=None)] == ["answered", "dismissed"]
+    assert [x["status"] for x in ledger.list_decisions(conn, status=None)] == [
+        "answered",
+        "dismissed",
+    ]
     with pytest.raises(ValueError):
         ledger.list_decisions(conn, status="maybe")
 
 
 def test_plans_parts_and_reviews(conn):
-    plan = ledger.create_plan(conn, "team", "trailing stops", path="plan.md", summary="s")
-    part = ledger.create_part(conn, plan, "team", "ATR trail", depends_on=[], owned_paths=["a.py"])
+    plan = ledger.create_plan(
+        conn, "team", "trailing stops", path="plan.md", summary="s"
+    )
+    part = ledger.create_part(
+        conn, plan, "team", "ATR trail", depends_on=[], owned_paths=["a.py"]
+    )
     p = ledger.get_part(conn, part)
-    assert p["stage"] == "implement" and p["owned_paths"] == ["a.py"] and p["status"] == "open"
-    second = ledger.create_part(conn, plan, "team", "apply to open positions", depends_on=[part])
+    assert (
+        p["stage"] == "implement"
+        and p["owned_paths"] == ["a.py"]
+        and p["status"] == "open"
+    )
+    second = ledger.create_part(
+        conn, plan, "team", "apply to open positions", depends_on=[part]
+    )
     assert [x["id"] for x in ledger.list_parts(conn, plan_id=plan)] == [part, second]
     assert ledger.list_parts(conn, target="other") == []
     ledger.set_part_stage(conn, part, "review")
@@ -194,8 +318,18 @@ def test_plans_parts_and_reviews(conn):
     with pytest.raises(LookupError):
         ledger.set_part_stage(conn, 999, "done")
 
-    goal = ledger.create_goal(conn, "team", "ATR trail", "implement", "team/p1", "/wt", "pytest",
-                              part_id=part, base="team/part-1", needs_commits=False)
+    goal = ledger.create_goal(
+        conn,
+        "team",
+        "ATR trail",
+        "implement",
+        "team/p1",
+        "/wt",
+        "pytest",
+        part_id=part,
+        base="team/part-1",
+        needs_commits=False,
+    )
     g = ledger.get_goal(conn, goal)
     assert (g["part_id"], g["base"], g["needs_commits"]) == (part, "team/part-1", 0)
 
@@ -204,10 +338,21 @@ def test_plans_parts_and_reviews(conn):
     with pytest.raises(LookupError):
         ledger.update_plan(conn, 999, status="done")
 
-    rid = ledger.add_review(conn, "team", "overseer", "all good", decisions_created=[1],
-                            actions=[{"kind": "comment", "task_id": "t_1"}], drift="none")
+    rid = ledger.add_review(
+        conn,
+        "team",
+        "overseer",
+        "all good",
+        decisions_created=[1],
+        actions=[{"kind": "comment", "task_id": "t_1"}],
+        drift="none",
+    )
     [r] = ledger.list_reviews(conn, "team", limit=5)
-    assert r["id"] == rid and r["actions"][0]["kind"] == "comment" and r["decisions_created"] == [1]
+    assert (
+        r["id"] == rid
+        and r["actions"][0]["kind"] == "comment"
+        and r["decisions_created"] == [1]
+    )
 
 
 def test_pauses(conn):
@@ -224,8 +369,13 @@ def test_pauses(conn):
 
 
 def test_violations(conn):
-    v = ledger.record_violation(conn, "non-catalog", "model gpt-5 is not in the catalog",
-                                target="team", task_ref="t_1")
+    v = ledger.record_violation(
+        conn,
+        "non-catalog",
+        "model gpt-5 is not in the catalog",
+        target="team",
+        task_ref="t_1",
+    )
     [row] = ledger.violations_for(conn, "t_1")
     assert row["id"] == v and row["kind"] == "non-catalog" and row["ts"]
     assert ledger.violations_for(conn, "t_2") == []
