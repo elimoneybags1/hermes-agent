@@ -115,6 +115,10 @@ class FakeHermes:
         if verb == "unblock":
             self.tasks[rest[0]]["status"] = "ready"
             return self._ok(args)
+        if verb == "set-model":
+            self.tasks[rest[0]]["model"] = rest[1]
+            self.tasks[rest[0]]["provider"] = rest[rest.index("--provider") + 1]
+            return self._ok(args)
         if verb == "reopen-review":
             self.tasks[rest[0]]["status"] = "ready"
             return self._ok(args)
@@ -338,6 +342,7 @@ def test_fail_reopens_on_next_candidate_then_claude_then_eli(world):
     assert g["attempt"] == 2 and g["current_task"] == "t_1" and g["outcome"] is None
     assert world["hermes"].tasks["t_1"]["status"] == "ready"
     assert world["hermes"].comments["t_1"][0].startswith("FAILED:")
+    assert world["hermes"].tasks["t_1"]["model"] == "z-ai/glm-5.3"
     jobs = ledger.list_jobs(world["conn"])
     assert [j["attempt"] for j in jobs] == [2, 1]
     assert (

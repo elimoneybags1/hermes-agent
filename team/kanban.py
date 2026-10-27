@@ -243,6 +243,29 @@ def unblock(
     _ok(_run(args, runner), "unblock")
 
 
+def set_model(
+    board: str, task_id: str, model: ModelChoice, runner: Runner = subprocess.run
+) -> None:
+    """Pin the next dispatch to the validated retry candidate."""
+    if not isinstance(model, ModelChoice):
+        raise TypeError("model must be a team.catalog.ModelChoice")
+    _ok(
+        _run(
+            [
+                "--board",
+                board,
+                "set-model",
+                task_id,
+                model.model,
+                "--provider",
+                model.provider,
+            ],
+            runner,
+        ),
+        "set-model",
+    )
+
+
 def reopen_review(
     board: str, task_id: str, reason: str | None = None, runner: Runner = subprocess.run
 ) -> None:

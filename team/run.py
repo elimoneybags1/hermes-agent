@@ -539,6 +539,7 @@ class Loop:
         if nxt <= role["escalation"]["after_failures"] and status == "review":
             # Same task, reopened: the worker sees the failure in its comments.
             choice = self._choice(role, nxt)
+            kanban.set_model(goal["target"], task_id, choice, runner=self.runner)
             kanban.reopen_review(
                 goal["target"],
                 task_id,
