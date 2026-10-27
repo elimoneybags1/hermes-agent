@@ -151,6 +151,8 @@ Both are a few dozen lines, each with a jest test in the subtree's own suite.
 
 **Acceptance:** `team/bin/team-hermes --version` prints 0.21.x while bare `hermes` is still the machine's other install; `calls` has rows with `base_url` = LiteLLM and `ok=1`; `grep -r API_KEY $HOME/state/team/hermes/profiles/*/.env` returns nothing; the hand task reached `review` on a catalog model; 9119 listening.
 
+**Done 2026-10-27 (Team side), evidence:** `team roles sync implement` created `$HOME/state/team/hermes/profiles/implement` from `team/roles/implement/` on top of `team/roles/_base/config.yaml` (commit `efb91989`); `team gate audit` is clean; `team-hermes -p implement plugins info team` shows the Team plugin `enabled`; `team-hermes -p implement chat -q "Reply with exactly the word ok" --oneshot` answered `ok` through LiteLLM (4000) and Portkey, and the plugin wrote ledger `calls` row 2 (`provider custom`, `model tier-medium`, `tokens_in 18240`, `ok 1`); Portkey's `requests.jsonl` shows the same call served by `nemotron-3-5-lightning-30b` under config `team-model-nemotron-3-5-lightning-30b`. Two things learned: Hermes labels a custom provider `custom`, so the sink judges a call by its loopback URL; and a custom provider's key is passed as `api_key: ${LITELLM_MASTER_KEY}` plus the profile `.env`, which `team roles sync` now writes (mode 600). Open: the trace id Portkey logged is LiteLLM's own (`gwk_…`), not Hermes's session id, so the usage.db ↔ requests.jsonl ↔ ledger join still goes through LiteLLM's id rather than the kanban task id; `session_affinity_header` needs checking on the worker path. 18,240 input tokens for a one-word answer is the Hermes system prompt and skills index: the per-call baseline to cut later, measured, not guessed.
+
 ---
 
 ## Phase 4: the Team layer, one role, first ledger number
@@ -172,6 +174,8 @@ Port by reading `git -C ~/work/Team show before-fresh-start:<path>`: `team/ledge
 **Tests `tests/team/`:** under upstream `tests/` so its autouse HERMES_HOME isolation applies; `conftest.py` sets `TEAM_STATE=tmp_path/state`, provides `git_repo` and `FakeHermes`. Files: `test_ledger`, `test_catalog`, `test_portkey_build`, `test_grade` (real git), `test_kanban`, `test_run` (pass, fail, retry, escalate, block, watchdog, violation, spend trip), `test_profiles`, `test_profile_lock`, `test_claude_run`, `test_claude_roles`, `test_decisions`, `test_settings`, `test_cli`. Under 60 s.
 
 **Acceptance (the first number):** `team attach ~/work/Team --name team`; `team roles sync`; `team gate audit` exit 0; `team goal team "Add team/VERSION with 0.1.0 and tests/team/test_version.py"`; `team run --once` until `team ledger` shows `outcome=pass`, `grader=check`, `model_choice` naming a catalog model, a `calls` row joined by `task_ref`, and `git log --oneline -1` is the `--no-ff` land on `main`. Then a deliberately unpassable goal shows attempt 1 fail → attempt 2 on another candidate → Claude attempt with scrubbed env → task blocked, one open decision.
+
+**Progress 2026-10-27:** `team/` is written and tested (`ledger`, `catalog`, `grade`, `kanban`, `targets`, `settings`, `roles`, `profiles`, `claude_roles`, `claude_run`, `run`, `cli`), `plugins/team` records calls, `team/bin/team-check` runs Team's tests and lint inside any worktree with the main checkout's PM interpreter (proved from a scratch worktree: the worktree's own `team` package is what gets tested). `pytest tests/team -q`: 123 passed. Target `team` attached with that check. `team goal` on a real goal is the next step.
 
 ---
 
