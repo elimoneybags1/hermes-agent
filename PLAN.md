@@ -296,3 +296,7 @@ limits/profile-archive/ruff). Those were not rewritten as part of this task.
 
 Operational instructions: `team/docs/RUN.md`. The overall fresh-start definition of
 done still includes the later phases; this acceptance closes only the committed work.
+
+## Goal 4 — 2026-10-27, the first clean free-worker pass from this session
+
+`team goal team "Add tests/team/test_version_format.py …"` → task `t_8a8c5531` on `tier-medium`, attempt 1, worker merged main itself, requested review, check passed, Team landed `9c75308a62` with `--no-ff`. Ledger: job 9 `pass`, 12 calls linked by task id, 278,392 input and 2,129 output tokens for one small test file (the Hermes prompt and skills index again: the per-call baseline to cut). `pass 3/9` across the ledger with the deliberate failure fixture counted. Also committed today: a Claude 429 usage-limit result pauses the target for an hour and retries the same attempt instead of ending the goal (`ec93ff21`).
