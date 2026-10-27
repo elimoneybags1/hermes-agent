@@ -328,3 +328,13 @@ native/fts5_cjk/*.so
 /pm/.lock.json.lock
 
 apps/desktop/.dist-build*
+
+# Team (see PROVENANCE.md)
+*.db
+*.db-wal
+*.db-shm
+portkey/build/
+portkey/node_modules/
+litellm/.venv/
+/self-evolution/.venv/
+plugins/team/dashboard/node_modules/
