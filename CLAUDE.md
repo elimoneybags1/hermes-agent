@@ -33,7 +33,7 @@ gateway); the Portkey fork is `portkey/`.
 Everything Team runs goes through `team/bin/team-hermes`, which sets
 `HERMES_HOME=$HOME/state/team/hermes` and `HERMES_KANBAN_HOME=$HOME/state/team/kanban`,
 scrubs every paid-provider and Anthropic variable from the environment, and
-execs the venv at `$HOME/state/team/venv`. Never bare `hermes`, never
+executes the checkout through `scripts/run-in-hermes-env` and Hermes's PM-owned dependency environment. Never bare `hermes`, never
 `~/.hermes`: that is another project's install and holds paid keys.
 
 ## Free-only, fail closed
@@ -49,9 +49,12 @@ tick. A new provider or model is a catalog edit, never a config edit.
 
 ## Tests and gates
 
-`pytest tests/team -q` is the gate for Team changes and the per-attempt check
-for the `team` target. Hermes's own suite (`scripts/run_tests.sh`, about 17k
-tests) runs after upstream merges only. Subtrees keep their own suites.
+`team/bin/team-check` is the gate for Team changes and the per-attempt check
+for the `team` target. It runs `scripts/run_tests.sh tests/team` with the main
+checkout's PM test interpreter, then Team lint, preserving both exit codes.
+A worktree runs its own tests and code without provisioning another environment.
+Run focused upstream tests through `scripts/run_tests.sh` when patching Hermes;
+run its full suite after upstream merges. Subtrees keep their own suites.
 
 ## State
 

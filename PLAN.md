@@ -237,10 +237,62 @@ Port by reading `git -C ~/work/Team show before-fresh-start:<path>`: `team/ledge
 11. Kanban removes clean worktrees on completion and does not enforce `--max-runtime`: `grade` re-adds from the branch; the watchdog is Team's.
 12. Claude Code build-mode flags: re-check `claude --help` before Phase 4.
 
-## Open defects from the first real goal (2026-10-27, goal 1 on target `team`)
+## First-goal defects — resolved 2026-10-27
+
+The text below records the original failure and proposed fixes. The verified resolution follows it.
 
 Job ledger: attempts 1 and 2 (free workers) `error`, attempt 3 (Claude) `pass` on the check (124 tests) but the goal ended `error`: "passed its check but could not land: repository has uncommitted changes". Branch `team/add-a-file-team-version-containing-the-s` holds the finished work.
 
 1. **Kanban workers die at startup in a worktree.** Both free workers exited within a second with `hermes: no dependency environment is committed for this install; run hermes pm repair`. Cause: upstream's `pm/environments.py::_require_own_dependencies` refuses when the interpreter is PM's store Python and no environment is committed for the *project root*, and the dispatcher spawns `sys.executable -m hermes_cli.kanban_worker_client` with `cwd=workspace` (the worktree) and Hermes's tree pinned on PYTHONPATH (`kanban_db_dispatch.py` ~2863). The worktree is a different project root with no PM install. Same cwd-sensitivity `team/bin/team-check` already works around for the check. Fix to try first: have `team run` dispatch with the workspace being a `dir:` workspace whose cwd stays the main checkout, or set the PM project root for workers explicitly (look for the env/flag `pm.paths.repo_root` honours) so the worker uses the main checkout's committed environment while `TERMINAL_CWD` stays the worktree. Verify with the hand task re-dispatched into a worktree.
 2. **Landing refused by another session's dirty tree.** `grade.land` refuses any uncommitted tracked change in the target repo; with two sessions in one working tree that is always the case. Change: refuse only *staged* changes (they would be swept into the merge commit) and let git itself refuse a merge that would overwrite a modified file; unrelated unstaged edits and untracked files are fine. Add the test to `tests/team/test_grade.py`, then re-land goal 1's branch.
 3. Minor: `kanban block` on a task already `done` fails ("cannot block"); `_block` should skip finished tasks. A violation row from the misclassified first call (id 1, no task_ref) remains in the ledger as a record of the bug.
+
+
+## Committed-work acceptance — 2026-10-27
+
+Scope: finish the committed Phase 3/4 work only, as confirmed by Eli. Phases 5–7
+(boss, Team dashboard plugin, replay/evolution) remain unimplemented and out of scope.
+No Portkey/LiteLLM implementation or configuration was changed in this completion.
+
+- Worker startup: `_worker_argv` now uses Python `-P`, preserving the dispatcher's
+  pinned import tree while terminal/file tools still use the task worktree. A process
+  regression failed on the base and passes with the fix. The global `PYTHONSAFEPATH`
+  workaround was removed because it broke managed-owner imports. The minimal upstream
+  patch is recorded in `PROVENANCE.md`.
+- Landing: refuse staged changes; let Git reject overlapping local edits; disable
+  merge autostash. Unrelated unstaged/untracked work survives. Real-Git tests cover both.
+- `team-check`: run the worktree's canonical isolated test runner with the main
+  checkout's PM test interpreter. Preserve test and lint failures instead of swallowing
+  pytest's status in a `tail` pipeline. No per-worktree environment provisioning.
+- Retry: set the actual kanban model override before reopening review. Previously
+  only the ledger changed model. Live goal 3 made calls on both tiers.
+- Blocking: reopen a review card before applying `needs_input`; leave done, archived,
+  or already-blocked cards alone. The live failure fixture exposed this transition.
+- Installed `team` command: the old uv-tools entry failed importing `ruamel`; it now
+  points at `team/bin/team`, sharing Team's isolated PM launcher. The old symlink is
+  retained as `$HOME/.local/bin/team.pre-hermes-pm`. `team gate audit` is clean.
+
+Live receipts (in `$HOME/state/team`, not the archived ledger):
+
+| Evidence | Result |
+| --- | --- |
+| Goal 1, original VERSION task | Regraded against updated main and landed by Team as `b252051cae`; goal corrected to `pass`, original error preserved in its detail. |
+| Goal 2, run-loop guide | Free worker task `t_17a60788` on `tier-complex`, job 5; review → check → land `cef18d8ca3`; 15 model calls linked by task id. Guide reviewed and corrected after landing. |
+| Goal 3, separate `acceptance-failure` fixture | Jobs 6 and 7 failed the deliberate external check on `tier-medium` then `tier-complex`. Job 8 invoked subscription Claude, which returned `usage_limit_reached` (reset reported as 16:20 Toronto). The error reached decision 1. |
+| Failure card | `t_e5a4464e` verified `blocked`, `block_kind=needs_input` after the transition fix. |
+| Decision path | Decision 1 answered through the installed CLI: retain fixture, no retry. Fixture target disabled; no active goals remain. |
+
+Claude's successful coding fallback is evidenced by original job 3; today's negative
+acceptance verifies handling of a real subscription refusal, not a new Claude coding run.
+The fixture is retained outside this checkout for inspection and excluded from future
+loop dispatch by its disabled target flag.
+
+Validation: **132 Team tests passed** and lint passed through `team/bin/team-check`;
+**6 focused upstream tests passed** for worker imports and terminal scope through
+`scripts/run_tests.sh`; changed-code
+health ratchet against `cd3a3b0ebc`. The repository-wide `scripts/check` is not green:
+its global scans include existing imported subtree failures (shebang/no-tmp/AGENTS
+limits/profile-archive/ruff). Those were not rewritten as part of this task.
+
+Operational instructions: `team/docs/RUN.md`. The overall fresh-start definition of
+done still includes the later phases; this acceptance closes only the committed work.
