@@ -31,7 +31,15 @@ from pathlib import Path
 OUTCOMES = ("pass", "fail", "error", "timeout")
 DECISION_STATUSES = ("open", "answered", "dismissed")
 PLAN_STATUSES = ("draft", "active", "done")
-PART_STAGES = ("spec", "test_write", "implement", "test_verify", "review", "land", "done")
+PART_STAGES = (
+    "spec",
+    "test_write",
+    "implement",
+    "test_verify",
+    "review",
+    "land",
+    "done",
+)
 VIOLATION_KINDS = ("off-gateway", "non-catalog", "paid-key")
 
 SCHEMA = """
@@ -214,6 +222,7 @@ def _check(value: str, allowed: tuple[str, ...], what: str) -> None:
 
 # --- jobs -------------------------------------------------------------------
 
+
 def start_job(
     conn: sqlite3.Connection,
     target: str,
@@ -236,8 +245,17 @@ def start_job(
             "INSERT INTO jobs (target, target_commit, role, role_version, attempt,"
             " started, task_ref, model_choice, part_id)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (target, target_commit, role, role_version, attempt, _now(), task_ref,
-             json.dumps(model_choice) if model_choice is not None else None, part_id),
+            (
+                target,
+                target_commit,
+                role,
+                role_version,
+                attempt,
+                _now(),
+                task_ref,
+                json.dumps(model_choice) if model_choice is not None else None,
+                part_id,
+            ),
         )
     return cur.lastrowid
 
@@ -312,7 +330,9 @@ def open_job_for_task(conn: sqlite3.Connection, task_ref: str) -> dict | None:
     return _job(row) if row else None
 
 
-def pass_rate(conn: sqlite3.Connection, target: str | None = None, role: str | None = None) -> tuple[int, int]:
+def pass_rate(
+    conn: sqlite3.Connection, target: str | None = None, role: str | None = None
+) -> tuple[int, int]:
     """(passes, finished) for the given target and role. Report both, never a bare rate."""
     sql = "SELECT SUM(outcome = 'pass'), COUNT(*) FROM jobs WHERE ended IS NOT NULL"
     args: list = []
@@ -327,6 +347,7 @@ def pass_rate(conn: sqlite3.Connection, target: str | None = None, role: str | N
 
 
 # --- calls ------------------------------------------------------------------
+
 
 def record_call(
     conn: sqlite3.Connection,
@@ -359,14 +380,31 @@ def record_call(
             " response_model, base_url, task_class, tokens_in, tokens_out, latency_ms,"
             " ok, error, ts, api_calls)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (job_id, task_ref, session_id, profile, provider, model, response_model,
-             base_url, task_class, tokens_in, tokens_out, latency_ms, int(ok), error,
-             _now(), api_calls),
+            (
+                job_id,
+                task_ref,
+                session_id,
+                profile,
+                provider,
+                model,
+                response_model,
+                base_url,
+                task_class,
+                tokens_in,
+                tokens_out,
+                latency_ms,
+                int(ok),
+                error,
+                _now(),
+                api_calls,
+            ),
         )
     return cur.lastrowid
 
 
-def calls_for(conn: sqlite3.Connection, job_id: int | None = None, task_ref: str | None = None) -> list[dict]:
+def calls_for(
+    conn: sqlite3.Connection, job_id: int | None = None, task_ref: str | None = None
+) -> list[dict]:
     """Calls for a job or a task, oldest first."""
     if job_id is None and task_ref is None:
         raise ValueError("job_id or task_ref is required")
@@ -413,8 +451,18 @@ def create_goal(
         cur = conn.execute(
             "INSERT INTO goals (target, goal, role, branch, worktree, check_cmd, created,"
             " part_id, base, needs_commits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (target, goal, role, branch, worktree, check, _now(), part_id, base,
-             int(needs_commits)),
+            (
+                target,
+                goal,
+                role,
+                branch,
+                worktree,
+                check,
+                _now(),
+                part_id,
+                base,
+                int(needs_commits),
+            ),
         )
     return cur.lastrowid
 
@@ -428,10 +476,14 @@ def update_goal(conn: sqlite3.Connection, goal_id: int, **fields) -> None:
         return
     sets = ", ".join(f"{k} = ?" for k in fields)
     with conn:
-        conn.execute(f"UPDATE goals SET {sets} WHERE id = ?", (*fields.values(), goal_id))
+        conn.execute(
+            f"UPDATE goals SET {sets} WHERE id = ?", (*fields.values(), goal_id)
+        )
 
 
-def finish_goal(conn: sqlite3.Connection, goal_id: int, outcome: str, detail: str | None = None) -> None:
+def finish_goal(
+    conn: sqlite3.Connection, goal_id: int, outcome: str, detail: str | None = None
+) -> None:
     """Mark a goal finished. A goal can only be finished once."""
     _check(outcome, OUTCOMES, "outcome")
     with conn:
@@ -460,7 +512,9 @@ def get_goal(conn: sqlite3.Connection, goal_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def list_goals(conn: sqlite3.Connection, target: str | None = None, all_goals: bool = False) -> list[dict]:
+def list_goals(
+    conn: sqlite3.Connection, target: str | None = None, all_goals: bool = False
+) -> list[dict]:
     """Goals, newest first; only unfinished ones unless ``all_goals``."""
     sql = "SELECT * FROM goals"
     where, args = [], []
@@ -476,6 +530,7 @@ def list_goals(conn: sqlite3.Connection, target: str | None = None, all_goals: b
 
 
 # --- decisions --------------------------------------------------------------
+
 
 def create_decision(
     conn: sqlite3.Connection,
@@ -493,8 +548,17 @@ def create_decision(
             "INSERT INTO decisions (target, created, question, context, options,"
             " recommendation, goal_id, task_id, source, status)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')",
-            (target, _now(), question, context, json.dumps(list(options)),
-             recommendation, goal_id, task_id, source),
+            (
+                target,
+                _now(),
+                question,
+                context,
+                json.dumps(list(options)),
+                recommendation,
+                goal_id,
+                task_id,
+                source,
+            ),
         )
     return cur.lastrowid
 
@@ -506,11 +570,15 @@ def _decision(row: sqlite3.Row) -> dict:
 
 
 def get_decision(conn: sqlite3.Connection, decision_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM decisions WHERE id = ?", (decision_id,)
+    ).fetchone()
     return _decision(row) if row else None
 
 
-def list_decisions(conn: sqlite3.Connection, target: str | None = None, status: str | None = "open") -> list[dict]:
+def list_decisions(
+    conn: sqlite3.Connection, target: str | None = None, status: str | None = "open"
+) -> list[dict]:
     """Decisions, oldest first; open ones by default, every status with ``status=None``."""
     sql = "SELECT * FROM decisions"
     where, args = [], []
@@ -535,7 +603,9 @@ def dismiss_decision(conn: sqlite3.Connection, decision_id: int) -> None:
     _settle_decision(conn, decision_id, "dismissed", None)
 
 
-def _settle_decision(conn: sqlite3.Connection, decision_id: int, status: str, answer: str | None) -> None:
+def _settle_decision(
+    conn: sqlite3.Connection, decision_id: int, status: str, answer: str | None
+) -> None:
     with conn:
         cur = conn.execute(
             "UPDATE decisions SET status = ?, answer = ?, answered_at = ?"
@@ -558,8 +628,15 @@ def paused_goals(conn: sqlite3.Connection, target: str) -> set[int]:
 
 # --- plans and parts --------------------------------------------------------
 
-def create_plan(conn: sqlite3.Connection, target: str, title: str, path: str | None = None,
-                summary: str | None = None, status: str = "draft") -> int:
+
+def create_plan(
+    conn: sqlite3.Connection,
+    target: str,
+    title: str,
+    path: str | None = None,
+    summary: str | None = None,
+    status: str = "draft",
+) -> int:
     _check(status, PLAN_STATUSES, "status")
     now = _now()
     with conn:
@@ -571,8 +648,12 @@ def create_plan(conn: sqlite3.Connection, target: str, title: str, path: str | N
     return cur.lastrowid
 
 
-def update_plan(conn: sqlite3.Connection, plan_id: int, status: str | None = None,
-                summary: str | None = None) -> None:
+def update_plan(
+    conn: sqlite3.Connection,
+    plan_id: int,
+    status: str | None = None,
+    summary: str | None = None,
+) -> None:
     sets, args = ["updated = ?"], [_now()]
     if status is not None:
         _check(status, PLAN_STATUSES, "status")
@@ -582,7 +663,9 @@ def update_plan(conn: sqlite3.Connection, plan_id: int, status: str | None = Non
         sets.append("summary = ?")
         args.append(summary)
     with conn:
-        cur = conn.execute(f"UPDATE plans SET {', '.join(sets)} WHERE id = ?", (*args, plan_id))
+        cur = conn.execute(
+            f"UPDATE plans SET {', '.join(sets)} WHERE id = ?", (*args, plan_id)
+        )
     if cur.rowcount != 1:
         raise LookupError(f"no plan with id {plan_id}")
 
@@ -595,16 +678,31 @@ def list_plans(conn: sqlite3.Connection, target: str | None = None) -> list[dict
     return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC", args)]
 
 
-def create_part(conn: sqlite3.Connection, plan_id: int, target: str, title: str,
-                stage: str = "implement", branch: str | None = None,
-                depends_on: list[int] | None = None, owned_paths: list[str] | None = None) -> int:
+def create_part(
+    conn: sqlite3.Connection,
+    plan_id: int,
+    target: str,
+    title: str,
+    stage: str = "implement",
+    branch: str | None = None,
+    depends_on: list[int] | None = None,
+    owned_paths: list[str] | None = None,
+) -> int:
     _check(stage, PART_STAGES, "stage")
     with conn:
         cur = conn.execute(
             "INSERT INTO parts (plan_id, target, title, stage, branch, depends_on, owned_paths,"
             " created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (plan_id, target, title, stage, branch, json.dumps(depends_on or []),
-             json.dumps(owned_paths or []), _now()),
+            (
+                plan_id,
+                target,
+                title,
+                stage,
+                branch,
+                json.dumps(depends_on or []),
+                json.dumps(owned_paths or []),
+                _now(),
+            ),
         )
     return cur.lastrowid
 
@@ -621,7 +719,9 @@ def get_part(conn: sqlite3.Connection, part_id: int) -> dict | None:
     return _part(row) if row else None
 
 
-def list_parts(conn: sqlite3.Connection, plan_id: int | None = None, target: str | None = None) -> list[dict]:
+def list_parts(
+    conn: sqlite3.Connection, plan_id: int | None = None, target: str | None = None
+) -> list[dict]:
     sql, where, args = "SELECT * FROM parts", [], []
     if plan_id is not None:
         where.append("plan_id = ?")
@@ -634,7 +734,9 @@ def list_parts(conn: sqlite3.Connection, plan_id: int | None = None, target: str
     return [_part(r) for r in conn.execute(sql + " ORDER BY id", args)]
 
 
-def set_part_stage(conn: sqlite3.Connection, part_id: int, stage: str, status: str | None = None) -> None:
+def set_part_stage(
+    conn: sqlite3.Connection, part_id: int, stage: str, status: str | None = None
+) -> None:
     _check(stage, PART_STAGES, "stage")
     sets, args = ["stage = ?"], [stage]
     if status is not None:
@@ -644,27 +746,45 @@ def set_part_stage(conn: sqlite3.Connection, part_id: int, stage: str, status: s
         sets.append("finished = ?")
         args.append(_now())
     with conn:
-        cur = conn.execute(f"UPDATE parts SET {', '.join(sets)} WHERE id = ?", (*args, part_id))
+        cur = conn.execute(
+            f"UPDATE parts SET {', '.join(sets)} WHERE id = ?", (*args, part_id)
+        )
     if cur.rowcount != 1:
         raise LookupError(f"no part with id {part_id}")
 
 
 # --- reviews ----------------------------------------------------------------
 
-def add_review(conn: sqlite3.Connection, target: str, source: str, summary: str,
-               decisions_created: list[int] | None = None, actions: list[dict] | None = None,
-               drift: str | None = None) -> int:
+
+def add_review(
+    conn: sqlite3.Connection,
+    target: str,
+    source: str,
+    summary: str,
+    decisions_created: list[int] | None = None,
+    actions: list[dict] | None = None,
+    drift: str | None = None,
+) -> int:
     with conn:
         cur = conn.execute(
             "INSERT INTO reviews (target, created, source, summary, decisions_created, actions, drift)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (target, _now(), source, summary, json.dumps(decisions_created or []),
-             json.dumps(actions or []), drift),
+            (
+                target,
+                _now(),
+                source,
+                summary,
+                json.dumps(decisions_created or []),
+                json.dumps(actions or []),
+                drift,
+            ),
         )
     return cur.lastrowid
 
 
-def list_reviews(conn: sqlite3.Connection, target: str | None = None, limit: int | None = None) -> list[dict]:
+def list_reviews(
+    conn: sqlite3.Connection, target: str | None = None, limit: int | None = None
+) -> list[dict]:
     sql, args = "SELECT * FROM reviews", []
     if target is not None:
         sql += " WHERE target = ?"
@@ -683,6 +803,7 @@ def list_reviews(conn: sqlite3.Connection, target: str | None = None, limit: int
 
 
 # --- pauses and violations --------------------------------------------------
+
 
 def add_pause(conn: sqlite3.Connection, target: str, until: float, reason: str) -> int:
     """Pause a target's dispatch until ``until`` (epoch seconds); returns its id."""
@@ -703,8 +824,13 @@ def active_pause(conn: sqlite3.Connection, target: str, now: float) -> dict | No
     return dict(row) if row else None
 
 
-def record_violation(conn: sqlite3.Connection, kind: str, detail: str,
-                     target: str | None = None, task_ref: str | None = None) -> int:
+def record_violation(
+    conn: sqlite3.Connection,
+    kind: str,
+    detail: str,
+    target: str | None = None,
+    task_ref: str | None = None,
+) -> int:
     """A call reached something outside the catalog; ``team run`` blocks the task."""
     _check(kind, VIOLATION_KINDS, "kind")
     with conn:
@@ -716,5 +842,9 @@ def record_violation(conn: sqlite3.Connection, kind: str, detail: str,
 
 
 def violations_for(conn: sqlite3.Connection, task_ref: str) -> list[dict]:
-    return [dict(r) for r in conn.execute(
-        "SELECT * FROM violations WHERE task_ref = ? ORDER BY id", (task_ref,))]
+    return [
+        dict(r)
+        for r in conn.execute(
+            "SELECT * FROM violations WHERE task_ref = ? ORDER BY id", (task_ref,)
+        )
+    ]
