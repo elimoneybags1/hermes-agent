@@ -20,7 +20,7 @@ Eli's subscription when free attempts run out, and brings Eli only real
 decisions through one inbox. Every attempt is a row in an outcomes ledger, and
 a **self-improvement loop** proposes one change at a time, keeps it only if it
 beats the current pass rate on a replay set, and lands it as a git commit.
-Origin: `docs/ORIGIN.md` (from the `brain` session, 2026-10-18).
+Origin: `docs/ORIGIN.md` (2026-10-18).
 
 ---
 
@@ -35,13 +35,6 @@ Origin: `docs/ORIGIN.md` (from the `brain` session, 2026-10-18).
 
 Upstream files stay intact in the fork. Team's additions live beside them, so
 upstream can be merged in later.
-
-### Copy from `brain`
-
-- `~/work/brain/bigbrain/braincore/llm.py`: `FREE_POLICY`, `_assert_free`,
-  `ranked()`, cooldowns, usage ledger. The proven free-only allowlist that
-  fails closed. Decision 2 (2026-10-19): copy it, extract a shared package only
-  when both copies are in use.
 
 ### Borrow ideas from (not code)
 
@@ -431,8 +424,10 @@ Each step ends with a thing that runs and a number in the ledger.
    `hermes-agent-self-evolution` beside it. Pin the upstream commits in a
    provenance file. Keep upstream files untouched; Team lives in its own
    directory and in Hermes profiles.
-2. **Free gate + `team-worker` profile** (copy `brain`'s `llm.py` policy;
-   disable Hermes's paid defaults in the profile). Fail closed. Test it
+2. **Free gate + `team-worker` profile**, written fresh for Team: a catalog
+   of allowed models with why each is free, a generator for the gateway
+   routing that refuses anything else, a Hermes hook that blocks the rest;
+   Hermes's paid defaults disabled in the profile. Fail closed. Test it
    against the real `hermes` CLI, not a fake.
 3. **Ledger** with the agreed schema (`jobs`, `calls`, `goals`, `decisions`)
    plus the designed `plans`, `parts`, `reviews` from day one.
