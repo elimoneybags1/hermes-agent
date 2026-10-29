@@ -8,6 +8,8 @@ Outputs (all derived from catalog.json beside this file and the keys in
 $HOME/state/team/portkey/.env):
   portkey/configs/team-model-<slug>.json   one per routed model: Portkey fallback over its providers
   portkey/configs/team-tier-<tier>.json    one per tier: fallback over every model of the tier, in order
+  portkey/configs/team-probe-<provider>.json  one per provider: only that provider, on its first routed
+                                           model, so a key can be tested on its own (the dashboard's probe)
   litellm/config.yaml                      every deployment points at Portkey by config name
 
 (PLAN.md also lists portkey/conf.json with an admin token for the console; Portkey v1.15.2 has no
@@ -305,6 +307,18 @@ def tier_config(catalog: dict, models: list[dict], tier: str, keys: dict[str, st
     }
 
 
+def probe_configs(catalog: dict, models: list[dict], keys: dict[str, str]) -> dict[str, dict]:
+    """Provider -> a config with that provider alone, on the first routed model it serves."""
+    out = {}
+    for p in catalog["providers"]:
+        hit = next(((m, s) for t in catalog["tiers"] for m in tier_models(models, t)
+                    for s in m["live"] if s["provider"] == p), None)
+        if hit:
+            m, s = hit
+            out[p] = {"_": f"{GEN_JSON}; probe for provider {p} on model {m['id']}", **target(catalog, m, s, keys)}
+    return out
+
+
 def timeout_s(catalog: dict, m: dict) -> int:
     ms = sum(provider_timeout_ms(catalog, s["provider"]) for s in m["live"])
     return ms // 1000 + 10
@@ -386,6 +400,8 @@ def render(catalog: dict, keys: dict[str, str]) -> dict[str, str]:
         out[f"portkey/configs/team-model-{m['slug']}.json"] = json_dump(model_config(catalog, m, keys))
     for t in catalog["tiers"]:
         out[f"portkey/configs/team-tier-{t}.json"] = json_dump(tier_config(catalog, models, t, keys))
+    for p, cfg in probe_configs(catalog, models, keys).items():
+        out[f"portkey/configs/team-probe-{p}.json"] = json_dump(cfg)
     for path, text in out.items():
         if len(text.encode()) > MAX_CONFIG_BYTES:
             refuse(f"{path} is {len(text.encode())} bytes, over {MAX_CONFIG_BYTES}")

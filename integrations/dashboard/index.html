@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Team Gateway</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f0f2f5; --text: #1b1f24; --muted: #5d6673;
+  --line: #dde1e7; --accent: #2f6fde; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b26a00;
+  --bad: #c43b3b; --ok-bg: #e5f4ea; --warn-bg: #fff3dc; --bad-bg: #fbe7e7; --code: #eef1f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111418; --panel: #181c21; --panel-2: #20252c; --text: #e6e9ee; --muted: #98a2b0;
+    --line: #2c333c; --accent: #5b93f0; --accent-text: #0b0e12; --ok: #4cc27f; --warn: #e3a33b;
+    --bad: #ef6b6b; --ok-bg: #16301f; --warn-bg: #352812; --bad-bg: #3a1a1a; --code: #1d2228;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111418; --panel: #181c21; --panel-2: #20252c; --text: #e6e9ee; --muted: #98a2b0;
+  --line: #2c333c; --accent: #5b93f0; --accent-text: #0b0e12; --ok: #4cc27f; --warn: #e3a33b;
+  --bad: #ef6b6b; --ok-bg: #16301f; --warn-bg: #352812; --bad-bg: #3a1a1a; --code: #1d2228;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; }
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+a { color: var(--accent); }
+.layout { display: grid; grid-template-columns: 200px 1fr; min-height: 100vh; }
+nav { background: var(--panel); border-right: 1px solid var(--line); padding: 16px 10px; position: sticky; top: 0; height: 100vh; overflow: auto; }
+nav h1 { font-size: 15px; margin: 0 8px 14px; }
+nav button { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+nav button:hover { background: var(--panel-2); }
+nav button.on { background: var(--accent); color: var(--accent-text); }
+nav .sub { color: var(--muted); font-size: 12px; margin: 16px 10px 4px; }
+main { padding: 18px 22px 80px; min-width: 0; }
+h2 { font-size: 18px; margin: 4px 0 4px; }
+h3 { font-size: 15px; margin: 18px 0 8px; }
+.lead { color: var(--muted); margin: 0 0 14px; max-width: 900px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 12px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; }
+.scroll { overflow-x: auto; }
+input, select, textarea { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font: inherit; }
+input[type=checkbox] { width: auto; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+textarea { width: 100%; }
+button.b { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; cursor: pointer; font: inherit; white-space: nowrap; }
+button.b:hover { border-color: var(--accent); }
+button.p { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.d { color: var(--bad); }
+button.s { padding: 2px 7px; font-size: 12px; }
+button:disabled { opacity: .5; cursor: default; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+.ok { background: var(--ok-bg); color: var(--ok); }
+.warn { background: var(--warn-bg); color: var(--warn); }
+.bad { background: var(--bad-bg); color: var(--bad); }
+.muted { color: var(--muted); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.field { display: grid; gap: 3px; margin-bottom: 10px; }
+.field label { font-size: 12px; color: var(--muted); font-weight: 600; }
+.field .why { font-size: 12px; color: var(--muted); max-width: 760px; }
+.fields { display: grid; gap: 4px 14px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.fields input, .fields select { width: 100%; }
+.draft { position: sticky; top: 0; z-index: 5; background: var(--warn-bg); border: 1px solid var(--warn); color: var(--text); border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
+.draft .paths { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.result { margin-top: 8px; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; font-size: 13px; }
+.result.ok { font-weight: normal; }
+.chain { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chain .m { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
+.chain .arrow { color: var(--muted); }
+.model { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; background: var(--panel); }
+.model .head { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.model .head input.id { font-weight: 600; min-width: 220px; }
+.sb td input.pmid { width: 100%; min-width: 220px; }
+pre.log { background: var(--code); padding: 10px; border-radius: 6px; overflow: auto; max-height: 70vh; white-space: pre-wrap; word-break: break-all; }
+.toast { position: fixed; right: 16px; bottom: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; max-width: 420px; box-shadow: 0 4px 18px rgba(0,0,0,.15); z-index: 10; }
+.small { font-size: 12px; }
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+  nav { position: static; height: auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 16px; }
+  nav h1, nav .sub { display: none; }
+  nav button { width: auto; }
+  main { padding: 14px 16px 80px; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav id="nav">
+    <h1>Team Gateway</h1>
+    <button data-view="overview">Overview</button>
+    <button data-view="keys">Keys</button>
+    <div class="sub">catalog.json</div>
+    <button data-view="providers">Providers</button>
+    <button data-view="models">Models</button>
+    <button data-view="routing">Tiers &amp; LiteLLM</button>
+    <button data-view="portkey">Portkey</button>
+    <button data-view="json">Raw JSON</button>
+    <div class="sub">running</div>
+    <button data-view="test">Test</button>
+    <button data-view="traffic">Traffic</button>
+    <button data-view="logs">Logs</button>
+  </nav>
+  <main>
+    <div id="draft"></div>
+    <div id="view"><p class="muted">Loading…</p></div>
+  </main>
+</div>
+<div id="toast" class="toast" hidden></div>
+<script>
+"use strict";
+const TOKEN = "__TEAM_TOKEN__";
+const S = { view: "overview", data: null, draft: null, base: null, check: null, probes: {}, test: null, auto: null };
+const $ = (sel) => document.querySelector(sel);
+const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const pathAttr = (p) => esc(JSON.stringify(p));
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { "x-team-token": TOKEN, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  let d = null;
+  try { d = await r.json(); } catch (e) { d = { error: "no JSON from the dashboard server" }; }
+  if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+  return d;
+}
+function toast(msg, kind) {
+  const t = $("#toast");
+  t.innerHTML = `<span class="pill ${kind || "ok"}">${kind === "bad" ? "error" : kind === "warn" ? "note" : "done"}</span> ${esc(msg)}`;
+  t.hidden = false;
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => (t.hidden = true), kind === "bad" ? 9000 : 4000);
+}
+
+// ---------- draft editing ----------
+function getAt(o, p) { return p.reduce((a, k) => (a == null ? a : a[k]), o); }
+function setAt(o, p, v) {
+  const parent = getAt(o, p.slice(0, -1));
+  const k = p[p.length - 1];
+  if (v === undefined) { if (Array.isArray(parent)) parent.splice(k, 1); else delete parent[k]; }
+  else parent[k] = v;
+}
+function coerce(el) {
+  const t = el.dataset.type || "str";
+  const v = el.type === "checkbox" ? el.checked : el.value;
+  if (t === "bool") return v;
+  if (t === "str") return v;
+  if (t === "opt") return v.trim() === "" ? undefined : v;
+  if (t === "nullstr") return v.trim() === "" ? null : v;
+  if (t === "int" || t === "optint" || t === "num") {
+    if (v.trim() === "") return t === "optint" ? undefined : v;
+    const n = Number(v);
+    return Number.isFinite(n) ? (t === "num" ? n : Math.trunc(n) === n ? n : v) : v;
+  }
+  if (t === "ints") return v.split(/[\s,]+/).filter(Boolean).map((x) => (/^\d+$/.test(x) ? Number(x) : x));
+  if (t === "strs") return v.split(/[\s,]+/).filter(Boolean);
+  return v;
+}
+function changedPaths(a, b, p = [], out = []) {
+  if (out.length > 40) return out;
+  if (JSON.stringify(a) === JSON.stringify(b)) return out;
+  if (a && b && typeof a === "object" && typeof b === "object" && Array.isArray(a) === Array.isArray(b)) {
+    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+    for (const k of keys) changedPaths(a[k], b[k], p.concat(Array.isArray(a) ? Number(k) : k), out);
+    return out;
+  }
+  out.push(p);
+  return out;
+}
+function pathLabel(p) {
+  const c = S.draft;
+  return p.map((k, i) => {
+    if (typeof k === "number") {
+      const item = getAt(c, p.slice(0, i + 1)) || getAt(S.data.catalog, p.slice(0, i + 1));
+      const name = item && (item.id || item.provider);
+      return name ? `[${name}]` : `[${k}]`;
+    }
+    return (i ? "." : "") + k;
+  }).join("");
+}
+function dirty() { return S.draft && JSON.stringify(S.draft) !== JSON.stringify(S.data.catalog); }
+function renderDraft() {
+  const el = $("#draft");
+  if (!dirty()) { el.innerHTML = S.check && S.check.saved ? checkHtml(S.check) : ""; return; }
+  const paths = changedPaths(S.data.catalog, S.draft);
+  el.innerHTML = `<div class="draft">
+    <div class="row"><strong>Unsaved changes to catalog.json</strong><span class="muted small">${paths.length > 40 ? "40+" : paths.length} field(s)</span>
+    <span style="flex:1"></span>
+    <button class="b" data-act="check">Check</button>
+    <button class="b p" data-act="save">Save &amp; apply</button>
+    <button class="b d" data-act="discard">Discard</button></div>
+    <div class="paths mono">${paths.slice(0, 12).map((p) => esc(pathLabel(p))).join(" · ")}${paths.length > 12 ? " …" : ""}</div>
+    ${S.check ? checkHtml(S.check) : ""}</div>`;
+}
+function checkHtml(c) {
+  if (c.error) return `<div class="result bad">build.py refuses this catalog:\n${esc(c.error)}</div>`;
+  const ch = c.changes || { added: [], changed: [], removed: [] };
+  const list = (n, xs) => (xs.length ? `${n}: ${xs.map((x) => x.replace(/^.*\//, "")).join(", ")}\n` : "");
+  const restarted = (c.restarted || []).map((r) => `${r.service} restarted: ${r.healthy ? "healthy after " + r.seconds + " s" : "NOT healthy after " + r.seconds + " s"}`).join("\n");
+  const head = c.saved ? "Saved and rebuilt." : "build.py accepts this catalog.";
+  const note = !c.saved && ch.changed.includes("litellm/config.yaml") ? "\nSaving restarts LiteLLM (config.yaml changes). Portkey picks up its configs without a restart." : "";
+  const body = list("new", ch.added) + list("changed", ch.changed) + list("removed", ch.removed) || "no generated file changes\n";
+  return `<div class="result ok">${head} ${c.files} generated files.\n${esc(body)}${esc(restarted)}${esc(note)}</div>`;
+}
+async function doCheck() {
+  try { S.check = await api("POST", "/api/check", { catalog: S.draft }); }
+  catch (e) { S.check = { error: e.message }; }
+  renderDraft();
+}
+async function doSave() {
+  const btn = document.querySelector('[data-act="save"]');
+  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  try {
+    const r = await api("POST", "/api/save", { catalog: S.draft, base: S.base, restart: true });
+    S.check = r;
+    await load(true);
+    toast("catalog.json saved, outputs rebuilt" + ((r.restarted || []).length ? ", LiteLLM restarted" : ""));
+  } catch (e) {
+    S.check = { error: e.message };
+    renderDraft();
+    toast(e.message, "bad");
+  }
+}
+
+// ---------- loading ----------
+async function load(keepDraft) {
+  const d = await api("GET", "/api/overview");
+  const hadDraft = keepDraft === "draft" && dirty();
+  S.data = d;
+  S.base = d.base;
+  if (!hadDraft) S.draft = clone(d.catalog);
+  if (!keepDraft) S.check = null;
+  render();
+}
+function render() {
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.view === S.view));
+  const v = VIEWS[S.view] || VIEWS.overview;
+  $("#view").innerHTML = v();
+  renderDraft();
+  if (S.view === "traffic") loadTraffic();
+  if (S.view === "logs") loadLog();
+}
+
+// ---------- helpers for views ----------
+function input(path, type, attrs = "") {
+  const v = getAt(S.draft, path);
+  if (type === "bool") return `<input type="checkbox" data-path="${pathAttr(path)}" data-type="bool" ${v ? "checked" : ""} ${attrs}>`;
+  const shown = Array.isArray(v) ? v.join(", ") : v == null ? "" : v;
+  return `<input data-path="${pathAttr(path)}" data-type="${type}" value="${esc(shown)}" ${attrs}>`;
+}
+function select(path, options, type = "str", attrs = "") {
+  const v = getAt(S.draft, path);
+  return `<select data-path="${pathAttr(path)}" data-type="${type}" ${attrs}>${options.map((o) => {
+    const [val, label] = Array.isArray(o) ? o : [o, o];
+    return `<option value="${esc(val)}" ${String(v == null ? "" : v) === String(val) ? "selected" : ""}>${esc(label)}</option>`;
+  }).join("")}</select>`;
+}
+function field(label, control, why) {
+  return `<div class="field"><label>${esc(label)}</label>${control}${why ? `<div class="why">${esc(why)}</div>` : ""}</div>`;
+}
+function pill(ok, yes, no, warn) { return `<span class="pill ${ok ? "ok" : warn ? "warn" : "bad"}">${esc(ok ? yes : no)}</span>`; }
+function svc(name) { return (S.data.services || {})[name]; }
+function routedByTier() {
+  const c = S.draft;
+  const out = {};
+  for (const t of c.tiers || []) out[t] = (c.models || []).filter((m) => m.tier === t).sort((a, b) => a.order - b.order);
+  return out;
+}
+
+// ---------- views ----------
+const VIEWS = {};
+VIEWS.overview = () => {
+  const d = S.data, L = d.linkage;
+  const svcCard = (name, title) => {
+    const s = svc(name), ld = s.launchd;
+    return `<div class="card"><div class="row"><strong>${title}</strong><span style="flex:1"></span>
+      ${pill(s.healthy, "healthy", "down")}</div>
+      <table class="small"><tr><td class="muted">launchd</td><td>${ld.loaded ? esc(ld.state || "?") + (ld.pid ? " · pid " + esc(ld.pid) : "") : '<span class="pill bad">not loaded</span>'}</td></tr>
+      <tr><td class="muted">listening</td><td>${esc(s.host)}:${esc(s.port)} ${pill(s.listening, "yes", "no")}</td></tr>
+      <tr><td class="muted">label</td><td class="mono">${esc(s.label)}</td></tr></table>
+      <div class="row" style="margin-top:8px"><button class="b s" data-act="restart" data-service="${name}">Restart</button>
+      <button class="b s" data-act="go" data-view="logs" data-service="${name}">Log</button></div></div>`;
+  };
+  const dr = d.drift;
+  const keysSet = L.providers.filter((p) => p.key_set).length;
+  const tiers = routedByTier();
+  const chains = Object.entries(tiers).map(([t, ms]) => `<tr><td class="mono">tier-${esc(t)}</td><td><div class="chain">${ms.map((m, i) =>
+    `${i ? '<span class="arrow">→</span>' : ""}<span class="m" title="${esc((m.served_by || []).filter((s) => !s.unavailable).map((s) => s.provider).join(" → "))}">${esc(m.id)} <span class="muted small">${esc((m.served_by || []).filter((s) => !s.unavailable).map((s) => s.provider).join("→"))}</span></span>`).join("")}</div>
+    <div class="small muted">then ${esc(((S.draft.tier_fallbacks || {})[t] || []).map((x) => "tier-" + x).join(", ") || "nothing")}</div></td></tr>`).join("");
+  return `<h2>Overview</h2>
+  <p class="lead">Callers ask LiteLLM (port ${esc(svc("litellm").port)}) for a tier or a model. LiteLLM picks the model and forwards to Portkey (port ${esc(svc("portkey").port)}) by config name. Portkey holds the keys and picks the provider. Everything below comes from <span class="mono">catalog.json</span> and the two <span class="mono">.env</span> files.</p>
+  <div class="grid">${svcCard("litellm", "LiteLLM · picks the model")}${svcCard("portkey", "Portkey · picks the provider")}
+    <div class="card"><div class="row"><strong>Generated configs</strong><span style="flex:1"></span>${dr.ok ? pill(true, "in sync") : pill(false, "", dr.refused ? "refused" : "drift")}</div>
+      <p class="small">${dr.ok ? `${dr.files} files match catalog.json.` : esc(dr.refused || dr.problems.join("; "))}</p>
+      <div class="row small"><span>${keysSet}/${L.providers.length} provider keys set</span> · <span>master key ${L.master.set ? "set" : "missing"}</span></div>
+      <div class="row" style="margin-top:8px"><button class="b s" data-act="reload">Refresh</button></div></div>
+  </div>
+  <h3>Linkage checks</h3>
+  <div class="card">${L.warnings.length ? `<ul>${L.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : '<span class="pill ok">no problems found</span> every provider has a key, no stray keys, the master key matches every Hermes profile.'}</div>
+  <h3>Routing map</h3>
+  <p class="lead">Per tier, LiteLLM tries models left to right (by <span class="mono">order</span>); for each model, Portkey tries its providers in the order shown. Hover a model to see its providers.</p>
+  <div class="card scroll"><table>${chains}</table></div>`;
+};
+
+VIEWS.keys = () => {
+  const L = S.data.linkage;
+  const rows = L.providers.map((p) => {
+    const pr = S.probes[p.name];
+    const probeCell = !p.probe ? '<span class="muted small">no routed model</span>' :
+      pr === "run" ? '<span class="muted small">probing…</span>' :
+      pr ? `${pill(pr.ok, "works", pr.status ? "HTTP " + pr.status : "no answer")} <span class="small muted">${esc(pr.ok ? (pr.seconds + " s, " + (pr.answered_by || "")) : (pr.meaning || pr.error || "")).slice(0, 140)}</span>` : "";
+    return `<tr>
+      <td><strong>${esc(p.name)}</strong><div class="small muted">${p.routed_models.length} routed model(s)${p.first_choice_for.length ? ", first choice for " + p.first_choice_for.length : ""}</div></td>
+      <td class="mono">${esc(p.key_env)}</td>
+      <td>${p.key_set ? `<span class="pill ok">set</span> <span class="mono small">${esc(p.key_mask)}</span>` : '<span class="pill bad">missing</span>'}</td>
+      <td><div class="row"><input type="password" autocomplete="off" placeholder="paste a new key" data-keyname="${esc(p.key_env)}" data-keyfile="portkey" style="width:220px">
+        <button class="b s" data-act="key-show">show</button><button class="b s p" data-act="key-save" data-keyname="${esc(p.key_env)}" data-keyfile="portkey">Save</button></div></td>
+      <td><div class="row">${p.probe ? `<button class="b s" data-act="probe" data-provider="${esc(p.name)}">Probe</button>` : ""}${probeCell}</div></td>
+    </tr>`;
+  }).join("");
+  const stray = L.stray_keys.map((k) => `<tr><td class="mono">${esc(k.name)}</td><td class="mono small">${esc(k.mask)}</td>
+    <td><button class="b s d" data-act="key-del" data-keyname="${esc(k.name)}" data-keyfile="portkey">Remove</button></td></tr>`).join("");
+  const prof = Object.entries(L.master.profiles).map(([n, s]) => `<span class="row" style="display:inline-flex">${esc(n)} ${pill(s === "match", "matches", s)}</span>`).join(" ");
+  return `<h2>Keys</h2>
+  <p class="lead">Provider keys live only in Portkey's <span class="mono">${esc(S.data.paths.portkey_env)}</span>; the only secret LiteLLM holds is the master key in <span class="mono">${esc(S.data.paths.litellm_env)}</span>. A saved key is written there, the configs are rebuilt, and Portkey uses it on the next request without a restart. Keys never come back to this page; you see a mask. <strong>Probe</strong> sends one short request through that provider alone (its <span class="mono">team-probe-*</span> config).</p>
+  <div class="row" style="margin-bottom:8px"><button class="b" data-act="probe-all">Probe every provider</button></div>
+  <div class="card scroll"><table><tr><th>Provider</th><th>Variable</th><th>Current</th><th>Set a new key</th><th>Probe</th></tr>${rows}</table></div>
+  <h3>LiteLLM master key</h3>
+  <div class="card"><div class="row"><span class="mono">LITELLM_MASTER_KEY</span>${L.master.set ? `<span class="pill ok">set</span> <span class="mono small">${esc(L.master.mask)}</span>` : '<span class="pill bad">missing</span>'}</div>
+    <p class="small muted">Every caller of LiteLLM sends this as its bearer token. Hermes profiles carry a copy in their own <span class="mono">.env</span>: ${prof || "no profiles yet"}. After changing it run <span class="mono">team roles sync</span> so the profiles match. Saving restarts LiteLLM.</p>
+    <div class="row"><input type="password" autocomplete="off" placeholder="new master key" data-keyname="LITELLM_MASTER_KEY" data-keyfile="litellm" style="width:280px">
+      <button class="b s" data-act="key-show">show</button><button class="b s" data-act="key-gen">Generate</button>
+      <button class="b s p" data-act="key-save" data-keyname="LITELLM_MASTER_KEY" data-keyfile="litellm">Save</button></div></div>
+  <h3>Other keys in Portkey's .env</h3>
+  <div class="card">${stray ? `<p class="small muted">No provider in the catalog uses these. Remove them, or add a provider that names them as its <span class="mono">key_env</span>.</p><table>${stray}</table>` : '<span class="muted">none</span>'}
+    <h3 style="margin-top:14px">Add a key</h3>
+    <div class="row"><input id="newkey-name" placeholder="NAME_API_KEY" class="mono" style="width:200px"><input id="newkey-value" type="password" autocomplete="off" placeholder="value" style="width:240px">
+      <button class="b s p" data-act="key-add">Add to Portkey's .env</button></div>
+    <p class="small muted">For a new provider: add the key here, then add the provider under Providers with this name as its key variable.</p></div>`;
+};
+
+VIEWS.providers = () => {
+  const c = S.draft;
+  const L = S.data.linkage;
+  const cards = Object.keys(c.providers || {}).map((name) => {
+    const base = ["providers", name];
+    const lk = L.providers.find((p) => p.name === name);
+    const users = (c.models || []).filter((m) => (m.served_by || []).some((s) => s.provider === name)).map((m) => m.id);
+    return `<div class="card"><div class="row"><strong>${esc(name)}</strong>
+      ${lk ? (lk.key_set ? '<span class="pill ok">key set</span>' : '<span class="pill bad">key missing</span>') : '<span class="pill warn">unsaved</span>'}
+      <span style="flex:1"></span><button class="b s d" data-act="prov-del" data-name="${esc(name)}" ${users.length ? "disabled title='models still use it'" : ""}>Remove</button></div>
+      <div class="fields" style="margin-top:8px">
+        ${field("Portkey provider slug", input(base.concat("portkey"), "str"), "Portkey's name for the API: openai, groq, google, mistral-ai, cohere, …")}
+        ${field("Key variable (key_env)", input(base.concat("key_env"), "str", 'class="mono"'), "the name in Portkey's .env")}
+        ${field("Custom host", input(base.concat("custom_host"), "opt"), "OpenAI-compatible base URL, when the slug is openai but the API is elsewhere")}
+        ${field("Timeout per attempt (ms)", input(base.concat("request_timeout_ms"), "optint"), "empty: policy default")}
+      </div>
+      <div class="fields">
+        ${field("Why it is free", input(base.concat("free_basis"), "opt"))}
+        ${field("Limits", input(base.concat("limits"), "opt"))}
+        ${field("Notes", input(base.concat("notes"), "opt"))}
+      </div>
+      <div class="small muted">Used by: ${users.length ? esc(users.join(", ")) : "no model"}</div></div>`;
+  }).join("");
+  const blocked = Object.entries(c.blocked_providers || {}).map(([n]) => `<tr><td class="mono">${esc(n)}</td><td>${input(["blocked_providers", n], "str", 'style="width:100%"')}</td>
+    <td><button class="b s d" data-act="block-del" data-name="${esc(n)}">Unblock</button></td></tr>`).join("");
+  return `<h2>Providers</h2>
+  <p class="lead">Each provider is one API account. Portkey calls it with the key named by <span class="mono">key_env</span>. Changes here are a draft until you save.</p>
+  <div class="card row"><input id="newprov" placeholder="new provider name" class="mono" style="width:200px"><button class="b s p" data-act="prov-add">Add provider</button></div>
+  ${cards}
+  <h3>Blocked providers</h3>
+  <p class="lead">build.py refuses any model served by one of these. The reason is kept with it.</p>
+  <div class="card"><table>${blocked}</table>
+    <div class="row" style="margin-top:8px"><input id="newblock" placeholder="provider" class="mono" style="width:160px"><input id="newblock-why" placeholder="why it is blocked" style="width:320px"><button class="b s" data-act="block-add">Block</button></div></div>`;
+};
+
+VIEWS.models = () => {
+  const c = S.draft;
+  const filter = (S.modelFilter || "").toLowerCase();
+  const provs = Object.keys(c.providers || {});
+  const tierOpts = [["", "(not routed)"]].concat((c.tiers || []).map((t) => [t, t]));
+  const groups = {};
+  (c.models || []).forEach((m, i) => {
+    if (filter && !JSON.stringify(m).toLowerCase().includes(filter)) return;
+    const g = m.tier || "(not routed)";
+    (groups[g] = groups[g] || []).push([m, i]);
+  });
+  const order = (c.tiers || []).concat(["(not routed)"]);
+  const card = (m, i) => {
+    const b = ["models", i];
+    const sb = (m.served_by || []).map((s, j) => {
+      const p = b.concat("served_by", j);
+      return `<tr>
+        <td class="row"><button class="b s" data-act="sb-up" data-i="${i}" data-j="${j}" ${j ? "" : "disabled"}>↑</button><button class="b s" data-act="sb-down" data-i="${i}" data-j="${j}" ${j < m.served_by.length - 1 ? "" : "disabled"}>↓</button></td>
+        <td>${select(p.concat("provider"), provs.includes(s.provider) ? provs : provs.concat([s.provider]))}</td>
+        <td>${input(p.concat("provider_model_id"), "str", 'class="pmid mono"')}</td>
+        <td>${select(p.concat("free"), ["yes", "allowance", "no", "unknown"])}</td>
+        <td>${input(p.concat("unavailable"), "bool")}</td>
+        <td>${input(p.concat("weight"), "optint", 'style="width:60px" placeholder="1"')}</td>
+        <td><button class="b s d" data-act="sb-del" data-i="${i}" data-j="${j}">✕</button></td></tr>`;
+    }).join("");
+    return `<div class="model"><div class="head">
+      ${input(b.concat("id"), "str", 'class="id mono"')}
+      <label class="small muted">tier</label>${select(b.concat("tier"), tierOpts, "opt", `data-act-change="tier" data-i="${i}"`)}
+      <label class="small muted">order</label>${input(b.concat("order"), "optint", 'style="width:56px"')}
+      <label class="small muted">context</label>${input(b.concat("context"), "optint", 'style="width:100px"')}
+      <label class="small muted">max out</label>${input(b.concat("max_output"), "optint", 'style="width:84px"')}
+      <label class="small">${input(b.concat("tools"), "bool")} tools</label>
+      <label class="small">${input(b.concat("vision"), "bool")} vision</label>
+      <label class="small">${input(b.concat("reasoning"), "bool")} reasoning</label>
+      <span style="flex:1"></span><button class="b s d" data-act="model-del" data-i="${i}">Delete model</button></div>
+      <div class="row small muted" style="margin:6px 0">${input(b.concat("strength"), "opt", 'placeholder="strength" style="flex:1;min-width:200px"')} ${input(b.concat("size"), "opt", 'placeholder="size" style="width:180px"')}</div>
+      <div class="scroll"><table class="sb"><tr><th>order</th><th>provider</th><th>provider's model id</th><th>free</th><th>unavailable</th><th>weight</th><th></th></tr>${sb}</table></div>
+      <button class="b s" data-act="sb-add" data-i="${i}">+ provider</button></div>`;
+  };
+  const body = order.filter((g) => groups[g]).map((g) => `<h3>${g === "(not routed)" ? "Not routed" : "tier-" + esc(g)} <span class="muted small">${groups[g].length}</span></h3>` +
+    groups[g].sort((a, b) => (a[0].order || 0) - (b[0].order || 0)).map(([m, i]) => card(m, i)).join("")).join("");
+  return `<h2>Models</h2>
+  <p class="lead">A routed model has a tier and an order (lower is tried first in its tier). Its providers are tried top to bottom; the arrows change that failover order. <span class="mono">free</span> must be yes or allowance or build.py refuses. Weight only matters when Portkey's mode is loadbalance.</p>
+  <div class="card row"><input id="model-filter" placeholder="filter models" value="${esc(S.modelFilter || "")}" style="width:240px">
+    <span style="flex:1"></span><input id="newmodel" placeholder="new model id" class="mono" style="width:220px"><button class="b s p" data-act="model-add">Add model</button></div>
+  ${body || '<p class="muted">no models match</p>'}`;
+};
+
+VIEWS.routing = () => {
+  const c = S.draft, ll = ["policy", "litellm"], P = (c.policy || {}).litellm || {};
+  const tiers = c.tiers || [];
+  const fb = tiers.map((t) => `<tr><td class="mono">tier-${esc(t)}</td><td>${input(["tier_fallbacks", t], "strs", 'style="width:100%" placeholder="e.g. complex, simple"')}</td>
+    <td>${input(ll.concat("context_window_fallbacks", t), "strs", 'style="width:100%" placeholder="none"')}</td>
+    <td><button class="b s d" data-act="tier-del" data-tier="${esc(t)}">Remove tier</button></td></tr>`).join("");
+  return `<h2>Tiers &amp; LiteLLM</h2>
+  <p class="lead">LiteLLM picks the model. Callers ask for <span class="mono">tier-&lt;name&gt;</span> or a model id. When every model in a tier fails, LiteLLM tries the fallback tiers in order.</p>
+  <div class="card scroll"><table><tr><th>tier</th><th>fallback tiers (comma separated)</th><th>if the prompt is too long, try</th><th></th></tr>${fb}</table>
+    <div class="row" style="margin-top:8px"><input id="newtier" placeholder="new tier name" class="mono" style="width:180px"><button class="b s" data-act="tier-add">Add tier</button>
+    <span class="small muted">a new tier needs at least one model, or build.py refuses</span></div></div>
+  <h3>Router</h3>
+  <div class="card">
+    ${field("routing_strategy", select(ll.concat("routing_strategy"), [["", "default (simple-shuffle, order first)"], "least-busy", "latency-based-routing", "usage-based-routing", "usage-based-routing-v2"], "nullstr"), P.routing_strategy_why)}
+    <div class="fields">
+      ${field("num_retries", input(ll.concat("num_retries"), "int"))}
+      ${field("max_fallbacks", input(ll.concat("max_fallbacks"), "int"))}
+      ${field("allowed_fails", input(ll.concat("allowed_fails"), "int"))}
+      ${field("cooldown_time (s)", input(ll.concat("cooldown_time"), "int"))}
+    </div>
+    <div class="why small muted">${esc(P.router_why || "")}</div>
+    <div class="fields" style="margin-top:10px">
+      ${field("enable_pre_call_checks", input(ll.concat("enable_pre_call_checks"), "bool"))}
+      ${field("drop_params", input(ll.concat("drop_params"), "bool"), P.drop_params_why)}
+      ${field("session_pin_ttl_s", input(ll.concat("session_pin_ttl_s"), "int"), P.session_pin_ttl_why)}
+    </div>
+  </div>`;
+};
+
+VIEWS.portkey = () => {
+  const c = S.draft, pk = ["policy", "portkey"], P = (c.policy || {}).portkey || {};
+  return `<h2>Portkey</h2>
+  <p class="lead">Portkey picks the provider. Each routed model gets its own config (<span class="mono">team-model-&lt;id&gt;</span>) listing that model's providers; these settings shape every one of them.</p>
+  <div class="card">
+    ${field("mode", select(pk.concat("mode"), ["fallback", "loadbalance"]), P.mode_why)}
+    ${field("fall over on these HTTP statuses", input(pk.concat("on_status_codes"), "ints", 'style="width:100%" class="mono"'), P.on_status_codes_why)}
+    <div class="fields">
+      ${field("retry attempts (same provider)", input(pk.concat("retry_attempts"), "int"))}
+      ${field("retry on statuses", input(pk.concat("retry_on_status_codes"), "ints", 'class="mono"'))}
+      ${field("default timeout per attempt (ms)", input(pk.concat("default_timeout_ms"), "int"), P.default_timeout_why)}
+    </div>
+    <div class="why small muted">${esc(P.retry_why || "")}</div>
+  </div>
+  <h3>Ports</h3>
+  <div class="card"><div class="fields">
+    ${field("Portkey port", input(["gateway", "port"], "int"))}
+    ${field("LiteLLM host", input(["litellm", "host"], "str"))}
+    ${field("LiteLLM port", input(["litellm", "port"], "int"))}
+  </div><p class="small muted">${esc((c.gateway || {}).port_why || "")}<br>A port change takes effect when that service restarts; LiteLLM's deployments point at the Portkey port, so restart both. Callers (Hermes profiles) still name the old LiteLLM port until <span class="mono">team roles sync</span>.</p></div>`;
+};
+
+VIEWS.json = () => `<h2>Raw JSON</h2>
+  <p class="lead">The whole draft catalog. Edit, then <strong>Apply to draft</strong>; it becomes the same unsaved draft the other views edit, and saving still goes through build.py.</p>
+  <div class="card"><textarea id="rawjson" class="mono" rows="34" spellcheck="false">${esc(JSON.stringify(S.draft, null, 1))}</textarea>
+  <div class="row" style="margin-top:8px"><button class="b p" data-act="raw-apply">Apply to draft</button><span id="rawerr" class="small"></span></div></div>`;
+
+VIEWS.test = () => {
+  const c = S.data.catalog;
+  const tiers = (c.tiers || []).map((t) => "tier-" + t);
+  const ids = (c.models || []).filter((m) => m.tier).map((m) => m.id);
+  const cfgs = tiers.map((t) => "team-" + t).concat(ids.map((i) => "team-model-" + i.replace(/[^a-z0-9-]/g, "-")),
+    S.data.linkage.providers.filter((p) => p.probe).map((p) => p.probe));
+  const t = S.test;
+  let res = "";
+  if (t === "run") res = '<p class="muted">waiting for an answer…</p>';
+  else if (t && t.error && !t.status) res = `<div class="result bad">${esc(t.error)}</div>`;
+  else if (t) {
+    res = `<div class="card"><div class="row">${pill(t.status === 200, "HTTP 200", "HTTP " + t.status)}<span>${esc(t.seconds)} s</span><span class="muted mono small">trace ${esc(t.trace)}</span>${t.answered_by ? `<span>answered by <strong>${esc(t.answered_by)}</strong></span>` : ""}</div>
+      ${t.status === 200 ? `<pre class="log">${esc(t.answer == null ? "(no text content" + (t.reasoning ? "; the model spent its tokens reasoning — raise max tokens" : "") + ")" : t.answer)}</pre><div class="small muted">finish: ${esc(t.finish)} · tokens ${esc(JSON.stringify(t.usage || {}))}</div>`
+        : `<div class="result bad">${esc(t.meaning ? t.meaning + ": " : "")}${esc(t.error)}</div>`}
+      <h3>What Portkey did</h3>${attemptsTable(t.requests || [])}</div>`;
+  }
+  return `<h2>Test</h2>
+  <p class="lead">Send one request the way a caller would. <strong>LiteLLM</strong> takes a tier or a model id and runs the full path. <strong>Portkey</strong> takes a config name and skips LiteLLM. The table shows every provider attempt Portkey logged for this request.</p>
+  <div class="card"><div class="fields">
+    ${field("via", `<select id="t-via"><option value="litellm">LiteLLM (full path)</option><option value="portkey">Portkey directly</option></select>`)}
+    ${field("model / tier / config", `<input id="t-model" list="t-list" value="tier-simple" class="mono"><datalist id="t-list">${tiers.concat(ids, cfgs).map((x) => `<option value="${esc(x)}">`).join("")}</datalist>`)}
+    ${field("max tokens", `<input id="t-max" value="256" type="number">`)}
+  </div>
+  ${field("prompt", `<textarea id="t-prompt" rows="3">Reply with the single word pong</textarea>`)}
+  <button class="b p" data-act="test">Send</button></div>${res}`;
+};
+function attemptsTable(rows) {
+  if (!rows.length) return '<p class="muted small">Portkey logged no request with this trace id.</p>';
+  return `<div class="scroll"><table><tr><th>time</th><th>config</th><th>status</th><th>attempts (provider · status · ms)</th><th>answered</th><th>tokens</th></tr>${rows.map((r) => `<tr>
+    <td class="small mono">${esc((r.time || "").replace("T", " ").slice(5, 19))}</td><td class="mono small">${esc(r.config)}</td>
+    <td>${pill(r.status === 200, r.status, r.status)}</td>
+    <td class="small">${(r.attempts || []).map((a) => `${esc(a.provider)} · <span class="${a.status === 200 ? "" : "pill bad"}">${esc(a.status)}</span> · ${esc(a.latency_ms)}`).join("<br>")}${r.error ? `<div class="small muted">${esc(String(r.error).slice(0, 200))}</div>` : ""}</td>
+    <td class="small mono">${esc(r.model_answered || r.provider_model || "")}</td><td class="small">${esc(r.prompt_tokens ?? "")}${r.completion_tokens != null ? " / " + esc(r.completion_tokens) : ""}</td></tr>`).join("")}</table></div>`;
+}
+
+VIEWS.traffic = () => `<h2>Traffic</h2>
+  <p class="lead">Portkey's <span class="mono">requests.jsonl</span> (every provider attempt) and LiteLLM's <span class="mono">usage.db</span> (every model attempt), newest first.</p>
+  <div class="row" style="margin-bottom:8px"><button class="b" data-act="traffic">Refresh</button><label class="small"><input type="checkbox" id="auto" ${S.auto ? "checked" : ""}> refresh every 5 s</label></div>
+  <div id="traffic"><p class="muted">loading…</p></div>`;
+async function loadTraffic() {
+  try {
+    const d = await api("GET", "/api/recent?n=100");
+    const el = $("#traffic");
+    if (!el) return;
+    el.innerHTML = `<h3>Portkey</h3><div class="card">${attemptsTable(d.portkey)}</div>
+      <h3>LiteLLM</h3><div class="card scroll"><table><tr><th>time</th><th>session</th><th>asked for</th><th>model</th><th>ok</th><th>ms</th><th>tokens</th><th>error</th></tr>${d.litellm.map((r) => `<tr>
+        <td class="small mono">${esc((r.ts || "").replace("T", " ").slice(5, 19))}</td><td class="small mono">${esc(r.session || "")}</td><td class="mono small">${esc(r.group)}</td><td class="mono small">${esc(r.model)}</td>
+        <td>${pill(r.ok, "ok", r.rate_limited ? "429" : "fail")}</td><td class="small">${esc(r.latency_ms ?? "")}</td><td class="small">${esc(r.tokens_in ?? "")} / ${esc(r.tokens_out ?? "")}</td><td class="small muted">${esc(String(r.error || "").slice(0, 160))}</td></tr>`).join("")}</table></div>`;
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+VIEWS.logs = () => `<h2>Logs</h2>
+  <p class="lead">The last lines of each service's launchd log, with every known key masked.</p>
+  <div class="row" style="margin-bottom:8px"><select id="log-svc"><option value="litellm" ${S.logSvc !== "portkey" ? "selected" : ""}>LiteLLM · proxy.log</option><option value="portkey" ${S.logSvc === "portkey" ? "selected" : ""}>Portkey · gateway.log</option></select>
+    <button class="b" data-act="log">Refresh</button></div><pre class="log" id="log">loading…</pre>`;
+async function loadLog() {
+  try {
+    const d = await api("GET", "/api/log?service=" + (S.logSvc || "litellm") + "&n=300");
+    const el = $("#log");
+    if (el) { el.textContent = d.text || "(empty)"; el.scrollTop = el.scrollHeight; }
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+// ---------- actions ----------
+async function saveKey(file, name, value) {
+  try {
+    const r = await api("POST", "/api/key", { file, name, value });
+    let msg = value ? `${name} saved (${r.mask})` : `${name} removed`;
+    if (r.rebuilt === false) msg += "; configs NOT rebuilt: " + r.refused;
+    if ((r.restarted || []).length) msg += r.restarted[0].healthy ? "; LiteLLM restarted" : "; LiteLLM did NOT come back healthy";
+    toast(msg, r.rebuilt === false || (r.restarted || []).some((x) => !x.healthy) ? "warn" : "ok");
+    await load("draft");
+  } catch (e) { toast(e.message, "bad"); }
+}
+async function probe(name) {
+  S.probes[name] = "run";
+  if (S.view === "keys") render();
+  try { S.probes[name] = await api("POST", "/api/probe", { provider: name }); }
+  catch (e) { S.probes[name] = { ok: false, error: e.message }; }
+  if (S.view === "keys") render();
+}
+function moveSb(i, j, d) {
+  const sb = S.draft.models[i].served_by;
+  [sb[j], sb[j + d]] = [sb[j + d], sb[j]];
+}
+const ACTS = {
+  check: doCheck, save: doSave,
+  discard: () => { S.draft = clone(S.data.catalog); S.check = null; render(); },
+  reload: () => load("draft"),
+  go: (el) => { S.view = el.dataset.view; if (el.dataset.service) S.logSvc = el.dataset.service; render(); },
+  restart: async (el) => {
+    el.disabled = true; el.textContent = "Restarting…";
+    try { const r = await api("POST", "/api/restart", { service: el.dataset.service }); toast(`${r.service} ${r.healthy ? "healthy after " + r.seconds + " s" : "did not come back healthy"}`, r.healthy ? "ok" : "bad"); }
+    catch (e) { toast(e.message, "bad"); }
+    await load("draft");
+  },
+  "key-show": (el) => { const i = el.parentElement.querySelector("input"); i.type = i.type === "password" ? "text" : "password"; el.textContent = i.type === "password" ? "show" : "hide"; },
+  "key-gen": (el) => { const i = el.parentElement.querySelector("input"); const a = new Uint8Array(24); crypto.getRandomValues(a); i.value = "sk-team-" + Array.from(a, (b) => b.toString(16).padStart(2, "0")).join(""); i.type = "text"; },
+  "key-save": (el) => {
+    const i = el.parentElement.querySelector("input");
+    if (!i.value.trim()) return toast("paste a key first", "warn");
+    saveKey(el.dataset.keyfile, el.dataset.keyname, i.value);
+  },
+  "key-del": (el) => saveKey(el.dataset.keyfile, el.dataset.keyname, ""),
+  "key-add": () => {
+    const n = $("#newkey-name").value.trim(), v = $("#newkey-value").value;
+    if (!n || !v.trim()) return toast("name and value are both needed", "warn");
+    saveKey("portkey", n, v);
+  },
+  probe: (el) => probe(el.dataset.provider),
+  "probe-all": async () => { for (const p of S.data.linkage.providers.filter((x) => x.probe)) await probe(p.name); },
+  "prov-add": () => {
+    const n = $("#newprov").value.trim();
+    if (!/^[a-z0-9-]+$/.test(n)) return toast("provider names are lowercase letters, digits and dashes", "warn");
+    if (S.draft.providers[n]) return toast(n + " already exists", "warn");
+    S.draft.providers[n] = { portkey: "openai", key_env: n.toUpperCase().replace(/-/g, "_") + "_API_KEY", free_basis: "", limits: "" };
+    render();
+  },
+  "prov-del": (el) => { delete S.draft.providers[el.dataset.name]; render(); },
+  "block-add": () => {
+    const n = $("#newblock").value.trim(), w = $("#newblock-why").value.trim();
+    if (!n || !w) return toast("a provider and a reason are both needed", "warn");
+    S.draft.blocked_providers[n] = w; render();
+  },
+  "block-del": (el) => { delete S.draft.blocked_providers[el.dataset.name]; render(); },
+  "model-add": () => {
+    const id = $("#newmodel").value.trim();
+    if (!id) return toast("type a model id", "warn");
+    if (S.draft.models.some((m) => m.id === id)) return toast(id + " already exists", "warn");
+    const p = Object.keys(S.draft.providers)[0];
+    S.draft.models.push({ id, tools: true, vision: false, reasoning: false, served_by: [{ provider: p, provider_model_id: "", free: "yes" }] });
+    S.modelFilter = id; render();
+  },
+  "model-del": (el) => { S.draft.models.splice(Number(el.dataset.i), 1); render(); },
+  "sb-add": (el) => { S.draft.models[Number(el.dataset.i)].served_by.push({ provider: Object.keys(S.draft.providers)[0], provider_model_id: "", free: "yes" }); render(); },
+  "sb-del": (el) => { S.draft.models[Number(el.dataset.i)].served_by.splice(Number(el.dataset.j), 1); render(); },
+  "sb-up": (el) => { moveSb(Number(el.dataset.i), Number(el.dataset.j), -1); render(); },
+  "sb-down": (el) => { moveSb(Number(el.dataset.i), Number(el.dataset.j), 1); render(); },
+  "tier-add": () => {
+    const t = $("#newtier").value.trim();
+    if (!/^[a-z0-9-]+$/.test(t) || S.draft.tiers.includes(t)) return toast("a new, lowercase tier name", "warn");
+    S.draft.tiers.push(t); S.draft.tier_fallbacks[t] = []; render();
+  },
+  "tier-del": (el) => {
+    const t = el.dataset.tier;
+    S.draft.tiers = S.draft.tiers.filter((x) => x !== t);
+    delete S.draft.tier_fallbacks[t];
+    for (const k of Object.keys(S.draft.tier_fallbacks)) S.draft.tier_fallbacks[k] = S.draft.tier_fallbacks[k].filter((x) => x !== t);
+    const cw = S.draft.policy.litellm.context_window_fallbacks; delete cw[t];
+    render();
+  },
+  "raw-apply": () => {
+    try { S.draft = JSON.parse($("#rawjson").value); S.check = null; renderDraft(); toast("applied to the draft; Check or Save from the bar above"); }
+    catch (e) { $("#rawerr").innerHTML = `<span class="pill bad">${esc(e.message)}</span>`; }
+  },
+  test: async () => {
+    const body = { via: $("#t-via").value, model: $("#t-model").value.trim(), prompt: $("#t-prompt").value, max_tokens: Number($("#t-max").value) || 256 };
+    S.testForm = body; S.test = "run"; render(); restoreTestForm();
+    try { S.test = await api("POST", "/api/test", body); } catch (e) { S.test = { error: e.message }; }
+    render(); restoreTestForm();
+  },
+  traffic: loadTraffic,
+  log: () => { S.logSvc = $("#log-svc").value; loadLog(); },
+};
+function restoreTestForm() {
+  const f = S.testForm; if (!f || !$("#t-via")) return;
+  $("#t-via").value = f.via; $("#t-model").value = f.model; $("#t-prompt").value = f.prompt; $("#t-max").value = f.max_tokens;
+}
+
+document.addEventListener("click", (ev) => {
+  const nav = ev.target.closest("nav button");
+  if (nav) { S.view = nav.dataset.view; render(); if (S.view === "test") restoreTestForm(); return; }
+  const a = ev.target.closest("[data-act]");
+  if (a && ACTS[a.dataset.act] && a.tagName === "BUTTON") ACTS[a.dataset.act](a);
+});
+document.addEventListener("input", (ev) => {
+  const el = ev.target;
+  if (el.id === "model-filter") { S.modelFilter = el.value; const pos = el.selectionStart; render(); const f = $("#model-filter"); f.focus(); f.setSelectionRange(pos, pos); return; }
+  if (!el.dataset.path) return;
+  const path = JSON.parse(el.dataset.path);
+  setAt(S.draft, path, coerce(el));
+  S.check = null;
+  renderDraft();
+});
+document.addEventListener("change", (ev) => {
+  const el = ev.target;
+  if (el.id === "auto") {
+    clearInterval(S.auto); S.auto = el.checked ? setInterval(() => S.view === "traffic" && loadTraffic(), 5000) : null; return;
+  }
+  if (el.id === "log-svc") { S.logSvc = el.value; loadLog(); return; }
+  if (el.dataset.actChange === "tier") {
+    const m = S.draft.models[Number(el.dataset.i)];
+    if (!m.tier) delete m.order;
+    else if (m.order == null) m.order = Math.max(0, ...S.draft.models.filter((x) => x.tier === m.tier && x !== m).map((x) => x.order || 0)) + 1;
+    render();
+  }
+});
+window.addEventListener("beforeunload", (e) => { if (dirty()) { e.preventDefault(); e.returnValue = ""; } });
+
+load().catch((e) => { $("#view").innerHTML = `<div class="result bad">${esc(e.message)}</div>`; });
+</script>
+</body>
+</html>

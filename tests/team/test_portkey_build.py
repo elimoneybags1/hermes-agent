@@ -238,3 +238,15 @@ def test_refuses_a_missing_policy_and_a_bad_weight(catalog, keys):
     first_routed(catalog)["served_by"][0]["weight"] = 0
     with pytest.raises(build.Refusal, match="weight"):
         build.render(catalog, keys)
+
+
+def test_one_probe_per_provider_with_that_provider_alone(catalog, keys):
+    files = build.render(catalog, keys)
+    probes = {p: json.loads(t) for p, t in files.items() if "/team-probe-" in p}
+    served = {s["provider"] for m in build.routed(catalog) for s in m["live"]}
+    assert sorted(probes) == sorted(f"portkey/configs/team-probe-{p}.json" for p in served)
+    for name, cfg in probes.items():
+        provider = name.rsplit("team-probe-", 1)[1].removesuffix(".json")
+        assert cfg["provider"] == catalog["providers"][provider]["portkey"]
+        assert cfg["api_key"] == f"key-for-{provider}"
+        assert "targets" not in cfg

@@ -105,10 +105,27 @@
   "portkey": {
    "mode": "fallback",
    "mode_why": "per model, over its served_by rows: 'fallback' tries them in order and moves on for on_status_codes; 'loadbalance' picks one per request by each row's weight (default 1) and does not fail over inside the request, so LiteLLM's retry and fallback do that instead",
-   "on_status_codes": [401, 402, 403, 404, 408, 429, 500, 502, 503, 504, 529],
+   "on_status_codes": [
+    401,
+    402,
+    403,
+    404,
+    408,
+    429,
+    500,
+    502,
+    503,
+    504,
+    529
+   ],
    "on_status_codes_why": "Portkey only falls over on a listed status. A dead or revoked key is 401/403, an exhausted trial is 402, a model the provider no longer serves is 404, a target timeout is 408: every one means 'try the next provider'",
    "retry_attempts": 1,
-   "retry_on_status_codes": [500, 502, 503, 504],
+   "retry_on_status_codes": [
+    500,
+    502,
+    503,
+    504
+   ],
    "retry_why": "one in-target retry only for transient server errors; 408 and 429 go straight to the next provider",
    "default_timeout_ms": 60000,
    "default_timeout_why": "per provider attempt, unless the provider sets request_timeout_ms"
