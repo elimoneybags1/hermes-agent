@@ -4,6 +4,10 @@
 // the contents of $PORTKEY_CONFIG_DIR/<name>.json before the request validator
 // and the handlers see it, so callers never carry provider keys. Files are
 // cached and re-read when their mtime changes. An unknown name is a 400.
+//
+// Fail closed: every /v1 request must name a config. A missing header (the
+// caller's own x-portkey-provider and key) or an inline JSON config is a 400,
+// so the gateway only ever calls what build.py generated from the catalog.
 import { readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { Context, Next } from 'hono';
@@ -45,24 +49,34 @@ function failure(c: Context, message: string) {
 
 export const configByName = async (c: Context, next: Next) => {
   const value = c.req.header(HEADER_KEYS.CONFIG);
-  if (value && CONFIG_NAME.test(value)) {
-    if (!process.env.PORTKEY_CONFIG_DIR) {
-      return failure(
-        c,
-        `Config names need PORTKEY_CONFIG_DIR to be set on the gateway`
-      );
-    }
-    let text: string | undefined;
-    try {
-      text = loadNamedConfig(value);
-    } catch (e: any) {
-      return failure(c, `Config '${value}' is not valid JSON: ${e.message}`);
-    }
-    if (text === undefined) {
-      return failure(c, `Unknown config name: ${value}`);
-    }
-    c.req.raw.headers.set(HEADER_KEYS.CONFIG, text);
-    c.set(CONFIG_NAME_KEY, value);
+  if (!value) {
+    return failure(
+      c,
+      `${HEADER_KEYS.CONFIG} must name a config; requests without one are refused`
+    );
   }
+  if (!CONFIG_NAME.test(value)) {
+    return failure(
+      c,
+      `Inline configs are refused; ${HEADER_KEYS.CONFIG} must be a config name matching ${CONFIG_NAME}`
+    );
+  }
+  if (!process.env.PORTKEY_CONFIG_DIR) {
+    return failure(
+      c,
+      `Config names need PORTKEY_CONFIG_DIR to be set on the gateway`
+    );
+  }
+  let text: string | undefined;
+  try {
+    text = loadNamedConfig(value);
+  } catch (e: any) {
+    return failure(c, `Config '${value}' is not valid JSON: ${e.message}`);
+  }
+  if (text === undefined) {
+    return failure(c, `Unknown config name: ${value}`);
+  }
+  c.req.raw.headers.set(HEADER_KEYS.CONFIG, text);
+  c.set(CONFIG_NAME_KEY, value);
   await next();
 };

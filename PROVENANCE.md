@@ -40,6 +40,7 @@ lines with `git -C . log --oneline -- <file>` and `grep -n '\[team\]' <file>`.
 | 2026-10-27 | `portkey/` | `src/index.ts` | 38, 103-104 | import and `app.use('/v1/*', configByName)` before the first `/v1` route, so `x-portkey-config: <name>` is resolved from `$PORTKEY_CONFIG_DIR/<name>.json` before the validator and handlers see it | `a87204e7` |
 | 2026-10-27 | `portkey/` | `src/start-server.ts` | 19-21, 152, 155 | `--host=` argument passed to `serve({hostname})`; without it `@hono/node-server` listens on every interface | `a87204e7` |
 | 2026-10-27 | `portkey/` | `src/team/configByName.ts`, `src/team/configByName.test.ts` | new | the resolver and its 7 jest tests | `a87204e7` |
+| 2026-10-29 | `portkey/` | `src/team/configByName.ts`, `src/team/configByName.test.ts` | Team file | fail closed: a `/v1` request with no config name, or an inline JSON config, is a 400; 9 jest tests | `[team] Portkey: refuse requests without a config name` |
 | 2026-10-27 | `portkey/` | `src/middlewares/log/index.ts` | 3, 97-98 | import and one call after `next()`: append a JSON line per `/v1` request to `$PORTKEY_REQUEST_LOG` | `02cd4031` |
 | 2026-10-27 | `portkey/` | `src/team/requestLog.ts`, `src/team/requestLog.test.ts` | new | the line builder and its 3 jest tests | `02cd4031` |
 

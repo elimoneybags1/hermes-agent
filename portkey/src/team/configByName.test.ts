@@ -49,13 +49,29 @@ describe('[team] config by name', () => {
     expect(body.name).toBe('team-model-x');
   });
 
-  test('inline JSON passes through untouched', async () => {
-    const inline = JSON.stringify(config);
-    const res = await post({ 'x-portkey-config': inline });
-    expect(res.status).toBe(200);
-    const body: any = await res.json();
-    expect(body.config).toBe(inline);
-    expect(body.name).toBeUndefined();
+  test('an inline JSON config is a 400', async () => {
+    const res = await post({ 'x-portkey-config': JSON.stringify(config) });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).message).toMatch(
+      /Inline configs are refused/
+    );
+  });
+
+  test('no config header is a 400, even with a provider and key of its own', async () => {
+    const res = await post({
+      'x-portkey-provider': 'openai',
+      authorization: 'Bearer sk-callers-own',
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).message).toMatch(/must name a config/);
+  });
+
+  test('every /v1 route is covered, not only chat completions', async () => {
+    const a = new Hono();
+    a.use('/v1/*', configByName);
+    a.get('/v1/models', (c) => c.json({ ok: true }));
+    const res = await a.request('http://localhost/v1/models');
+    expect(res.status).toBe(400);
   });
 
   test('an unknown name is a 400', async () => {
