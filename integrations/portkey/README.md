@@ -37,7 +37,10 @@ and `$HOME/state/team/litellm/{.env, config.yaml, usage.db, proxy.log}`, venv at
    is resolved by a middleware on `/v1/*` to the contents of
    `$PORTKEY_CONFIG_DIR/team-model-gemma-4-31b.json` before Portkey's own
    validator and handlers see it. Cached by mtime. Unknown name → 400
-   `Unknown config name: …`. The same commit adds `--host=` to the node
+   `Unknown config name: …`. Fail closed (2026-10-29): a `/v1` request with
+   no `x-portkey-config` (a caller's own `x-portkey-provider` and key) or with
+   an inline JSON config is also a 400, so Portkey only ever runs configs that
+   `build.py` generated. The same commit adds `--host=` to the node
    server: without it `@hono/node-server` listens on every interface
    (`lsof` showed `*:8788`; with `--host=127.0.0.1` it shows `127.0.0.1:8788`).
 2. **Durable request log** (`02cd4031`): one JSON line per `/v1` request to
@@ -59,7 +62,7 @@ suites pass inside that run.
 - `conf.json`: `src/index.ts` imports the repo's `conf.json` at build time (`plugins_enabled`, `cache`); `initializeSettings.ts` reads `./conf.json` only when `FETCH_SETTINGS_FROM_FILE=true` and only for `integrations`, which nothing else in the OSS runtime consumes. So PLAN.md's generated `conf.json` with an admin token has no consumer and is **not generated**.
 - `cb_config`: preserved through `convertKeysToCamelCase` and passed to `c.get('handleCircuitBreakerResponse')`, which nothing in the OSS runtime sets. **Not emitted.**
 - Config schema (`src/middlewares/requestValidator/schema/config.ts`, zod, non-strict so unknown keys such as the `_` comment are dropped): `strategy{mode, on_status_codes}`, `targets[]` nested recursively, `provider`, `api_key`, `custom_host`, `override_params`, `retry{attempts, on_status_codes}`, `request_timeout`, `forward_headers`.
-- Fallback (`tryTargetsRecursively`): moves to the next target only when the response status is in `strategy.on_status_codes`. A target timeout is 408, a dead key 401/403, an exhausted trial 402, a model the provider dropped 404, so the generated list is `[401, 402, 403, 404, 408, 429, 500, 502, 503, 504, 529]`. In-target `retry` is `attempts 1` on `[500, 502, 503, 504]` only.
+- Fallback (`tryTargetsRecursively`): moves to the next target only when the response status is in `strategy.on_status_codes`. A target timeout is 408, a dead key 401/403, an exhausted trial 402, a model the provider dropped 404, so the default list is `[401, 402, 403, 404, 408, 429, 500, 502, 503, 504, 529]`. In-target `retry` defaults to `attempts 1` on `[500, 502, 503, 504]` only. Both, the per-model `mode` (`fallback` or `loadbalance` by `served_by[].weight`), the default timeout and every LiteLLM router value are in `catalog.json` `policy`, checked by `build.py` (2026-10-29). `gateway-rs build` still hard-codes the old defaults: it matches `build.py` only while `policy` holds them.
 - Provider slugs in `src/providers/index.ts`: `openrouter`, `groq`, `google` (Gemini API, `generativelanguage.googleapis.com`), `mistral-ai`, `cohere`, `cerebras`, `z-ai` (`api.z.ai/api/paas/v4`); NVIDIA is `openai` + `custom_host: https://integrate.api.nvidia.com/v1`.
 - Headers: `x-portkey-trace-id` is echoed back on the response; `x-portkey-metadata` is JSON and is read by the conditional router and by the request log.
 - Port: PLAN.md says 8787, but `127.0.0.1:8787` is held by `com.fullmoney.myprof-gateway` (another project's node gateway, launchd, running since 2026-10-09). The catalog says **8788**; nothing else hardcodes it.

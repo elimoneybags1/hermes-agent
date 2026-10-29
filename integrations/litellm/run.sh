@@ -10,6 +10,9 @@ VENV="$HOME/state/team/litellm-venv"
 CATALOG="$REPO/integrations/portkey/catalog.json"
 PORT="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["litellm"]["port"])' "$CATALOG")"
 HOST="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["litellm"]["host"])' "$CATALOG")"
+# Checked by build.py --check below, like everything else in the catalog's policy section.
+TEAM_SESSION_PIN_TTL_S="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["policy"]["litellm"]["session_pin_ttl_s"])' "$CATALOG")"
+export TEAM_SESSION_PIN_TTL_S
 
 set -a
 . "$STATE/.env"

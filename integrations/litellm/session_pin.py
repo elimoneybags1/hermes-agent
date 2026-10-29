@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 import time
 
 from litellm.integrations.custom_logger import CustomLogger
 from litellm.router_utils.pre_call_checks.deployment_affinity_check import DeploymentAffinityCheck
 
-TTL_S = 2 * 3600
+# policy.litellm.session_pin_ttl_s in catalog.json, exported by run.sh
+TTL_S = int(os.environ.get("TEAM_SESSION_PIN_TTL_S") or 2 * 3600)
 FRONT = -1  # below every configured order (they start at 1)
 log = logging.getLogger("team.session_pin")
 

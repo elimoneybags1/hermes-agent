@@ -100,6 +100,36 @@
    "medium"
   ]
  },
+ "policy": {
+  "about": "How the gateway behaves, as opposed to what it may call. build.py validates every value and writes it into the Portkey configs and LiteLLM's config.yaml; integrations/litellm/run.sh reads session_pin_ttl_s. Change a value, run build.py, restart both launchd jobs.",
+  "portkey": {
+   "mode": "fallback",
+   "mode_why": "per model, over its served_by rows: 'fallback' tries them in order and moves on for on_status_codes; 'loadbalance' picks one per request by each row's weight (default 1) and does not fail over inside the request, so LiteLLM's retry and fallback do that instead",
+   "on_status_codes": [401, 402, 403, 404, 408, 429, 500, 502, 503, 504, 529],
+   "on_status_codes_why": "Portkey only falls over on a listed status. A dead or revoked key is 401/403, an exhausted trial is 402, a model the provider no longer serves is 404, a target timeout is 408: every one means 'try the next provider'",
+   "retry_attempts": 1,
+   "retry_on_status_codes": [500, 502, 503, 504],
+   "retry_why": "one in-target retry only for transient server errors; 408 and 429 go straight to the next provider",
+   "default_timeout_ms": 60000,
+   "default_timeout_why": "per provider attempt, unless the provider sets request_timeout_ms"
+  },
+  "litellm": {
+   "routing_strategy": null,
+   "routing_strategy_why": "null leaves LiteLLM's default (simple-shuffle, with each model's order taking precedence); or one of least-busy, latency-based-routing, usage-based-routing, usage-based-routing-v2. cost-based-routing is refused: every cost here is 0",
+   "enable_pre_call_checks": true,
+   "num_retries": 1,
+   "max_fallbacks": 2,
+   "allowed_fails": 1,
+   "cooldown_time": 300,
+   "router_why": "num_retries per model group before falling back; max_fallbacks tier fallbacks per request; a deployment that fails allowed_fails times in a minute is skipped for cooldown_time seconds; pre-call checks skip models whose context cannot hold the prompt",
+   "context_window_fallbacks": {},
+   "context_window_fallbacks_why": "tier -> tiers to try when the prompt is too long for the tier, same shape as tier_fallbacks; empty means none",
+   "drop_params": true,
+   "drop_params_why": "strip request params a provider does not support instead of failing the call",
+   "session_pin_ttl_s": 7200,
+   "session_pin_ttl_why": "integrations/litellm/session_pin.py keeps a session on the model that last answered it for this long"
+  }
+ },
  "models": [
   {
    "id": "glm-5.3",
