@@ -242,7 +242,7 @@ function render() {
   renderDraft();
   if (S.view === "traffic") loadTraffic();
   if (S.view === "logs") loadLog();
-  if (S.view === "verify" && !S.verify) loadVerify();
+  if ((S.view === "verify" || S.view === "models") && !S.verify) loadVerify();
 }
 
 // ---------- helpers for views ----------
@@ -396,6 +396,7 @@ VIEWS.models = () => {
     const b = ["models", i];
     const sb = (m.served_by || []).map((s, j) => {
       const p = b.concat("served_by", j);
+      const saved = (S.data.catalog.models || []).some((x) => x.id === m.id && (x.served_by || []).some((y) => y.provider === s.provider));
       return `<tr>
         <td class="row"><button class="b s" data-act="sb-up" data-i="${i}" data-j="${j}" ${j ? "" : "disabled"}>↑</button><button class="b s" data-act="sb-down" data-i="${i}" data-j="${j}" ${j < m.served_by.length - 1 ? "" : "disabled"}>↓</button></td>
         <td>${select(p.concat("provider"), provs.includes(s.provider) ? provs : provs.concat([s.provider]))}</td>
@@ -403,6 +404,7 @@ VIEWS.models = () => {
         <td>${select(p.concat("free"), ["yes", "allowance", "no", "unknown"])}</td>
         <td>${input(p.concat("unavailable"), "bool")}</td>
         <td>${input(p.concat("weight"), "optint", 'style="width:60px" placeholder="1"')}</td>
+        <td class="row"><button class="b s" data-act="row-test" data-model="${esc(m.id)}" data-provider="${esc(s.provider)}" ${saved ? "" : 'disabled title="save the catalog first"'}>Test</button>${rowResult(m.id, s.provider)}</td>
         <td><button class="b s d" data-act="sb-del" data-i="${i}" data-j="${j}">✕</button></td></tr>`;
     }).join("");
     return `<div class="model"><div class="head">
@@ -414,9 +416,9 @@ VIEWS.models = () => {
       <label class="small">${input(b.concat("tools"), "bool")} tools</label>
       <label class="small">${input(b.concat("vision"), "bool")} vision</label>
       <label class="small">${input(b.concat("reasoning"), "bool")} reasoning</label>
-      <span style="flex:1"></span><button class="b s d" data-act="model-del" data-i="${i}">Delete model</button></div>
+      <span style="flex:1"></span><button class="b s" data-act="model-test" data-i="${i}">Test all providers</button><button class="b s d" data-act="model-del" data-i="${i}">Delete model</button></div>
       <div class="row small muted" style="margin:6px 0">${input(b.concat("strength"), "opt", 'placeholder="strength" style="flex:1;min-width:200px"')} ${input(b.concat("size"), "opt", 'placeholder="size" style="width:180px"')}</div>
-      <div class="scroll"><table class="sb"><tr><th>order</th><th>provider</th><th>provider's model id</th><th>free</th><th>unavailable</th><th>weight</th><th></th></tr>${sb}</table></div>
+      <div class="scroll"><table class="sb"><tr><th>order</th><th>provider</th><th>provider's model id</th><th>free</th><th>unavailable</th><th>weight</th><th>test (this provider alone)</th><th></th></tr>${sb}</table></div>
       <button class="b s" data-act="sb-add" data-i="${i}">+ provider</button></div>`;
   };
   const body = order.filter((g) => groups[g]).map((g) => `<h3>${g === "(not routed)" ? "Not routed" : "tier-" + esc(g)} <span class="muted small">${groups[g].length}</span></h3>` +
@@ -513,9 +515,35 @@ VIEWS.verify = () => {
 };
 async function loadVerify() {
   try { S.verify = await api("GET", "/api/verify"); } catch (e) { toast(e.message, "bad"); }
-  if (S.view === "verify") render();
+  // The Models page re-renders only when a run is not polling, so typing there never loses focus.
+  if (S.view === "verify" || (S.view === "models" && !S.verify.running)) render();
   clearTimeout(loadVerify.t);
   if (S.verify && S.verify.running) loadVerify.t = setTimeout(loadVerify, 3000);
+}
+// Latest result for one model on one provider: a test from the Models page, else the last Verify run.
+function rowResult(model, provider) {
+  const k = model + "|" + provider;
+  const t = (S.rowTests || {})[k];
+  if (t === "run") return '<span class="small muted">testing…</span>';
+  const r = t || ((S.verify && S.verify.results) || []).find((x) => x.model === model && x.provider === provider);
+  if (!r) return '<span class="small muted">not tested</span>';
+  const when = r.time ? (r.time.replace("T", " ").slice(5, 16) + " UTC") : "";
+  if (r.ok) return `<span class="pill ${r.slow ? "warn" : "ok"}">${r.slow ? "slow" : "works"}</span><span class="small muted">${esc(r.seconds)} s · ${esc(when)}</span>`;
+  return `<span class="pill bad">${esc(r.status == null ? "no answer" : "HTTP " + r.status)}</span><span class="small muted" title="${esc(r.error || "")}">${esc(r.meaning || String(r.error || "").slice(0, 60))} · ${esc(when)}</span>`;
+}
+async function testRow(model, provider) {
+  S.rowTests = S.rowTests || {};
+  const k = model + "|" + provider;
+  S.rowTests[k] = "run";
+  if (S.view === "models") render();
+  let r;
+  try { r = await api("POST", "/api/test", { via: "portkey", model: "team-pair-" + model.replace(/[^a-z0-9-]/g, "-") + "--" + provider, max_tokens: 1024 }); }
+  catch (e) { r = { status: null, error: e.message }; }
+  r.ok = r.status === 200 && !!(r.answer || r.reasoning);
+  r.slow = (r.seconds || 0) > 30;
+  r.time = new Date().toISOString();
+  S.rowTests[k] = r;
+  if (S.view === "models") render();
 }
 function today() { return new Date().toISOString().slice(0, 10); }
 function markFailing() {
@@ -709,6 +737,12 @@ const ACTS = {
   },
   verify: async () => { try { S.verify = await api("POST", "/api/verify", {}); render(); loadVerify(); } catch (e) { toast(e.message, "bad"); } },
   "verify-all": async () => { try { S.verify = await api("POST", "/api/verify", { include_unavailable: true }); render(); loadVerify(); } catch (e) { toast(e.message, "bad"); } },
+  "row-test": (el) => testRow(el.dataset.model, el.dataset.provider),
+  "model-test": (el) => {
+    const m = S.data.catalog.models.find((x) => x.id === S.draft.models[Number(el.dataset.i)].id);
+    if (!m) return toast("save the catalog first", "warn");
+    m.served_by.forEach((s) => testRow(m.id, s.provider));
+  },
   "verify-mark": markFailing,
   "verify-restore": restoreWorking,
   traffic: loadTraffic,
