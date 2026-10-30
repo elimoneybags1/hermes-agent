@@ -14,6 +14,9 @@ $HOME/state/team/portkey/.env):
                                            unavailable or not, whose key is set: that model on that
                                            provider alone, so the dashboard can verify each one
   litellm/config.yaml                      every deployment points at Portkey by config name
+  litellm/allowances.json                  per provider with a monthly allowance (paid per token out of an
+                                           included credit): budget, stop, cycle day, per-model prices and
+                                           every config name that reaches it; read by spend.py
 
 (PLAN.md also lists portkey/conf.json with an admin token for the console; Portkey v1.15.2 has no
 admin token and reads ./conf.json only for settings behind FETCH_SETTINGS_FROM_FILE, so nothing
@@ -191,7 +194,47 @@ def routed(catalog: dict) -> list[dict]:
             refuse(f"provider {p} is both configured and blocked")
         if not spec.get("portkey") or not spec.get("key_env"):
             refuse(f"provider {p}: needs 'portkey' slug and 'key_env'")
+        if "allowance" in spec:
+            check_allowance(p, spec["allowance"])
+    for m in catalog["models"]:
+        metered = [s["provider"] for s in m["served_by"] if "allowance" in providers[s["provider"]]]
+        if not metered:
+            continue
+        if len(m["served_by"]) != len(metered) or len(set(metered)) != 1:
+            refuse(f"{m['id']}: a model on an allowance provider must be served by that provider alone, "
+                   f"so the spend guard can stop it")
+        if any(s.get("free") != "allowance" for s in m["served_by"]):
+            refuse(f"{m['id']}: rows on an allowance provider must say free: allowance")
+        check_price(m["id"], m.get("price"))
     return out
+
+
+def number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def check_allowance(p: str, a) -> None:
+    if not isinstance(a, dict):
+        refuse(f"provider {p}: allowance must be an object")
+    if not number(a.get("monthly_usd")) or a["monthly_usd"] <= 0:
+        refuse(f"provider {p}: allowance.monthly_usd must be a number > 0")
+    if not number(a.get("stop_at_usd")) or not 0 < a["stop_at_usd"] <= a["monthly_usd"]:
+        refuse(f"provider {p}: allowance.stop_at_usd must be > 0 and at most monthly_usd")
+    d = a.get("cycle_day")
+    if isinstance(d, bool) or not isinstance(d, int) or not 1 <= d <= 28:
+        refuse(f"provider {p}: allowance.cycle_day must be an integer 1-28")
+
+
+def check_price(mid: str, price) -> None:
+    if not isinstance(price, dict):
+        refuse(f"{mid}: a model on an allowance provider needs a price (input_per_mtok, output_per_mtok)")
+    for k in ("input_per_mtok", "output_per_mtok"):
+        if not number(price.get(k)) or price[k] < 0:
+            refuse(f"{mid}: price.{k} must be a number >= 0")
+    long_keys = ("long_prompt_over", "long_input_per_mtok", "long_output_per_mtok")
+    present = [k for k in long_keys if k in price]
+    if present and (len(present) != 3 or any(not number(price[k]) or price[k] < 0 for k in long_keys)):
+        refuse(f"{mid}: price needs all of {', '.join(long_keys)} or none")
 
 
 def tier_models(models: list[dict], tier: str) -> list[dict]:
@@ -338,6 +381,31 @@ def pair_configs(catalog: dict, keys: dict[str, str]) -> dict[str, dict]:
     return out
 
 
+def allowances(catalog: dict, models: list[dict], config_names: set[str]) -> dict:
+    """Provider -> its allowance, prices by provider model id, and every config name that can reach it."""
+    out = {}
+    for p, spec in catalog["providers"].items():
+        if "allowance" not in spec:
+            continue
+        a = spec["allowance"]
+        mine = [m for m in catalog["models"] if any(s["provider"] == p for s in m["served_by"])]
+        slugs = {slug(m["id"]) for m in mine}
+        tiers = {m["tier"] for m in models if m["slug"] in slugs}
+        configs = {f"team-model-{s}" for s in slugs} | {pair_name(m["id"], p) for m in mine} \
+            | {f"team-probe-{p}"} | {f"team-tier-{t}" for t in tiers}
+        keys = ("input_per_mtok", "output_per_mtok", "long_prompt_over", "long_input_per_mtok", "long_output_per_mtok")
+        out[p] = {
+            "portkey": spec["portkey"],
+            "monthly_usd": a["monthly_usd"],
+            "stop_at_usd": a["stop_at_usd"],
+            "cycle_day": a["cycle_day"],
+            "prices": {s["provider_model_id"]: {k: m["price"][k] for k in keys if k in m["price"]}
+                       for m in mine for s in m["served_by"]},
+            "configs": sorted(c for c in configs if c in config_names),
+        }
+    return out
+
+
 def timeout_s(catalog: dict, m: dict) -> int:
     ms = sum(provider_timeout_ms(catalog, s["provider"]) for s in m["live"])
     return ms // 1000 + 10
@@ -398,7 +466,7 @@ def litellm_config(catalog: dict, models: list[dict]) -> dict:
         "litellm_settings": {
             "drop_params": ll["drop_params"],
             "telemetry": False,
-            "callbacks": ["forward_headers.forward", "session_pin.pin", "usage_log.logger"],
+            "callbacks": ["spend_guard.guard", "forward_headers.forward", "session_pin.pin", "usage_log.logger"],
         },
         "general_settings": {
             "master_key": "os.environ/LITELLM_MASTER_KEY",
@@ -431,6 +499,8 @@ def render(catalog: dict, keys: dict[str, str]) -> dict[str, str]:
             refuse(f"{path} is {len(text.encode())} bytes, over {MAX_CONFIG_BYTES}")
     head = "# GENERATED by integrations/portkey/build.py from catalog.json. Edit the catalog, then rebuild.\n"
     out["litellm/config.yaml"] = head + yaml_dump(litellm_config(catalog, models))
+    names = {p.rsplit("/", 1)[1][:-5] for p in out if p.startswith("portkey/configs/")}
+    out["litellm/allowances.json"] = json_dump(allowances(catalog, models, names))
     return out
 
 

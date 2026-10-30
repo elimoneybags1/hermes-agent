@@ -218,3 +218,15 @@ def test_verify_tests_every_routed_pair_retries_once_and_saves(setup, monkeypatc
     assert json.loads(dash.verify_path().read_text())["total"] == len(rows)
     everything = dash.verify_rows(cat, include_unavailable=True)
     assert len(everything) > len(rows) and any(r["unavailable"] for r in everything)
+
+
+def test_direct_claude_tests_are_refused_once_the_allowance_is_at_its_stop(setup, monkeypatch):
+    import datetime as dt
+    log = setup["state"] / "portkey" / "requests.jsonl"
+    log.write_text(json.dumps({"time": dt.datetime.now(dt.UTC).isoformat(), "provider": "anthropic",
+                               "provider_model": "claude-opus-5-5", "prompt_tokens": 25_000_000, "completion_tokens": 0}) + "\n")
+    st = dash.spend_status()["anthropic"]
+    assert st["over"] and st["spent_usd"] == pytest.approx(100.0)
+    with pytest.raises(dash.Problem, match="allowance stop"):
+        dash.send_test("portkey", "team-pair-claude-opus-5-5--anthropic", "hi")
+    assert dash.overview()["spend"]["anthropic"]["over"]

@@ -291,7 +291,9 @@ VIEWS.overview = () => {
   const chains = Object.entries(tiers).map(([t, ms]) => `<tr><td class="mono">tier-${esc(t)}</td><td><div class="chain">${ms.map((m, i) =>
     `${i ? '<span class="arrow">→</span>' : ""}<span class="m" title="${esc((m.served_by || []).filter((s) => !s.unavailable).map((s) => s.provider).join(" → "))}">${esc(m.id)} <span class="muted small">${esc((m.served_by || []).filter((s) => !s.unavailable).map((s) => s.provider).join("→"))}</span></span>`).join("")}</div>
     <div class="small muted">then ${esc(((S.draft.tier_fallbacks || {})[t] || []).map((x) => "tier-" + x).join(", ") || "nothing")}</div></td></tr>`).join("");
+  const spendCards = Object.entries(d.spend || {}).map(([name, s]) => spendCard(name, s)).join("");
   return `<h2>Overview</h2>
+  ${spendCards ? `<div class="grid">${spendCards}</div>` : ""}
   <p class="lead">Callers ask LiteLLM (port ${esc(svc("litellm").port)}) for a tier or a model. LiteLLM picks the model and forwards to Portkey (port ${esc(svc("portkey").port)}) by config name. Portkey holds the keys and picks the provider. Everything below comes from <span class="mono">catalog.json</span> and the two <span class="mono">.env</span> files.</p>
   <div class="grid">${svcCard("litellm", "LiteLLM · picks the model")}${svcCard("portkey", "Portkey · picks the provider")}
     <div class="card"><div class="row"><strong>Generated configs</strong><span style="flex:1"></span>${dr.ok ? pill(true, "in sync") : pill(false, "", dr.refused ? "refused" : "drift")}</div>
@@ -306,6 +308,20 @@ VIEWS.overview = () => {
   <div class="card scroll"><table>${chains}</table></div>`;
 };
 
+function spendCard(name, s) {
+  const pct = Math.min(100, (s.spent_usd / s.monthly_usd) * 100);
+  const stopPct = Math.min(100, (s.stop_at_usd / s.monthly_usd) * 100);
+  const color = s.over ? "var(--bad)" : pct >= stopPct * 0.8 ? "var(--warn)" : "var(--ok)";
+  return `<div class="card"><div class="row"><strong>${esc(name)} allowance</strong><span style="flex:1"></span>
+      ${s.over ? '<span class="pill bad">stopped</span>' : '<span class="pill ok">routing</span>'}</div>
+    <div style="font-size:22px;font-weight:600;margin:6px 0">$${s.spent_usd.toFixed(2)} <span class="muted small" style="font-weight:400">of $${esc(s.monthly_usd)} this cycle</span></div>
+    <div style="position:relative;height:8px;background:var(--panel-2);border-radius:4px;overflow:hidden">
+      <div style="width:${pct}%;height:100%;background:${color}"></div>
+      <div style="position:absolute;left:${stopPct}%;top:0;bottom:0;width:2px;background:var(--text);opacity:.5" title="stop"></div></div>
+    <div class="small muted" style="margin-top:6px">stops routing at $${esc(s.stop_at_usd)} · ${s.requests} request(s) since ${esc(s.since.slice(0, 10))} · estimated from Portkey's log, every prompt token at full input price</div>
+    ${Object.keys(s.unpriced || {}).length ? `<div class="small" style="color:var(--warn)">unpriced models seen (counted at the highest price): ${esc(Object.keys(s.unpriced).join(", "))}</div>` : ""}</div>`;
+}
+
 VIEWS.keys = () => {
   const L = S.data.linkage;
   const rows = L.providers.map((p) => {
@@ -314,7 +330,8 @@ VIEWS.keys = () => {
       pr === "run" ? '<span class="muted small">probing…</span>' :
       pr ? `${pill(pr.ok, "works", pr.status ? "HTTP " + pr.status : "no answer")} <span class="small muted">${esc(pr.ok ? (pr.seconds + " s, " + (pr.answered_by || "")) : (pr.meaning || pr.error || "")).slice(0, 140)}</span>` : "";
     return `<tr>
-      <td><strong>${esc(p.name)}</strong><div class="small muted">${p.routed_models.length} routed model(s)${p.first_choice_for.length ? ", first choice for " + p.first_choice_for.length : ""}</div></td>
+      <td><strong>${esc(p.name)}</strong><div class="small muted">${p.routed_models.length} routed model(s)${p.first_choice_for.length ? ", first choice for " + p.first_choice_for.length : ""}</div>
+        ${(S.data.spend || {})[p.name] ? `<div class="small">${(() => { const s = S.data.spend[p.name]; return `$${s.spent_usd.toFixed(2)} of $${s.monthly_usd} credit used${s.over ? ' · <span class="pill bad">stopped</span>' : ""}`; })()}</div>` : ""}</td>
       <td class="mono">${esc(p.key_env)}</td>
       <td>${p.key_set ? `<span class="pill ok">set</span> <span class="mono small">${esc(p.key_mask)}</span>` : '<span class="pill bad">missing</span>'}</td>
       <td><div class="row"><input type="password" autocomplete="off" placeholder="paste a new key" data-keyname="${esc(p.key_env)}" data-keyfile="portkey" style="width:220px">
@@ -364,6 +381,11 @@ VIEWS.providers = () => {
         ${field("Limits", input(base.concat("limits"), "opt"))}
         ${field("Notes", input(base.concat("notes"), "opt"))}
       </div>
+      ${c.providers[name].allowance ? `<h3 style="margin-top:6px">Monthly allowance (paid per token from an included credit)</h3><div class="fields">
+        ${field("credit per month ($)", input(base.concat("allowance", "monthly_usd"), "num"))}
+        ${field("stop routing at ($)", input(base.concat("allowance", "stop_at_usd"), "num"), "LiteLLM drops these models once estimated spend reaches this")}
+        ${field("cycle resets on day", input(base.concat("allowance", "cycle_day"), "int"), c.providers[name].allowance.cycle_day_why)}
+      </div>` : ""}
       <div class="small muted">Used by: ${users.length ? esc(users.join(", ")) : "no model"}</div></div>`;
   }).join("");
   const blocked = Object.entries(c.blocked_providers || {}).map(([n]) => `<tr><td class="mono">${esc(n)}</td><td>${input(["blocked_providers", n], "str", 'style="width:100%"')}</td>
@@ -418,6 +440,7 @@ VIEWS.models = () => {
       <label class="small">${input(b.concat("reasoning"), "bool")} reasoning</label>
       <span style="flex:1"></span><button class="b s" data-act="model-test" data-i="${i}">Test all providers</button><button class="b s d" data-act="model-del" data-i="${i}">Delete model</button></div>
       <div class="row small muted" style="margin:6px 0">${input(b.concat("strength"), "opt", 'placeholder="strength" style="flex:1;min-width:200px"')} ${input(b.concat("size"), "opt", 'placeholder="size" style="width:180px"')}</div>
+      ${m.price ? `<div class="row small" style="margin:6px 0"><span class="muted">price per million tokens: in $</span>${input(b.concat("price", "input_per_mtok"), "num", 'style="width:70px"')}<span class="muted">out $</span>${input(b.concat("price", "output_per_mtok"), "num", 'style="width:70px"')}${m.price.long_prompt_over ? `<span class="muted">over ${esc(m.price.long_prompt_over)} prompt tokens: in $${esc(m.price.long_input_per_mtok)} / out $${esc(m.price.long_output_per_mtok)}</span>` : ""}</div>` : ""}
       <div class="scroll"><table class="sb"><tr><th>order</th><th>provider</th><th>provider's model id</th><th>free</th><th>unavailable</th><th>weight</th><th>test (this provider alone)</th><th></th></tr>${sb}</table></div>
       <button class="b s" data-act="sb-add" data-i="${i}">+ provider</button></div>`;
   };

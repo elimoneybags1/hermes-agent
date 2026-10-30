@@ -64,15 +64,12 @@ def test_refuses_free_no(catalog, keys):
 
 
 def test_refuses_a_blocked_provider(catalog, keys):
-    catalog["providers"]["anthropic"] = {
-        "portkey": "anthropic",
-        "key_env": "ANTHROPIC_API_KEY",
-    }
+    assert "minimax" in catalog["blocked_providers"]
     m = first_routed(catalog)
     m["served_by"].append(
-        {"provider": "anthropic", "provider_model_id": "claude-x", "free": "yes"}
+        {"provider": "minimax", "provider_model_id": "minimax-x", "free": "yes"}
     )
-    with pytest.raises(build.Refusal, match="anthropic is blocked"):
+    with pytest.raises(build.Refusal, match="minimax is blocked"):
         build.render(catalog, keys)
 
 

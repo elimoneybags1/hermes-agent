@@ -16,6 +16,10 @@ It edits the same files you would by hand, with the same gates:
   **Probe** sends one request through that provider alone (`team-probe-<provider>`).
 - **Linkage checks**: missing keys, keys no provider uses, keys in the wrong file,
   providers no routed model uses, the master key against each Hermes profile's copy.
+- **Allowance**: a provider paid per token out of an included credit (Anthropic, on the
+  Claude Max plan's $100/month) shows estimated spend this cycle against its credit and
+  stop, from `integrations/portkey/spend.py`. LiteLLM's `spend_guard` stops routing to it at
+  the stop; the dashboard refuses direct tests of it too.
 - **Test**, **Traffic** (`requests.jsonl`, `usage.db`), **Logs** (keys masked).
 
 Catalog edits are not committed; commit `integrations/portkey/catalog.json` yourself.

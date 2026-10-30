@@ -38,8 +38,12 @@ executes the checkout through `scripts/run-in-hermes-env` and Hermes's PM-owned 
 
 ## Free-only, fail closed
 
-Unattended work runs only on free models or on Claude Code through Eli's
-subscription with every `ANTHROPIC_*` variable removed. Enforced in layers:
+Unattended work runs only on free models, on Claude Code through Eli's
+subscription with every `ANTHROPIC_*` variable removed, or on the Anthropic API
+inside the Claude Max plan's included $100/month credit (decided 2026-10-29):
+that key sits in a Console organization with no card, `integrations/portkey/spend.py`
+meters it from Portkey's log, and LiteLLM's `spend_guard` stops routing to it at
+the catalog's `stop_at_usd`. Never an Anthropic key with a payment method. Enforced in layers:
 `integrations/portkey/catalog.json` is the only source of allowed models; its
 generator refuses anything not free; Portkey holds the only copy of provider
 keys; every Hermes profile is pinned (no `auto`, no fallbacks, every side task

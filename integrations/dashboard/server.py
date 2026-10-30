@@ -64,6 +64,10 @@ def _load_build():
 
 
 build = _load_build()
+_spend_spec = importlib.util.spec_from_file_location("team_spend", REPO / "integrations" / "portkey" / "spend.py")
+spend = importlib.util.module_from_spec(_spend_spec)
+_spend_spec.loader.exec_module(spend)
+ledger = spend.Ledger()
 lock = threading.Lock()
 
 
@@ -166,7 +170,7 @@ def render(catalog: dict) -> dict[str, str]:
 
 def changes(files: dict[str, str]) -> dict[str, list[str]]:
     state = state_dir()
-    on_disk = build.generated_on_disk(state) | {"litellm/config.yaml"}
+    on_disk = build.generated_on_disk(state) | {"litellm/config.yaml", "litellm/allowances.json"}
     added, changed = [], []
     for rel, text in files.items():
         p = state / rel
@@ -313,6 +317,7 @@ def linkage(catalog: dict) -> dict:
             "routed_models": routed, "first_choice_for": first, "listed_models": listed,
             "probe": f"team-probe-{name}" if routed else None,
             "free_basis": p.get("free_basis"), "limits": p.get("limits"), "notes": p.get("notes"),
+            "allowance": p.get("allowance"),
         })
         if not key:
             warnings.append(f"{name}: {env} is not set in Portkey's .env" + (" — build.py will refuse" if routed else ""))
@@ -366,6 +371,7 @@ def overview() -> dict:
         "linkage": linkage(catalog),
         "services": service_status(catalog),
         "drift": drift(),
+        "spend": spend_status(),
         "paths": {
             "catalog": str(CATALOG),
             "portkey_env": str(env_path("portkey")),
@@ -373,6 +379,11 @@ def overview() -> dict:
             "state": str(state_dir()),
         },
     }
+
+
+def spend_status() -> dict:
+    ledger.state = state_dir()
+    return ledger.status()
 
 
 # ---------- saving ----------
@@ -444,6 +455,10 @@ def send_test(via: str, model: str, prompt: str, max_tokens: int = 256) -> dict:
     body = {"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": int(max_tokens)}
     host, port = ports(catalog)[via] if via in ("portkey", "litellm") else (None, None)
     if via == "portkey":
+        for name, s in spend_status().items():
+            if s["over"] and model in s["configs"]:
+                raise Problem(f"{name} is at its allowance stop (${s['spent_usd']:.2f} of ${s['stop_at_usd']} "
+                              f"since {s['since']}); raise stop_at_usd or wait for the next cycle")
         headers = {"x-portkey-config": model, "x-portkey-trace-id": trace}
     elif via == "litellm":
         key = read_env(env_path("litellm")).get(MASTER, "")
