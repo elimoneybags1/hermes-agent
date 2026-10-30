@@ -150,8 +150,6 @@
  "models": [
   {
    "id": "glm-5.3",
-   "tier": "reasoning",
-   "order": 1,
    "context": 1048576,
    "tools": true,
    "vision": false,
@@ -162,14 +160,13 @@
     {
      "provider": "nvidia",
      "provider_model_id": "z-ai/glm-5.3",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "410 Gone: end of life 2026-10-28T08:00Z (pair test 2026-10-29)"
     }
    ]
   },
   {
    "id": "mistral-medium",
-   "tier": "reasoning",
-   "order": 2,
    "context": 262144,
    "tools": true,
    "vision": true,
@@ -180,7 +177,8 @@
     {
      "provider": "mistral",
      "provider_model_id": "mistral-medium-latest",
-     "free": "allowance"
+     "free": "allowance",
+     "unavailable": "429 rate limit exceeded, 3 of 3 tries (other Mistral models answer) (pair test 2026-10-29)"
     }
    ]
   },
@@ -289,8 +287,6 @@
   },
   {
    "id": "deepseek-v4.1-flash",
-   "tier": "complex",
-   "order": 2,
    "context": 1048576,
    "tools": true,
    "vision": true,
@@ -302,14 +298,13 @@
      "provider": "nvidia",
      "provider_model_id": "deepseek-ai/deepseek-v4.1-flash",
      "free": "yes",
-     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered"
+     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered",
+     "unavailable": "408 timed out at 90 s, twice (pair test 2026-10-29)"
     }
    ]
   },
   {
    "id": "glm-5.3-flash",
-   "tier": "complex",
-   "order": 2,
    "context": 1048576,
    "tools": true,
    "vision": true,
@@ -321,7 +316,8 @@
      "provider": "nvidia",
      "provider_model_id": "z-ai/glm-5.3-flash",
      "free": "yes",
-     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered"
+     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered",
+     "unavailable": "408 timed out at 90 s, twice (pair test 2026-10-29)"
     }
    ]
   },
@@ -345,8 +341,6 @@
   },
   {
    "id": "mistral-small",
-   "tier": "complex",
-   "order": 2,
    "context": 262144,
    "tools": true,
    "vision": true,
@@ -357,7 +351,8 @@
     {
      "provider": "mistral",
      "provider_model_id": "mistral-small-latest",
-     "free": "allowance"
+     "free": "allowance",
+     "unavailable": "429 rate limit exceeded, 3 of 3 tries (other Mistral models answer) (pair test 2026-10-29)"
     }
    ]
   },
@@ -420,12 +415,14 @@
      "provider": "nvidia",
      "provider_model_id": "google/gemma-4-31b-it",
      "free": "yes",
-     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered"
+     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered",
+     "unavailable": "408 timed out at 90 s, twice (pair test 2026-10-29)"
     },
     {
      "provider": "openrouter",
      "provider_model_id": "google/gemma-4-31b-it:free",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "429 upstream rate limit, 3 of 3 tries (pair test 2026-10-29)"
     },
     {
      "provider": "gemini",
@@ -706,7 +703,8 @@
     {
      "provider": "openrouter",
      "provider_model_id": "google/gemma-4-26b-a4b-it:free",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "429 upstream rate limit, 3 of 3 tries (pair test 2026-10-29)"
     },
     {
      "provider": "gemini",

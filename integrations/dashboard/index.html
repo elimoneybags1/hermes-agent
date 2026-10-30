@@ -100,6 +100,7 @@ pre.log { background: var(--code); padding: 10px; border-radius: 6px; overflow: 
     <button data-view="portkey">Portkey</button>
     <button data-view="json">Raw JSON</button>
     <div class="sub">running</div>
+    <button data-view="verify">Verify</button>
     <button data-view="test">Test</button>
     <button data-view="traffic">Traffic</button>
     <button data-view="logs">Logs</button>
@@ -241,6 +242,7 @@ function render() {
   renderDraft();
   if (S.view === "traffic") loadTraffic();
   if (S.view === "logs") loadLog();
+  if (S.view === "verify" && !S.verify) loadVerify();
 }
 
 // ---------- helpers for views ----------
@@ -382,7 +384,9 @@ VIEWS.models = () => {
   const provs = Object.keys(c.providers || {});
   const tierOpts = [["", "(not routed)"]].concat((c.tiers || []).map((t) => [t, t]));
   const groups = {};
+  const hidden = (c.models || []).filter((m) => !m.tier).length;
   (c.models || []).forEach((m, i) => {
+    if (!m.tier && !S.showUnrouted) return;
     if (filter && !JSON.stringify(m).toLowerCase().includes(filter)) return;
     const g = m.tier || "(not routed)";
     (groups[g] = groups[g] || []).push([m, i]);
@@ -420,6 +424,7 @@ VIEWS.models = () => {
   return `<h2>Models</h2>
   <p class="lead">A routed model has a tier and an order (lower is tried first in its tier). Its providers are tried top to bottom; the arrows change that failover order. <span class="mono">free</span> must be yes or allowance or build.py refuses. Weight only matters when Portkey's mode is loadbalance.</p>
   <div class="card row"><input id="model-filter" placeholder="filter models" value="${esc(S.modelFilter || "")}" style="width:240px">
+    <label class="small"><input type="checkbox" id="show-unrouted" ${S.showUnrouted ? "checked" : ""}> show the ${hidden} models that are not routed</label>
     <span style="flex:1"></span><input id="newmodel" placeholder="new model id" class="mono" style="width:220px"><button class="b s p" data-act="model-add">Add model</button></div>
   ${body || '<p class="muted">no models match</p>'}`;
 };
@@ -479,6 +484,67 @@ VIEWS.json = () => `<h2>Raw JSON</h2>
   <p class="lead">The whole draft catalog. Edit, then <strong>Apply to draft</strong>; it becomes the same unsaved draft the other views edit, and saving still goes through build.py.</p>
   <div class="card"><textarea id="rawjson" class="mono" rows="34" spellcheck="false">${esc(JSON.stringify(S.draft, null, 1))}</textarea>
   <div class="row" style="margin-top:8px"><button class="b p" data-act="raw-apply">Apply to draft</button><span id="rawerr" class="small"></span></div></div>`;
+
+VIEWS.verify = () => {
+  const v = S.verify || {};
+  const res = v.results || [];
+  const okN = res.filter((r) => r.ok).length;
+  const head = v.running ? `<span class="pill warn">running</span> ${res.length} of ${v.total} tested · started ${esc(v.started)}`
+    : v.finished ? `Last run (${esc(v.scope)}): ${okN} of ${res.length} work · finished ${esc(v.finished)}` : "No verify run yet.";
+  const order = (S.data.catalog.tiers || []).concat([null]);
+  const rows = res.slice().sort((a, b) => order.indexOf(a.tier) - order.indexOf(b.tier) || a.model.localeCompare(b.model) || a.provider.localeCompare(b.provider));
+  const table = rows.map((r) => `<tr>
+    <td>${r.ok ? (r.slow ? '<span class="pill warn">slow</span>' : '<span class="pill ok">works</span>') : '<span class="pill bad">fails</span>'}</td>
+    <td class="mono small">${esc(r.tier ? "tier-" + r.tier : "not routed")}</td><td class="mono">${esc(r.model)}</td><td>${esc(r.provider)}</td>
+    <td class="small">${r.status == null ? "—" : "HTTP " + esc(r.status)} · ${esc(r.seconds ?? "")} s${r.tries > 1 ? ` · 2nd try (1st: ${esc(r.first && r.first.status)})` : ""}</td>
+    <td class="small muted">${r.ok ? esc(r.answered_by || "") : esc(((r.meaning ? r.meaning + ": " : "") + (r.error || "")).slice(0, 180))}${r.unavailable ? `<div>catalog: unavailable — ${esc(r.unavailable)}</div>` : ""}</td>
+    <td class="small mono">${esc((r.time || "").replace("T", " ").slice(5, 16))}</td></tr>`).join("");
+  const failing = res.filter((r) => !r.ok && !r.unavailable).length;
+  const back = res.filter((r) => r.ok && r.unavailable).length;
+  return `<h2>Verify</h2>
+  <p class="lead">A probe proves a key is alive; it does not prove every model on that key still answers. Verify sends one short request to every model on every one of its providers, alone (its <span class="mono">team-pair-*</span> config), retries a failure once after ${15} s, and records when. Run it again whenever you change keys or a few days pass: free models get retired, rate-limited and moved without notice.</p>
+  <div class="card"><div class="row"><button class="b p" data-act="verify" ${v.running ? "disabled" : ""}>Test every routed model</button>
+    <button class="b" data-act="verify-all" ${v.running ? "disabled" : ""}>Test everything, including unavailable</button><span class="small">${head}</span></div>
+    ${!v.running && res.length ? `<div class="row" style="margin-top:10px">
+      <button class="b" data-act="verify-mark" ${failing ? "" : "disabled"}>Mark the ${failing} failing as unavailable</button>
+      <button class="b" data-act="verify-restore" ${back ? "" : "disabled"}>Restore the ${back} unavailable that now work</button>
+      <span class="small muted">These edit the draft; review it in the bar above, then Save &amp; apply. A model left with no working provider stops being routed.</span></div>` : ""}</div>
+  ${rows.length ? `<div class="card scroll"><table><tr><th></th><th>tier</th><th>model</th><th>provider</th><th>result</th><th>detail</th><th>tested (UTC)</th></tr>${table}</table></div>` : ""}`;
+};
+async function loadVerify() {
+  try { S.verify = await api("GET", "/api/verify"); } catch (e) { toast(e.message, "bad"); }
+  if (S.view === "verify") render();
+  clearTimeout(loadVerify.t);
+  if (S.verify && S.verify.running) loadVerify.t = setTimeout(loadVerify, 3000);
+}
+function today() { return new Date().toISOString().slice(0, 10); }
+function markFailing() {
+  const res = (S.verify && S.verify.results) || [];
+  let n = 0;
+  for (const r of res) {
+    if (r.ok || r.unavailable) continue;
+    const m = S.draft.models.find((x) => x.id === r.model);
+    const s = m && m.served_by.find((x) => x.provider === r.provider);
+    if (!s) continue;
+    s.unavailable = `${r.status == null ? "no answer" : r.status} ${r.meaning || String(r.error || "").slice(0, 80)} (verify ${today()})`;
+    n++;
+    if (m.tier && m.served_by.every((x) => x.unavailable)) { delete m.tier; delete m.order; }
+  }
+  toast(`${n} provider row(s) marked unavailable in the draft`);
+  render();
+}
+function restoreWorking() {
+  const res = (S.verify && S.verify.results) || [];
+  let n = 0;
+  for (const r of res) {
+    if (!r.ok || !r.unavailable) continue;
+    const m = S.draft.models.find((x) => x.id === r.model);
+    const s = m && m.served_by.find((x) => x.provider === r.provider);
+    if (s && s.unavailable) { delete s.unavailable; n++; }
+  }
+  toast(`${n} provider row(s) restored in the draft; give a model a tier on the Models page to route it`);
+  render();
+}
 
 VIEWS.test = () => {
   const c = S.data.catalog;
@@ -641,6 +707,10 @@ const ACTS = {
     try { S.test = await api("POST", "/api/test", body); } catch (e) { S.test = { error: e.message }; }
     render(); restoreTestForm();
   },
+  verify: async () => { try { S.verify = await api("POST", "/api/verify", {}); render(); loadVerify(); } catch (e) { toast(e.message, "bad"); } },
+  "verify-all": async () => { try { S.verify = await api("POST", "/api/verify", { include_unavailable: true }); render(); loadVerify(); } catch (e) { toast(e.message, "bad"); } },
+  "verify-mark": markFailing,
+  "verify-restore": restoreWorking,
   traffic: loadTraffic,
   log: () => { S.logSvc = $("#log-svc").value; loadLog(); },
 };
@@ -670,6 +740,7 @@ document.addEventListener("change", (ev) => {
     clearInterval(S.auto); S.auto = el.checked ? setInterval(() => S.view === "traffic" && loadTraffic(), 5000) : null; return;
   }
   if (el.id === "log-svc") { S.logSvc = el.value; loadLog(); return; }
+  if (el.id === "show-unrouted") { S.showUnrouted = el.checked; render(); return; }
   if (el.dataset.actChange === "tier") {
     const m = S.draft.models[Number(el.dataset.i)];
     if (!m.tier) delete m.order;

@@ -499,6 +499,101 @@ def probe(provider: str) -> dict:
     return r
 
 
+# ---------- verify: every model on every provider ----------
+
+SLOW_S = 30
+RETRY_WAIT_S = 15
+verify_state: dict = {"running": False}
+verify_lock = threading.Lock()
+
+
+def verify_path() -> Path:
+    return state_dir() / "dashboard" / "verify.json"
+
+
+def last_verify() -> dict:
+    p = verify_path()
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def verify_rows(catalog: dict, include_unavailable: bool) -> list[dict]:
+    keys = read_env(env_path("portkey"))
+    rows = []
+    for m in catalog.get("models", []):
+        if not include_unavailable and not m.get("tier"):
+            continue
+        for s in m.get("served_by", []):
+            if s.get("unavailable") and not include_unavailable:
+                continue
+            p = catalog["providers"].get(s["provider"], {})
+            rows.append({"model": m["id"], "tier": m.get("tier"), "provider": s["provider"],
+                         "provider_model_id": s.get("provider_model_id"), "unavailable": s.get("unavailable"),
+                         "config": build.pair_name(m["id"], s["provider"]),
+                         "key_set": bool(keys.get(p.get("key_env", "")))})
+    return rows
+
+
+def verify_one(row: dict) -> dict:
+    if not row["key_set"]:
+        return {**row, "ok": False, "status": None, "error": "no key set for this provider", "tries": 0,
+                "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    first = None
+    for attempt in (1, 2):
+        r = send_test("portkey", row["config"], PROBE_PROMPT, 1024)
+        ok = r.get("status") == 200 and bool(r.get("answer") or r.get("reasoning"))
+        if ok or attempt == 2:
+            break
+        first = {"status": r.get("status"), "meaning": r.get("meaning")}
+        time.sleep(RETRY_WAIT_S)
+    return {**row, "ok": ok, "status": r.get("status"), "seconds": r.get("seconds"), "slow": (r.get("seconds") or 0) > SLOW_S,
+            "answered_by": r.get("answered_by"), "meaning": r.get("meaning"), "error": r.get("error"),
+            "tries": attempt, "first": first, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+
+
+def start_verify(include_unavailable: bool) -> dict:
+    with verify_lock:
+        if verify_state.get("running"):
+            raise Problem("a verify run is already going", 409)
+        catalog = json.loads(catalog_text())
+        rows = verify_rows(catalog, include_unavailable)
+        verify_state.clear()
+        verify_state.update({"running": True, "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                             "scope": "everything" if include_unavailable else "routed", "total": len(rows), "results": []})
+    by_provider: dict[str, list[dict]] = {}
+    for row in rows:
+        by_provider.setdefault(row["provider"], []).append(row)
+
+    def worker(items: list[dict]) -> None:
+        for row in items:
+            res = verify_one(row)
+            with verify_lock:
+                verify_state["results"].append(res)
+
+    def run() -> None:
+        threads = [threading.Thread(target=worker, args=(items,), daemon=True) for items in by_provider.values()]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        with verify_lock:
+            verify_state["running"] = False
+            verify_state["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            done = dict(verify_state)
+        p = verify_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(done, indent=1))
+
+    threading.Thread(target=run, daemon=True).start()
+    return verify_status()
+
+
+def verify_status() -> dict:
+    with verify_lock:
+        if verify_state.get("started"):
+            return {**verify_state, "results": list(verify_state["results"])}
+    return {"running": False, **last_verify()}
+
+
 # ---------- logs ----------
 
 def recent(n: int = 100) -> dict:
@@ -584,6 +679,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, html.encode(), "text/html; charset=utf-8")
             if path == "/api/overview":
                 return self._json(200, overview())
+            if path == "/api/verify":
+                return self._json(200, verify_status())
             if path == "/api/recent":
                 return self._json(200, recent(min(int(query.get("n", 100)), 1000)))
             if path == "/api/log":
@@ -612,6 +709,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/test":
                 return self._json(200, send_test(str(d.get("via", "")), str(d.get("model", "")),
                                                  str(d.get("prompt") or PROBE_PROMPT), int(d.get("max_tokens") or 256)))
+            if self.path == "/api/verify":
+                return self._json(200, start_verify(bool(d.get("include_unavailable"))))
             if self.path == "/api/probe":
                 return self._json(200, probe(str(d.get("provider", ""))))
             self._json(404, {"error": "not found"})

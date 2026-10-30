@@ -10,6 +10,9 @@ $HOME/state/team/portkey/.env):
   portkey/configs/team-tier-<tier>.json    one per tier: fallback over every model of the tier, in order
   portkey/configs/team-probe-<provider>.json  one per provider: only that provider, on its first routed
                                            model, so a key can be tested on its own (the dashboard's probe)
+  portkey/configs/team-pair-<slug>--<provider>.json  one per served_by row of every model, routed or not,
+                                           unavailable or not, whose key is set: that model on that
+                                           provider alone, so the dashboard can verify each one
   litellm/config.yaml                      every deployment points at Portkey by config name
 
 (PLAN.md also lists portkey/conf.json with an admin token for the console; Portkey v1.15.2 has no
@@ -319,6 +322,22 @@ def probe_configs(catalog: dict, models: list[dict], keys: dict[str, str]) -> di
     return out
 
 
+def pair_name(model_id: str, provider: str) -> str:
+    return f"team-pair-{slug(model_id)}--{provider}"
+
+
+def pair_configs(catalog: dict, keys: dict[str, str]) -> dict[str, dict]:
+    """Config name -> that one model on that one provider. Every row has passed routed()'s free checks."""
+    out = {}
+    for m in catalog["models"]:
+        for s in m["served_by"]:
+            if keys.get(catalog["providers"][s["provider"]]["key_env"]):
+                name = pair_name(m["id"], s["provider"])
+                out[name] = {"_": f"{GEN_JSON}; verify {m['id']} on {s['provider']} alone",
+                             **target(catalog, m, s, keys)}
+    return out
+
+
 def timeout_s(catalog: dict, m: dict) -> int:
     ms = sum(provider_timeout_ms(catalog, s["provider"]) for s in m["live"])
     return ms // 1000 + 10
@@ -402,6 +421,11 @@ def render(catalog: dict, keys: dict[str, str]) -> dict[str, str]:
         out[f"portkey/configs/team-tier-{t}.json"] = json_dump(tier_config(catalog, models, t, keys))
     for p, cfg in probe_configs(catalog, models, keys).items():
         out[f"portkey/configs/team-probe-{p}.json"] = json_dump(cfg)
+    for name, cfg in pair_configs(catalog, keys).items():
+        path = f"portkey/configs/{name}.json"
+        if path in out:
+            refuse(f"{name}: two models share a slug")
+        out[path] = json_dump(cfg)
     for path, text in out.items():
         if len(text.encode()) > MAX_CONFIG_BYTES:
             refuse(f"{path} is {len(text.encode())} bytes, over {MAX_CONFIG_BYTES}")

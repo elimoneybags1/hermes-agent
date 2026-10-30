@@ -187,3 +187,34 @@ def test_http_check_reports_refusals_as_400(served, setup):
     cat["blocked_providers"]["groq"] = "test"
     status, body = _req(served, "/api/check", {"x-team-token": "tok"}, {"catalog": cat})
     assert status == 400 and "groq" in json.loads(body)["error"]
+
+
+def test_verify_tests_every_routed_pair_retries_once_and_saves(setup, monkeypatch):
+    calls = []
+
+    def fake(via, model, prompt, max_tokens=256):
+        calls.append(model)
+        if model.endswith("--groq"):
+            return {"status": 429, "meaning": "rate limited", "error": "slow down", "seconds": 0.1}
+        return {"status": 200, "answer": "pong", "answered_by": "m", "seconds": 0.1}
+
+    monkeypatch.setattr(dash, "send_test", fake)
+    monkeypatch.setattr(dash, "RETRY_WAIT_S", 0)
+    cat = json.loads(setup["path"].read_text())
+    rows = dash.verify_rows(cat, include_unavailable=False)
+    assert rows and all(r["tier"] and not r["unavailable"] for r in rows)
+    assert {r["config"] for r in rows} <= {p.stem for p in (setup["state"] / "portkey" / "configs").glob("team-pair-*.json")}
+    dash.start_verify(False)
+    for _ in range(200):
+        if not dash.verify_status()["running"]:
+            break
+        threading.Event().wait(0.02)
+    st = dash.verify_status()
+    assert st["total"] == len(rows) == len(st["results"])
+    groq = [r for r in st["results"] if r["provider"] == "groq"]
+    assert groq and all(not r["ok"] and r["tries"] == 2 and r["first"]["status"] == 429 for r in groq)
+    assert all(r["ok"] for r in st["results"] if r["provider"] != "groq")
+    assert len(calls) == len(rows) + len(groq)
+    assert json.loads(dash.verify_path().read_text())["total"] == len(rows)
+    everything = dash.verify_rows(cat, include_unavailable=True)
+    assert len(everything) > len(rows) and any(r["unavailable"] for r in everything)

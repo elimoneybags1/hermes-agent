@@ -250,3 +250,23 @@ def test_one_probe_per_provider_with_that_provider_alone(catalog, keys):
         assert cfg["provider"] == catalog["providers"][provider]["portkey"]
         assert cfg["api_key"] == f"key-for-{provider}"
         assert "targets" not in cfg
+
+
+def test_one_pair_config_per_served_by_row_including_unavailable(catalog, keys):
+    files = build.render(catalog, keys)
+    rows = [(m["id"], s["provider"]) for m in catalog["models"] for s in m["served_by"]]
+    pairs = {p for p in files if "/team-pair-" in p}
+    assert pairs == {f"portkey/configs/{build.pair_name(i, p)}.json" for i, p in rows}
+    m = next(m for m in catalog["models"] if any(s.get("unavailable") for s in m["served_by"]))
+    s = next(s for s in m["served_by"] if s.get("unavailable"))
+    cfg = json.loads(files[f"portkey/configs/{build.pair_name(m['id'], s['provider'])}.json"])
+    assert cfg["override_params"] == {"model": s["provider_model_id"]}
+    assert "targets" not in cfg
+
+
+def test_a_pair_is_skipped_when_its_key_is_missing(catalog, keys):
+    gone = next(p for p in catalog["providers"] if not any(
+        s["provider"] == p and not s.get("unavailable") for m in catalog["models"] if m.get("tier") for s in m["served_by"]))
+    keys.pop(catalog["providers"][gone]["key_env"])
+    files = build.render(catalog, keys)
+    assert not any(p.endswith(f"--{gone}.json") for p in files)
