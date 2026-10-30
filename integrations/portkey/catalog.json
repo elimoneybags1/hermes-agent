@@ -202,8 +202,6 @@
   },
   {
    "id": "nemotron-3-ultra-550b",
-   "tier": "reasoning",
-   "order": 3,
    "context": 1000000,
    "max_output": 65536,
    "tools": true,
@@ -215,19 +213,21 @@
     {
      "provider": "nvidia",
      "provider_model_id": "nvidia/nemotron-3-ultra-550b-a55b",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "408 timed out, 2 of 2 tries (verify 2026-10-30)"
     },
     {
      "provider": "openrouter",
      "provider_model_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "408 timed out, 2 of 2 tries (verify 2026-10-30)"
     }
    ]
   },
   {
    "id": "command-a-plus",
    "tier": "reasoning",
-   "order": 4,
+   "order": 1,
    "context": 128000,
    "max_output": 64000,
    "tools": true,
@@ -246,7 +246,7 @@
   {
    "id": "muse-glimmer-30b",
    "tier": "complex",
-   "order": 1,
+   "order": 3,
    "context": 131072,
    "tools": true,
    "vision": true,
@@ -359,7 +359,7 @@
   {
    "id": "laguna-xs-2.1",
    "tier": "medium",
-   "order": 1,
+   "order": 3,
    "context": 262144,
    "max_output": 32768,
    "tools": true,
@@ -369,13 +369,13 @@
    "strength": "SWE-bench Verified 70.9",
    "served_by": [
     {
-     "provider": "nvidia",
-     "provider_model_id": "poolside/laguna-xs-2.1",
+     "provider": "openrouter",
+     "provider_model_id": "poolside/laguna-xs-2.1:free",
      "free": "yes"
     },
     {
-     "provider": "openrouter",
-     "provider_model_id": "poolside/laguna-xs-2.1:free",
+     "provider": "nvidia",
+     "provider_model_id": "poolside/laguna-xs-2.1",
      "free": "yes"
     }
    ]
@@ -383,7 +383,7 @@
   {
    "id": "laguna-s-2.1",
    "tier": "medium",
-   "order": 1,
+   "order": 4,
    "context": 262144,
    "max_output": 32768,
    "tools": true,
@@ -402,7 +402,7 @@
   {
    "id": "gemma-4-31b",
    "tier": "medium",
-   "order": 2,
+   "order": 8,
    "context": 262144,
    "max_output": 32768,
    "tools": true,
@@ -412,11 +412,9 @@
    "strength": "LiveCodeBench v6 80.0, SWE-bench Verified 66.6",
    "served_by": [
     {
-     "provider": "nvidia",
-     "provider_model_id": "google/gemma-4-31b-it",
-     "free": "yes",
-     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered",
-     "unavailable": "408 timed out at 90 s, twice (pair test 2026-10-29)"
+     "provider": "gemini",
+     "provider_model_id": "gemma-4-31b-it",
+     "free": "yes"
     },
     {
      "provider": "openrouter",
@@ -425,16 +423,18 @@
      "unavailable": "429 upstream rate limit, 3 of 3 tries (pair test 2026-10-29)"
     },
     {
-     "provider": "gemini",
-     "provider_model_id": "gemma-4-31b-it",
-     "free": "yes"
+     "provider": "nvidia",
+     "provider_model_id": "google/gemma-4-31b-it",
+     "free": "yes",
+     "note": "timed out (>7 min) on 2026-10-26 while other NVIDIA models answered",
+     "unavailable": "408 timed out at 90 s, twice (pair test 2026-10-29)"
     }
    ]
   },
   {
    "id": "gemini-2.5-flash",
    "tier": "medium",
-   "order": 2,
+   "order": 5,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -452,7 +452,7 @@
   {
    "id": "gemini-3-flash-preview",
    "tier": "medium",
-   "order": 2,
+   "order": 7,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -470,7 +470,7 @@
   {
    "id": "ministral-14b",
    "tier": "medium",
-   "order": 2,
+   "order": 1,
    "context": 262144,
    "tools": true,
    "vision": true,
@@ -488,7 +488,7 @@
   {
    "id": "glm-4.7-flash",
    "tier": "medium",
-   "order": 2,
+   "order": 6,
    "context": 200000,
    "max_output": 128000,
    "tools": true,
@@ -506,7 +506,7 @@
   {
    "id": "north-mini-code",
    "tier": "medium",
-   "order": 3,
+   "order": 2,
    "context": 256000,
    "max_output": 64000,
    "tools": true,
@@ -530,7 +530,7 @@
   {
    "id": "gemini-3.5-flash-lite",
    "tier": "simple",
-   "order": 1,
+   "order": 4,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -548,7 +548,7 @@
   {
    "id": "gemini-3.1-flash-lite",
    "tier": "simple",
-   "order": 1,
+   "order": 6,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -566,7 +566,7 @@
   {
    "id": "nemotron-3.5-lightning-30b",
    "tier": "simple",
-   "order": 1,
+   "order": 9,
    "context": 1000000,
    "max_output": 65536,
    "tools": true,
@@ -590,7 +590,7 @@
   {
    "id": "gpt-oss-20b",
    "tier": "simple",
-   "order": 2,
+   "order": 5,
    "context": 131072,
    "max_output": 2048,
    "tools": true,
@@ -615,7 +615,7 @@
   {
    "id": "gpt-oss-120b",
    "tier": "simple",
-   "order": 2,
+   "order": 1,
    "context": 131072,
    "max_output": 32768,
    "tools": true,
@@ -641,7 +641,7 @@
   {
    "id": "gemini-2.5-flash-lite",
    "tier": "simple",
-   "order": 2,
+   "order": 3,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -677,7 +677,7 @@
   {
    "id": "glm-4.5-flash",
    "tier": "simple",
-   "order": 2,
+   "order": 8,
    "vision": false,
    "strength": "older free Flash",
    "served_by": [
@@ -691,7 +691,7 @@
   {
    "id": "gemma-4-26b-a4b",
    "tier": "simple",
-   "order": 3,
+   "order": 7,
    "context": 262144,
    "max_output": 32768,
    "tools": true,
@@ -701,15 +701,15 @@
    "strength": "small Gemma MoE",
    "served_by": [
     {
+     "provider": "gemini",
+     "provider_model_id": "gemma-4-26b-a4b-it",
+     "free": "yes"
+    },
+    {
      "provider": "openrouter",
      "provider_model_id": "google/gemma-4-26b-a4b-it:free",
      "free": "yes",
      "unavailable": "429 upstream rate limit, 3 of 3 tries (pair test 2026-10-29)"
-    },
-    {
-     "provider": "gemini",
-     "provider_model_id": "gemma-4-26b-a4b-it",
-     "free": "yes"
     }
    ]
   },
@@ -748,8 +748,7 @@
     {
      "provider": "openrouter",
      "provider_model_id": "thinkingmachines/inkling:free",
-     "free": "yes",
-     "unavailable": "'only available on agentic harnesses' (2026-10-26)"
+     "free": "yes"
     }
    ],
    "unavailable": "openrouter: 'only available on agentic harnesses' (2026-10-26)"
@@ -769,8 +768,7 @@
     {
      "provider": "openrouter",
      "provider_model_id": "thinkingmachines/inkling-small:free",
-     "free": "yes",
-     "unavailable": "'only available on agentic harnesses' (2026-10-26)"
+     "free": "yes"
     }
    ],
    "unavailable": "openrouter: 'only available on agentic harnesses' (2026-10-26)"
@@ -835,16 +833,16 @@
    "strength": "SWE-bench Pro 61.7 (Groq card), ~1,850 tokens/s",
    "served_by": [
     {
-     "provider": "cerebras",
-     "provider_model_id": "qwen-3.8-27b",
-     "free": "allowance",
-     "unavailable": "'Payment required' - trial credit gone (2026-10-26)"
-    },
-    {
      "provider": "groq",
      "provider_model_id": "qwen/qwen3.8-27b",
      "free": "yes",
      "max_input": 6000
+    },
+    {
+     "provider": "cerebras",
+     "provider_model_id": "qwen-3.8-27b",
+     "free": "allowance",
+     "unavailable": "'Payment required' - trial credit gone (2026-10-26)"
     }
    ],
    "unrouted": "'Payment required' - trial credit gone (2026-10-26)"
@@ -882,7 +880,8 @@
     {
      "provider": "openrouter",
      "provider_model_id": "xingchen-agi/xing4.0-29b-a4b:free",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "429 rate limited, 2 of 2 tries (verify 2026-10-30)"
     }
    ],
    "unrouted": "TeleAI; no benchmark found"
@@ -945,7 +944,8 @@
     {
      "provider": "openrouter",
      "provider_model_id": "liquid/lfm-2.5-2.6b:free",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "429 rate limited, 2 of 2 tries (verify 2026-10-30)"
     }
    ],
    "unrouted": "Liquid advises against agentic coding"
@@ -981,7 +981,8 @@
     {
      "provider": "nvidia",
      "provider_model_id": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "404 model not served, 2 of 2 tries (verify 2026-10-30)"
     }
    ],
    "unrouted": "2025 reasoner, superseded"
@@ -1018,7 +1019,8 @@
     {
      "provider": "nvidia",
      "provider_model_id": "google/diffusiongemma-26b-a4b-it",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "200 empty answer, 2 of 2 tries (verify 2026-10-30)"
     }
    ],
    "unrouted": "text-diffusion, very fast; LiveCodeBench v6 69.1"
