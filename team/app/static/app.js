@@ -450,6 +450,7 @@
       h("div", null, h("span", { class: "muted" }, "check "), h("code", null, g.check)),
       h("div", null, h("span", { class: "muted" }, "branch "), h("code", null, g.branch)),
       g.order_bytes ? h("div", { class: "muted" }, "work order v" + g.order_version + ", " + fmt(g.order_bytes) + " bytes") : null,
+      (g.files && g.files.length) ? h("div", { class: "goal-files" }, h("span", { class: "muted" }, "files "), g.files.map(function (f) { return h("div", null, h("code", null, f)); })) : null,
       g.planned ? attemptView(g.planned) : null,
       g.attempts.map(attemptView),
       g.detail ? h("div", { class: "detail" }, g.detail) : null);
