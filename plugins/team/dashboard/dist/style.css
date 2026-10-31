@@ -1,14 +1,36 @@
-.team-inbox { display: flex; flex-direction: column; gap: 0.5rem; padding: 1rem; max-width: 60rem; }
-.team-inbox h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; margin: 1rem 0 0.25rem; }
-.team-row { border: 1px solid var(--border, rgba(127,127,127,0.25)); border-radius: 0.5rem; }
-.team-row > button.team-head { all: unset; cursor: pointer; display: flex; gap: 0.6rem; align-items: center; width: 100%; padding: 0.6rem 0.8rem; box-sizing: border-box; }
-.team-head .team-chev { opacity: 0.5; width: 1rem; }
-.team-head .team-line { flex: 1; }
-.team-body { padding: 0 0.8rem 0.8rem 2.4rem; display: flex; flex-direction: column; gap: 0.6rem; }
-.team-summary { white-space: pre-wrap; line-height: 1.45; }
-.team-goal { border-left: 2px solid var(--border, rgba(127,127,127,0.3)); padding-left: 0.7rem; }
-.team-part { margin: 0.35rem 0 0 0; font-size: 0.9em; }
-.team-part .team-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.2rem; }
+.team-page { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; max-width: 72rem; }
+.team-page h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.6; margin: 0.75rem 0 0; }
+.team-page button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+.team-plan { border: 1px solid var(--border, rgba(127,127,127,0.25)); border-radius: 0.6rem; padding: 0.6rem 0.8rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.team-plan--waiting { border-color: var(--primary, #6b8afd); }
+.team-plan-head { display: flex; align-items: center; gap: 0.6rem; }
+.team-headline { flex: 1; text-align: left; font-weight: 600; }
+.team-check { width: 1.6rem; height: 1.6rem; border-radius: 999px !important; border: 1.5px solid var(--primary, #6b8afd) !important; display: inline-flex; align-items: center; justify-content: center; font-size: 0.9rem; }
+.team-check:hover { background: var(--primary, #6b8afd) !important; color: var(--primary-foreground, #fff) !important; }
+.team-check--done { border-color: rgba(127,127,127,0.4) !important; opacity: 0.6; }
+.team-dismiss { font-size: 0.8rem; opacity: 0.6; }
+.team-dismiss:hover { opacity: 1; text-decoration: underline; }
+.team-plan-summary { padding-left: 2.2rem; }
+.team-goal { border-top: 1px solid var(--border, rgba(127,127,127,0.15)); padding-top: 0.4rem; }
+.team-goal-head { display: flex; align-items: center; gap: 0.6rem; }
+.team-expand { width: 1.2rem; opacity: 0.6; }
+.team-goal-text { flex: 1; min-width: 0; }
+.team-n { display: inline-block; min-width: 1.3rem; opacity: 0.55; font-variant-numeric: tabular-nums; }
+.team-goal-body { padding: 0.3rem 0 0.2rem 1.8rem; display: flex; flex-direction: column; gap: 0.45rem; }
+.team-summary { white-space: pre-wrap; line-height: 1.45; opacity: 0.9; }
+.team-part { font-size: 0.9em; border-left: 2px solid var(--border, rgba(127,127,127,0.3)); padding-left: 0.6rem; }
+.team-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.2rem 0; }
 .team-muted { opacity: 0.65; font-size: 0.85em; }
-.team-actions { display: flex; gap: 0.5rem; }
-.team-error { color: var(--destructive, #c33); }
+.team-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.team-error { color: var(--destructive, #d33); font-size: 0.9em; }
+.team-track { display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; white-space: nowrap; }
+.team-track--off { opacity: 0.55; }
+.team-stop { display: inline-flex; align-items: center; gap: 0.25rem; }
+.team-dot { width: 0.55rem; height: 0.55rem; border-radius: 999px; border: 1.5px solid currentColor; display: inline-block; }
+.team-stop--todo { opacity: 0.4; }
+.team-stop--done .team-dot { background: currentColor; opacity: 0.6; }
+.team-stop--here { color: var(--primary, #6b8afd); font-weight: 600; }
+.team-stop--here .team-dot { background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent); }
+.team-wire { width: 1.2rem; height: 1.5px; background: currentColor; opacity: 0.25; }
+.team-wire--done { opacity: 0.6; }
+.team-stopped { margin-left: 0.4rem; color: var(--destructive, #d33); }

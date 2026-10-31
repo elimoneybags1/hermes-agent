@@ -181,6 +181,58 @@ def card(p: dict) -> dict:
     }
 
 
+STATIONS = ("boss", "lead", "workers", "landed")
+
+
+def flow(conn: sqlite3.Connection, target: str | None = None, limit: int = 20) -> list[dict]:
+    """Every recent plan, goal by goal, with the station each goal is at.
+
+    A goal sits with the **boss** while its plan waits for Eli, with the
+    **lead** once approved and until it is released, with the **workers**
+    while any of its parts is open, and is **landed** when every part passed.
+    ``stopped`` means a part failed and nothing of it is still running.
+    """
+    out = []
+    for p in proposals(target)[:limit]:
+        c = card(p)
+        for g, raw in zip(c["goals"], p["goals"], strict=True):
+            rows = [ledger.get_goal(conn, i) for i in raw.get("goal_ids") or []]
+            for part, row in zip(g["parts"], rows, strict=False):
+                part["state"] = _part_state(conn, row)
+            if p["status"] == "waiting":
+                d = ledger.get_decision(conn, p["decision_id"])
+                accepted = d is not None and d["status"] == "answered"
+                g["station"] = "lead" if accepted else "boss"
+            elif p["status"] in ("dismissed",):
+                g["station"] = "dismissed"
+            elif not rows:
+                g["station"] = "lead" if p["status"] != "failed" else "stopped"
+            elif all(r["outcome"] == "pass" for r in rows):
+                g["station"] = "landed"
+            elif any(r["outcome"] is None for r in rows):
+                g["station"] = "workers"
+            else:
+                g["station"] = "stopped"
+        c["error"] = p.get("error")
+        if c["status"] == "waiting" and c["goals"] and c["goals"][0]["station"] == "lead":
+            c["status"] = "accepted"
+        out.append(c)
+    return out
+
+
+def _part_state(conn: sqlite3.Connection, row: dict | None) -> str:
+    if row is None:
+        return "not released"
+    if row["outcome"] == "pass":
+        return "landed"
+    if row["outcome"]:
+        return f"{row['outcome']}: {_line(row['detail'], 80)}"
+    if not row["current_task"]:
+        return "waits for the parts before it"
+    notes = len(ledger.list_diagnoses(conn, row["id"]))
+    return f"attempt {row['attempt']}" + (f", {notes} lead notes" if notes else "")
+
+
 def settle(conn: sqlite3.Connection, decision_id: int, answer: str | None) -> None:
     """Eli's answer to a proposal or suggestion: ``approve``/``apply`` or ``dismiss`` (None)."""
     d = ledger.get_decision(conn, decision_id)
@@ -226,7 +278,8 @@ def release_approved(
                     runner=runner, cat=cat, log=log,
                 )
                 part_ids.append([r["part_id"] for r in rows])
-                goal_ids += [r["id"] for r in rows]
+                g["goal_ids"] = [r["id"] for r in rows]
+                goal_ids += g["goal_ids"]
         except Exception as e:
             p["status"], p["goal_ids"], p["error"] = "failed", goal_ids, str(e)
             _save(p)

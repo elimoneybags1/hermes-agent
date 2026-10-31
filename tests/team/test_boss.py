@@ -211,3 +211,20 @@ def test_the_tab_api(team):
     client.post(f"/api/plugins/team/decisions/{other}/answer", json={"answer": "no"})
     assert ledger.get_decision(team["conn"], other)["answer"] == "no"
     assert json.loads((REPO / "plugins" / "team" / "dashboard" / "manifest.json").read_text())["tab"]["path"] == "/team"
+
+
+def test_flow_moves_each_goal_from_boss_to_landed(team):
+    p = propose(team)
+    [plan] = boss.flow(team["conn"])
+    assert plan["goals"][0]["station"] == "boss"
+    boss.settle(team["conn"], p["decision_id"], "approve")
+    assert boss.flow(team["conn"])[0]["goals"][0]["station"] == "lead"
+    team["loop"].tick()
+    goal = boss.flow(team["conn"])[0]["goals"][0]
+    assert goal["station"] == "workers" and goal["parts"][0]["state"] == "attempt 1"
+    from tests.team.test_run import worker_commits
+
+    worker_commits(team, ledger.get_goal(team["conn"], boss.load_proposal("team", p["id"])["goal_ids"][0]))
+    team["loop"].tick()
+    goal = boss.flow(team["conn"])[0]["goals"][0]
+    assert goal["station"] == "landed" and goal["parts"][0]["state"] == "landed"

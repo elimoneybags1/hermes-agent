@@ -31,6 +31,12 @@ class Answer(BaseModel):
     answer: str
 
 
+@router.get("/flow")
+def flow() -> dict:
+    with _conn() as conn:
+        return {"stations": list(boss.STATIONS), "plans": boss.flow(conn)}
+
+
 @router.get("/inbox")
 def inbox() -> dict:
     with _conn() as conn:
