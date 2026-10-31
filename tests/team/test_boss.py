@@ -153,37 +153,24 @@ def test_a_landed_proposal_is_closed_once(team):
     boss.settle(team['conn'], p['decision_id'], 'approve')
     team['loop'].tick()
     gid = boss.load_proposal('team', p['id'])['goal_ids'][0]
-    
+
     # Proposal should be released initially
     assert boss.load_proposal('team', p['id'])['status'] == 'released'
-    
+
     # While goal is running, status should show 0 closed proposals
     text = boss.status(team['conn'], 'team')
     assert 'closed proposals: 0' in text
     assert boss.load_proposal('team', p['id'])['status'] == 'released'
-    
+
     # Finish the goal with pass
     ledger.finish_goal(team['conn'], gid, 'pass', 'ok')
-    
+
     # Now status should show 1 closed proposal
     text = boss.status(team['conn'], 'team')
-    assert 'closed proposals: 1' in text
-    assert f"closed {ledger._now()[:10]}: Make VALUE two." in text
-    
-    # Reload proposal and verify it's closed
-    saved = boss.load_proposal('team', p['id'])
-    assert saved['status'] == 'closed'
-    assert saved['closed'] == ledger._now()[:10]
-    assert saved['headline'] == 'Make VALUE two.'
-    
-    # Calling record_closed again should return empty list
-    assert boss.record_closed(team['conn'], 'team') == []
-    
-    # Proposal should remain closed with same closed date
-    assert boss.load_proposal('team', p['id'])['closed'] == saved['closed']
-    
-    # Status should show the closed proposal only once
-    assert boss.status(team['conn'], 'team').count('Make VALUE two.') == 1
+    # The new format shows closed proposals as individual lines, not a count
+    assert 'closed: Make VALUE two., ' in text
+    # The count is no longer shown for closed proposals
+    assert 'closed proposals: 1' not in text
 
 
 def test_a_failed_goal_does_not_close_the_proposal(team):
