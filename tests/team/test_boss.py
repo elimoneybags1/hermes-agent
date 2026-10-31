@@ -139,6 +139,67 @@ def test_status_and_findings_stay_short_and_real(team):
     assert "1 worker attempts failed" in found and "1x AssertionError in test_x" in found
 
 
+def test_a_landed_proposal_is_closed_once(team):
+    p = propose(team)
+    boss.settle(team['conn'], p['decision_id'], 'approve')
+    team['loop'].tick()
+    gid = boss.load_proposal('team', p['id'])['goal_ids'][0]
+    
+    # Proposal should be released initially
+    assert boss.load_proposal('team', p['id'])['status'] == 'released'
+    
+    # While goal is running, status should show 0 closed proposals
+    text = boss.status(team['conn'], 'team')
+    assert 'closed proposals: 0' in text
+    assert boss.load_proposal('team', p['id'])['status'] == 'released'
+    
+    # Finish the goal with pass
+    ledger.finish_goal(team['conn'], gid, 'pass', 'ok')
+    
+    # Now status should show 1 closed proposal
+    text = boss.status(team['conn'], 'team')
+    assert 'closed proposals: 1' in text
+    assert f"closed {ledger._now()[:10]}: Make VALUE two." in text
+    
+    # Reload proposal and verify it's closed
+    saved = boss.load_proposal('team', p['id'])
+    assert saved['status'] == 'closed'
+    assert saved['closed'] == ledger._now()[:10]
+    assert saved['headline'] == 'Make VALUE two.'
+    
+    # Calling record_closed again should return empty list
+    assert boss.record_closed(team['conn'], 'team') == []
+    
+    # Proposal should remain closed with same closed date
+    assert boss.load_proposal('team', p['id'])['closed'] == saved['closed']
+    
+    # Status should show the closed proposal only once
+    assert boss.status(team['conn'], 'team').count('Make VALUE two.') == 1
+
+
+def test_a_failed_goal_does_not_close_the_proposal(team):
+    p = propose(team)
+    boss.settle(team['conn'], p['decision_id'], 'approve')
+    team['loop'].tick()
+    gid = boss.load_proposal('team', p['id'])['goal_ids'][0]
+    
+    # Goal should be released initially
+    assert boss.load_proposal('team', p['id'])['status'] == 'released'
+    
+    # Finish the goal with fail (not pass)
+    ledger.finish_goal(team['conn'], gid, 'fail', 'x')
+    
+    # record_closed should return empty list
+    assert boss.record_closed(team['conn'], 'team') == []
+    
+    # Proposal status should still be released, not closed
+    assert boss.load_proposal('team', p['id'])['status'] == 'released'
+    
+    # Status should show 0 closed proposals
+    text = boss.status(team['conn'], 'team')
+    assert 'closed proposals: 0' in text
+
+
 def test_a_suggestion_is_a_decision_not_an_edit(team):
     d = boss.suggest(team["conn"], "team", "Give implement a commit skill", "Add ...", "3 of 5 failed: no commits")
     row = ledger.get_decision(team["conn"], d)
