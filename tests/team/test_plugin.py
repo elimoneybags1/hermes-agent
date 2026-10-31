@@ -25,20 +25,24 @@ def test_plugin_manifest_declares_the_hooks():
     assert "- post_api_request" in text and "- api_request_error" in text
 
 
-def test_register_binds_both_hooks():
+def test_register_binds_both_hooks_and_the_boss_tools():
     spec = importlib.util.spec_from_file_location(
         "team_plugin", REPO / "plugins" / "team" / "__init__.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    bound = {}
+    bound, tools = {}, []
 
     class Ctx:
         def register_hook(self, name, cb, **kw):
             bound[name] = cb
 
+        def register_tool(self, **kw):
+            tools.append(kw["name"])
+
     module.register(Ctx())
     assert set(bound) == {"post_api_request", "api_request_error"}
+    assert "team_propose" in tools and len(tools) == 7
 
 
 def test_classify():

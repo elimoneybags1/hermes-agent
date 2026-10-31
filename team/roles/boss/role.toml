@@ -1,0 +1,31 @@
+name = "boss"
+title = "Boss"
+does = "The agent Eli talks to: plans the project with him, writes the goals, sends approved plans to the lead and the free workers, reads the results, proposes improvements."
+graded_by = "Code gates every effect: a plan runs only after Eli approves it in the inbox, the lead's orders are validated, and each part's check decides done."
+status = "active"
+# No file or terminal: the boss never reads code (the lead does) and never
+# touches the board (Team's tools do). clarify asks Eli numbered questions.
+tools = ["team", "memory", "session_search", "clarify"]
+
+[runs_on]
+harness = "hermes-subscription"
+model = "claude-sonnet-5-5"
+
+[budget]
+max_turns = 20
+run_budget_s = 3600
+
+# Merged into the profile's config.yaml after the base lock (team gate audit
+# still checks the result). Lean: compress early, small memory, and room for
+# team_propose, which waits on the lead.
+[hermes.compression]
+threshold = 0.25
+
+[hermes.memory]
+memory_char_limit = 2200
+user_char_limit = 1375
+nudge_interval = 6
+
+[hermes.timeouts.tools]
+sequential_call = 3600
+concurrent_batch = 3600

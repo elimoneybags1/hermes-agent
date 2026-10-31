@@ -6,7 +6,7 @@
       "layout": "columns",
       "panes": [
         {"label": "Team", "cwd": "", "claude": true},
-        {"label": "boss", "cwd": "", "command": "team/bin/team-hermes -p boss"},
+        {"label": "boss", "cwd": "", "command": "team/bin/team boss"},
         {"label": "dashboard", "cwd": "", "web": "http://127.0.0.1:9119/kanban"},
         {"label": "shell", "cwd": ""}
       ]

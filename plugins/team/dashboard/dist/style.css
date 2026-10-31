@@ -1,0 +1,14 @@
+.team-inbox { display: flex; flex-direction: column; gap: 0.5rem; padding: 1rem; max-width: 60rem; }
+.team-inbox h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.6; margin: 1rem 0 0.25rem; }
+.team-row { border: 1px solid var(--border, rgba(127,127,127,0.25)); border-radius: 0.5rem; }
+.team-row > button.team-head { all: unset; cursor: pointer; display: flex; gap: 0.6rem; align-items: center; width: 100%; padding: 0.6rem 0.8rem; box-sizing: border-box; }
+.team-head .team-chev { opacity: 0.5; width: 1rem; }
+.team-head .team-line { flex: 1; }
+.team-body { padding: 0 0.8rem 0.8rem 2.4rem; display: flex; flex-direction: column; gap: 0.6rem; }
+.team-summary { white-space: pre-wrap; line-height: 1.45; }
+.team-goal { border-left: 2px solid var(--border, rgba(127,127,127,0.3)); padding-left: 0.7rem; }
+.team-part { margin: 0.35rem 0 0 0; font-size: 0.9em; }
+.team-part .team-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.2rem; }
+.team-muted { opacity: 0.65; font-size: 0.85em; }
+.team-actions { display: flex; gap: 0.5rem; }
+.team-error { color: var(--destructive, #c33); }

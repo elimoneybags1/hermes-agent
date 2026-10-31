@@ -52,6 +52,12 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
         24000,
         "Most code excerpt bytes copied into one work order.",
     ),
+    "boss.max_goals": (int, 5, "Most goals one proposal from the boss may hold."),
+    "boss.notes_chars": (
+        int,
+        6000,
+        "Cap on the boss's project notes, so its standing context stays small.",
+    ),
     "ask.block_after_claude_fails": (
         bool,
         True,

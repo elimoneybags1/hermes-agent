@@ -5,6 +5,8 @@ team targets                                   list targets
 team roles list|sync [ROLE]                    the roster; sync profiles
 team goal <target> "<goal>" [--no-lead] [--role R] [--check CMD]
 team run [--once] [--interval S]               the loop
+team boss                                      talk to the boss
+team plans [show <id>|approve <id>|dismiss <id>]  the boss's proposals
 team ledger [--target T] [--all] [--json]      jobs and goals
 team decide list|answer <id> "<text>"|dismiss <id>
 team gate audit                                every profile against the lock
@@ -20,6 +22,7 @@ import sys
 from pathlib import Path
 
 from team import (
+    boss,
     catalog,
     claude_roles,
     grade,
@@ -167,6 +170,50 @@ def cmd_decide(args) -> int:
     return 0
 
 
+def cmd_boss(args) -> int:
+    """The boss's conversation, started outside any repo so no AGENTS.md loads into it."""
+    import subprocess
+
+    home = ledger.state_dir() / "boss"
+    home.mkdir(parents=True, exist_ok=True)
+    return subprocess.call([str(kanban.wrapper()), "-p", "boss", *args.rest], cwd=home)
+
+
+def cmd_plans(args) -> int:
+    conn = _conn()
+    if args.plans_cmd in (None, "list"):
+        for p in boss.proposals()[:20]:
+            print(f"[{p['id']}] {p['status']:<9} {p['headline']}")
+        return 0
+    p = next((x for x in boss.proposals() if x["id"] == args.id), None)
+    if p is None:
+        print(f"no proposal {args.id}", file=sys.stderr)
+        return 1
+    if args.plans_cmd == "show":
+        c = boss.card(p)
+        print(f"{c['headline']}\n\n{c['summary']}\n")
+        for g in c["goals"]:
+            after = f" (after {', '.join(map(str, g['after']))})" if g["after"] else ""
+            print(f"{g['n']}. {g['goal']}{after}\n   {g['plan']}")
+            for part in g["parts"]:
+                print(
+                    f"   - {part['title']}: {part['role']} on {part['model']}, "
+                    f"tools {', '.join(part['toolsets'])}, owns {', '.join(part['owned_paths'])}, "
+                    f"{part['steps']} steps, reads {', '.join(part['context']) or 'nothing'}"
+                )
+        return 0
+    if p["status"] != "waiting":
+        print(f"proposal {p['id']} is {p['status']}", file=sys.stderr)
+        return 1
+    try:
+        boss.settle(conn, p["decision_id"], "approve" if args.plans_cmd == "approve" else None)
+    except boss.BossError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    print(f"proposal {p['id']} " + ("approved; `team run` releases it" if args.plans_cmd == "approve" else "dismissed"))
+    return 0
+
+
 def cmd_gate(args) -> int:
     findings = profiles.audit_profiles(ROOT)
     if not findings:
@@ -276,6 +323,17 @@ def build_parser() -> argparse.ArgumentParser:
     dd = ds.add_parser("dismiss")
     dd.add_argument("id", type=int)
     d.set_defaults(func=cmd_decide)
+
+    b = sub.add_parser("boss", help="talk to the boss (extra args go to hermes)")
+    b.add_argument("rest", nargs=argparse.REMAINDER)
+    b.set_defaults(func=cmd_boss)
+
+    pl = sub.add_parser("plans", help="the boss's proposals: one line each")
+    pls = pl.add_subparsers(dest="plans_cmd")
+    pls.add_parser("list")
+    for verb in ("show", "approve", "dismiss"):
+        pls.add_parser(verb).add_argument("id", type=int)
+    pl.set_defaults(func=cmd_plans)
 
     ga = sub.add_parser("gate", help="the free-only lock")
     gas = ga.add_subparsers(dest="gate_cmd", required=True)

@@ -103,7 +103,17 @@ def role_config(root: Path, role: dict, cat: dict | None = None) -> dict:
         set(tools) | (set(LEARNING_TOOLSETS) if harness == "hermes" else set())
     )
     cfg.setdefault("agent", {})["max_turns"] = int(role["budget"]["max_turns"])
+    _merge(cfg, role.get("hermes") or {})
     return cfg
+
+
+def _merge(into: dict, extra: dict) -> None:
+    """A role's ``[hermes]`` table over the config; the lock audit still runs on the result."""
+    for key, value in extra.items():
+        if isinstance(value, dict) and isinstance(into.get(key), dict):
+            _merge(into[key], value)
+        else:
+            into[key] = copy.deepcopy(value)
 
 
 # --- the lock ----------------------------------------------------------------

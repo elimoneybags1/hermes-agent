@@ -1,0 +1,14 @@
+{
+  "name": "team",
+  "label": "Team",
+  "description": "The boss's plans waiting for Eli, one line each: open one for the summary and what every worker gets; approve or dismiss. Also Team's other open decisions.",
+  "icon": "Users",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/team",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

@@ -251,6 +251,15 @@ class Loop:
         blocked = self.preflight(self.root, self.runner) if self.preflight else []
         for reason in blocked:
             self.log(f"not dispatching: {reason}")
+        if not blocked:
+            from team import boss  # boss builds on this module
+
+            try:
+                boss.release_approved(
+                    self.root, self.conn, runner=self.runner, cat=self._cat, log=self.log
+                )
+            except (boss.BossError, RunError, kanban.KanbanError, grade.GradeError) as e:
+                self.log(f"could not release a proposal: {e}")
         for target in targets.list_targets():
             if not target.get("enabled", True):
                 continue
@@ -1088,27 +1097,48 @@ def plan_goal(
     cat: dict | None = None,
     log: Callable[[str], None] = _log,
 ) -> list[dict]:
-    """``team goal`` with the lead: plan the goal into parts; one goal row per part.
+    """``team goal`` with the lead: draft the plan, then release it at once."""
+    draft = draft_goal(
+        root, conn, target, goal, check=check, runner=runner, base=base, cat=cat, log=log
+    )
+    return release_goal(root, conn, target, draft, runner=runner, cat=cat, log=log)
 
-    Parts with no dependencies get their worktree and first task now; the rest
-    start in ``team run`` once what they depend on has landed.
+
+def draft_goal(
+    root: Path,
+    conn: sqlite3.Connection,
+    target: str,
+    goal: str,
+    *,
+    check: str | None = None,
+    notes: str = "",
+    runner: Runner = subprocess.run,
+    base: str = "main",
+    cat: dict | None = None,
+    log: Callable[[str], None] = _log,
+) -> dict:
+    """Ask the lead for a validated plan; nothing is created on the board.
+
+    ``notes`` is what the boss knows that the repo does not say (decisions,
+    the larger plan this goal belongs to); the lead plans with it.
+    Returns ``{goal, check, base, summary, parts, lead_job}``.
     """
     record = targets.require(target)
     loop = Loop(root, conn, runner=runner, cat=cat, log=log, preflight=None)
     check_cmd = check if check is not None else settings.check_for(root, target)
     repo = Path(record["path"])
-    kanban.ensure_board(target, runner=runner)
     menu = lead.menu(root, loop.cat)
     if not menu:
         raise RunError("no active hermes role for the lead to assign")
     commit = grade._must(
         grade._git(repo, "rev-parse", base, runner=runner), "git rev-parse failed"
     )
-    slug = _free_slug(repo, target, slugify(goal), runner)
     lead_job = loop._lead_job(target, commit, "plan")
     try:
-        with lead.workspace(repo, target, f"plan-{slug}", base, runner) as tree:
-            parts = lead.ask(
+        with lead.workspace(
+            repo, target, f"plan-{lead_job}", base, runner
+        ) as tree:
+            summary, parts = lead.ask(
                 root,
                 tree,
                 lambda refused, previous: lead.plan_prompt(
@@ -1116,6 +1146,7 @@ def plan_goal(
                     check_cmd,
                     menu,
                     loop.cfg["lead.max_parts"],
+                    notes=notes,
                     refused=refused,
                     previous=previous,
                 ),
@@ -1133,26 +1164,64 @@ def plan_goal(
             else ""
         )
         raise RunError(f"the lead could not plan this goal: {e}{hint}") from e
-    summary, parts = parts
     ledger.finish_job(
         conn, lead_job, "pass", "lead-validate", f"{len(parts)} parts: {summary}"[:500]
     )
-    plan_id = ledger.create_plan(
-        conn, target, goal.splitlines()[0][:120], summary=summary, status="active"
-    )
+    return {
+        "goal": goal,
+        "check": check_cmd,
+        "base": base,
+        "summary": summary,
+        "parts": parts,
+        "lead_job": lead_job,
+    }
+
+
+def release_goal(
+    root: Path,
+    conn: sqlite3.Connection,
+    target: str,
+    draft: dict,
+    *,
+    plan_id: int | None = None,
+    after: tuple[int, ...] = (),
+    runner: Runner = subprocess.run,
+    cat: dict | None = None,
+    log: Callable[[str], None] = _log,
+) -> list[dict]:
+    """Turn a drafted plan into goal rows, one per part.
+
+    Every part also waits for the part ids in ``after`` (another goal's parts).
+    Parts with nothing to wait for get their worktree and first task now; the
+    rest start in ``team run`` once what they depend on has landed.
+    """
+    record = targets.require(target)
+    loop = Loop(root, conn, runner=runner, cat=cat, log=log, preflight=None)
+    repo, goal, base = Path(record["path"]), draft["goal"], draft["base"]
+    kanban.ensure_board(target, runner=runner)
+    slug = _free_slug(repo, target, slugify(goal), runner)
+    if plan_id is None:
+        plan_id = ledger.create_plan(
+            conn,
+            target,
+            goal.splitlines()[0][:120],
+            summary=draft["summary"],
+            status="active",
+        )
+    parts = draft["parts"]
     part_ids: dict[str, int] = {}
     goals = []
     for n, part in enumerate(parts, 1):
         pslug = slug if len(parts) == 1 else f"{slug[:34]}-p{n}"
-        branch = f"team/{pslug}"
+        deps = [part_ids[d] for d in part["depends_on"]] + list(after)
         part_ids[part["key"]] = ledger.create_part(
             conn,
             plan_id,
             target,
             part["title"],
             stage="implement",
-            branch=branch,
-            depends_on=[part_ids[d] for d in part["depends_on"]],
+            branch=f"team/{pslug}",
+            depends_on=deps,
             owned_paths=part["owned_paths"],
         )
         goal_id = ledger.create_goal(
@@ -1160,16 +1229,20 @@ def plan_goal(
             target,
             part["title"] if len(parts) > 1 else goal,
             part["role"],
-            branch,
+            f"team/{pslug}",
             str(grade.worktree_path(target, pslug)),
-            check_cmd,
+            draft["check"],
             part_id=part_ids[part["key"]],
             base=base,
         )
         ledger.create_order(
-            conn, goal_id, dict(part, goal=goal), part_ids[part["key"]], lead_job
+            conn,
+            goal_id,
+            dict(part, goal=goal),
+            part_ids[part["key"]],
+            draft["lead_job"],
         )
-        if not part["depends_on"]:
+        if not deps:
             try:
                 grade.create_worktree(repo, target, pslug, base=base, runner=runner)
                 loop.free_attempt(ledger.get_goal(conn, goal_id), 1)

@@ -1,4 +1,4 @@
-"""Team's Hermes plugin: the ledger sink (and, later, the boss's ``team_*`` tools).
+"""Team's Hermes plugin: the ledger sink and the boss's ``team_*`` tools.
 
 Hermes loads this through ``plugins.enabled: [team]`` in a profile's
 config.yaml. Both hooks are observe-only in Hermes; the sink records what
@@ -38,3 +38,11 @@ def _on_api_request_error(**kwargs) -> None:
 def register(ctx) -> None:
     ctx.register_hook("post_api_request", _on_post_api_request)
     ctx.register_hook("api_request_error", _on_api_request_error)
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "team_boss_tools", _HERE / "boss_tools.py"
+    )
+    tools = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tools)
+    tools.register(ctx)

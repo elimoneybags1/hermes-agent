@@ -418,11 +418,14 @@ def plan_prompt(
     roles_menu: dict[str, dict],
     max_parts: int,
     *,
+    notes: str = "",
     refused: list[str] | None = None,
     previous: Any = None,
 ) -> str:
-    lines = [
-        f"Goal from Eli:\n{goal}",
+    lines = [f"Goal from Eli:\n{goal}"]
+    if notes:
+        lines.append(f"What the boss knows that the repo does not say:\n{notes}")
+    lines += [
         f"The check that decides done for every part: `{check}`.",
         f"You are in a clean read-only checkout of the target at the goal's base. "
         f"Plan the goal as at most {max_parts} parts and write each part's work order.",

@@ -6,3 +6,11 @@ kind: standalone
 provides_hooks:
   - post_api_request
   - api_request_error
+provides_tools:
+  - team_status
+  - team_findings
+  - team_notes_read
+  - team_notes_write
+  - team_propose
+  - team_proposals
+  - team_suggest
