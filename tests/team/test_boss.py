@@ -173,6 +173,22 @@ def test_a_landed_proposal_is_closed_once(team):
     assert 'closed proposals: 1' not in text
 
 
+def test_the_loop_closes_a_plan_on_the_tick_its_last_goal_lands(team):
+    p = propose(team)
+    boss.settle(team["conn"], p["decision_id"], "approve")
+    team["loop"].tick()
+    gid = boss.load_proposal("team", p["id"])["goal_ids"][0]
+    team["loop"].tick()
+    assert boss.load_proposal("team", p["id"])["status"] == "released"
+    ledger.finish_goal(team["conn"], gid, "pass", "landed abc")
+    team["loop"].tick()  # nobody has asked for status
+    saved = boss.load_proposal("team", p["id"])
+    assert saved["status"] == "closed" and saved["closed"] == ledger._now()[:10]
+    plan = next(x for x in ledger.list_plans(team["conn"], "team") if x["id"] == p["id"])
+    assert plan["status"] == "done"
+    assert boss.record_closed(team["conn"], "team") == []
+
+
 def test_a_failed_goal_does_not_close_the_proposal(team):
     p = propose(team)
     boss.settle(team['conn'], p['decision_id'], 'approve')

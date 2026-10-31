@@ -15,6 +15,13 @@ refusal text becomes the tool's result, so the model reads why and moves on.
 - ``read_file`` with the same arguments as an earlier read in this session,
   when the file has not changed since (size and mtime): it is already in the
   context.
+- The first whole read (no offset, no limit) of a file longer than
+  ``WHOLE_LINES``: the brief copied in the lines the order names, and a whole
+  file rides along in every call after. Goal 15's worker read two files whole,
+  49k chars, and carried them through 34 calls. The refusal says to read a
+  range instead; the same whole read asked a second time goes through, so a
+  worker that truly needs all of it (``write_file`` on an existing file wants
+  a full read first) is delayed one call, never stuck.
 """
 
 from __future__ import annotations
@@ -38,6 +45,12 @@ REREAD_MSG = (
     "Refused: you already read {what} in this conversation and nothing has changed it "
     "since. Its contents are above; use them instead of reading again."
 )
+WHOLE_LINES = 200
+WHOLE_MSG = (
+    "Refused: {path} is {lines} lines, and every call you make from now on would carry "
+    "all of them. Your brief already copied in the lines the order names. Read a range "
+    "with offset and limit, or search_files for the name you need."
+)
 
 # session id -> {read key: (size, mtime_ns)} for files read so far in that session.
 _seen: dict[str, dict[tuple, tuple[int, int] | None]] = {}
@@ -53,6 +66,14 @@ def _stat(path: str) -> tuple[int, int] | None:
     except OSError:
         return None
     return (st.st_size, st.st_mtime_ns)
+
+
+def _lines(path: str) -> int:
+    try:
+        with open(path, "rb") as f:
+            return sum(chunk.count(b"\n") for chunk in iter(lambda: f.read(1 << 16), b""))
+    except OSError:
+        return 0
 
 
 def _key(args: dict) -> tuple | None:
@@ -81,6 +102,13 @@ def decide(tool_name: str, args: dict | None, session_id: str = "") -> dict | No
         if key in seen and now is not None and seen[key] == now:
             where = key[0] if key[1] is None else f"{key[0]} from line {key[1]}"
             return {"action": "block", "message": REREAD_MSG.format(what=where)}
+        whole = key[1] in (None, 1) and key[2] is None
+        marker = ("whole", key[0])
+        if whole and now is not None and marker not in seen:
+            seen[marker] = None
+            lines = _lines(key[0])
+            if lines > WHOLE_LINES:
+                return {"action": "block", "message": WHOLE_MSG.format(path=key[0], lines=lines)}
         seen[key] = now
     return None
 

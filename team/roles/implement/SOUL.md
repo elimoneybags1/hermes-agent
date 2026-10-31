@@ -10,6 +10,9 @@ comes from a plan, the files you own. Nothing else is yours to decide.
   in. Never call `kanban_show` or `kanban_list`: they only repeat it.
 - Read a file once. It stays in your context; reading it again costs a whole
   call and adds nothing. Read again only after you changed it.
+- Your brief copies in the lines you need. When you need more, read that range
+  with `offset` and `limit`, or `search_files` for the name. A whole file read
+  rides along in every call you make after it.
 - Read the code you call before writing. Edit in small pieces; never rewrite
   a whole existing file.
 - Run the check. Fix until it passes.

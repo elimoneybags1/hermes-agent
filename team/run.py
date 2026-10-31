@@ -314,6 +314,12 @@ class Loop:
                 self.log(
                     f"goal {goal['id']}: unexpected error: {e}\n{traceback.format_exc()}"
                 )
+        from team import boss  # boss builds on this module
+
+        # A released plan whose goals have all landed is closed here, on the
+        # tick that lands the last one, not only when the boss next asks for status.
+        for p in boss.record_closed(self.conn, name):
+            transitions.append(f"plan {p['id']} closed: {p['headline'][:60]}")
         ts = time.strftime("%H:%M:%S", time.localtime(self.now()))
         parts = []
         pause = ledger.active_pause(self.conn, name, self.now())

@@ -65,6 +65,23 @@ def test_a_changed_file_may_be_read_again(wt, tmp_path):
     assert wt.decide("read_file", dict(args), "s") is None
 
 
+def test_a_whole_read_of_a_long_file_is_refused_once(wt, tmp_path):
+    long = tmp_path / "big.py"
+    long.write_text("x = 1\n" * 300)
+    short = tmp_path / "small.py"
+    short.write_text("x = 1\n" * 200)
+    verdict = wt.decide("read_file", {"path": str(long)}, "s")
+    assert verdict["action"] == "block" and "300 lines" in verdict["message"]
+    # a range is what the refusal asks for
+    assert wt.decide("read_file", {"path": str(long), "offset": 40, "limit": 30}, "s") is None
+    # asked again whole, it goes through, then counts as read
+    assert wt.decide("read_file", {"path": str(long)}, "s") is None
+    assert wt.decide("read_file", {"path": str(long)}, "s")["action"] == "block"
+    # at the limit is not over it; another session starts fresh
+    assert wt.decide("read_file", {"path": str(short)}, "s") is None
+    assert wt.decide("read_file", {"path": str(long)}, "other")["action"] == "block"
+
+
 def test_missing_file_and_other_tools_pass(wt, tmp_path):
     missing = {"path": str(tmp_path / "nope.py")}
     assert wt.decide("read_file", missing, "s") is None
