@@ -40,6 +40,13 @@ class FakeHermes:
         self.calls.append(list(cmd))
         if cmd[0].endswith("team-hermes") and cmd[1] == "kanban":
             return self.kanban(cmd[2:])
+        if cmd[1:4] == ["-P", "-m", "team.hermes_run"]:
+            request = json.loads(cmd[4])
+            kwargs["env"]["TEAM_CHECK"] = request.get("check") or ""
+            fake = ["gateway-worker", "-p", request["brief"]]
+            if request.get("schema"):
+                fake += ["--json-schema", json.dumps(request["schema"])]
+            return self.claude(fake, kwargs)
         if cmd[0] == "claude":
             return self.claude(cmd, kwargs)
         return subprocess.run(cmd, **kwargs)  # noqa: PLW1510 - the caller decides
@@ -376,10 +383,10 @@ def test_fail_reopens_on_next_candidate_then_claude_then_eli(world):
     jobs = ledger.list_jobs(world["conn"])
     assert (
         jobs[0]["task_ref"] == "claude:sess-9"
-        and jobs[0]["model_choice"]["provider"] == "subscription"
+        and jobs[0]["model_choice"]["provider"] == "team-subscription"
     )
     call = ledger.calls_for(world["conn"], job_id=jobs[0]["id"])[0]
-    assert call["provider"] == "subscription" and call["tokens_in"] == 50
+    assert call["provider"] == "team-subscription" and call["tokens_in"] == 50
     assert (world["repo"] / "app.py").read_text() == "VALUE = 2\n"
 
 
@@ -633,15 +640,28 @@ def test_block_leaves_completed_task_done(world, status):
 
 
 def test_subscription_role_dispatches_through_proxy_profile(world):
-    catalog = json.loads((REPO / 'integrations/portkey/catalog.json').read_text())
-    (world['root'] / 'team/roles/implement/role.toml').write_text(ROLE.replace(
-        'harness = "hermes"',
-        'harness = "hermes-subscription"\nmodel = "claude-opus-5-5"',
-    ).replace('candidates = ["tier-simple", "nvidia:z-ai/glm-5.3"]', 'candidates = []'))
-    profiles.sync(world['root'], 'implement', catalog, runner=world['hermes'])
-    goal = run.start_goal(world['root'], world['conn'], 'team', 'Use subscription',
-                          runner=world['hermes'], cat=catalog)
-    task = world['hermes'].tasks[goal['current_task']]
-    assert task['provider'] == 'team-subscription'
-    assert task['model'] == 'claude-opus-5-5'
-    assert (profiles.profile_dir('implement') / 'plugins/model-providers/team-subscription/__init__.py').is_file()
+    catalog = json.loads((REPO / "integrations/portkey/catalog.json").read_text())
+    (world["root"] / "team/roles/implement/role.toml").write_text(
+        ROLE.replace(
+            'harness = "hermes"',
+            'harness = "hermes-subscription"\nmodel = "claude-opus-5-5"',
+        ).replace(
+            'candidates = ["tier-simple", "nvidia:z-ai/glm-5.3"]', "candidates = []"
+        )
+    )
+    profiles.sync(world["root"], "implement", catalog, runner=world["hermes"])
+    goal = run.start_goal(
+        world["root"],
+        world["conn"],
+        "team",
+        "Use subscription",
+        runner=world["hermes"],
+        cat=catalog,
+    )
+    task = world["hermes"].tasks[goal["current_task"]]
+    assert task["provider"] == "team-subscription"
+    assert task["model"] == "claude-opus-5-5"
+    assert (
+        profiles.profile_dir("implement")
+        / "plugins/model-providers/team-subscription/__init__.py"
+    ).is_file()

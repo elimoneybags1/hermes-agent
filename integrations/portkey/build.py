@@ -316,6 +316,10 @@ def target(catalog: dict, m: dict, s: dict, keys: dict[str, str]) -> dict:
     t = {"provider": p["portkey"], "api_key": key}
     if p.get("custom_host"):
         t["custom_host"] = p["custom_host"]
+    if "strict_open_ai_compliance" in p:
+        if not isinstance(p["strict_open_ai_compliance"], bool):
+            refuse(f"{s['provider']}: strict_open_ai_compliance must be boolean")
+        t["strict_open_ai_compliance"] = p["strict_open_ai_compliance"]
     t["override_params"] = {"model": s["provider_model_id"]}
     t["retry"] = {"attempts": pk["retry_attempts"], "on_status_codes": pk["retry_on_status_codes"]}
     t["request_timeout"] = provider_timeout_ms(catalog, s["provider"])

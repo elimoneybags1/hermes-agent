@@ -1,8 +1,9 @@
 # The lead: Claude plans, free models build
 
 `team goal` sends a goal to the lead before any worker sees it. The lead is
-Claude Code on Eli's subscription (`claude -p`, API-key variables removed),
-run in build mode for the `lead` role with Read, Grep and Glob only, in a
+Sonnet on Eli's subscription through Hermes → LiteLLM → Portkey → the
+subscription bridge. The isolated `lead` runner exposes only `read_file` and
+`search_files`, in a
 clean detached checkout of the goal's base under
 `$TEAM_STATE/worktrees/<target>/_lead/`. The checkout is removed after each call.
 
@@ -56,7 +57,7 @@ base, and the tail of the check output. It answers with one of three actions:
   order version is stored with the note. The note, the steps and the new
   excerpts go on the task as a `LEAD:` comment, and the retry stays on a free
   model.
-- **escalate**: Claude Code takes the part over now, with the rendered order
+- **escalate**: Opus takes the part over through the same gateway route, with the rendered order
   as its brief.
 - **ask**: the goal stops with a decision for Eli.
 
@@ -64,6 +65,13 @@ If the lead cannot answer (usage limit, refused twice), the retry goes ahead
 without it. `lead.diagnose = false` turns this off.
 
 ## Ledger
+
+Each physical model request records its requested model, responding model,
+profile, session and input/output tokens. Planner and rescue calls attach to
+their Team job without adding a duplicate aggregate. Legacy `claude:` task
+references remain readable; they no longer imply a direct Claude Code run.
+Boss findings show per-model attempt outcomes beside the role/route baseline.
+Mixed-model attempts remain a separate group.
 
 | Row | What it holds |
 |---|---|

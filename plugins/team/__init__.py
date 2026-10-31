@@ -48,6 +48,12 @@ def register(ctx) -> None:
     ctx.register_hook("post_api_request", _on_post_api_request)
     ctx.register_hook("api_request_error", _on_api_request_error)
     ctx.register_hook("pre_tool_call", _module("worker_tools").pre_tool_call)
+    ctx.register_hook("post_auxiliary_call", _on_post_api_request)
+    from toolsets import create_custom_toolset
+
+    create_custom_toolset(
+        "read-only", "Read and search without edits", ["read_file", "search_files"]
+    )
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(

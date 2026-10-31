@@ -20,9 +20,9 @@ After a failed check the lead reads the order, the diff and the check output
 and says what went wrong and what the retry should do differently
 (``diagnose``); the retry stays on a free model unless it says to escalate.
 
-Every lead call is ``claude -p`` on Eli's subscription with the API-key
-variables removed (``team.claude_run``), in build mode for the ``lead`` role,
-with Read, Grep and Glob only and a JSON schema for the answer.
+Every lead call uses an isolated Hermes worker through LiteLLM and Portkey
+on the subscription (``team.hermes_run``), with read/search tools only.
+The prompt carries the JSON schema; Team validates the returned answer.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from team import catalog, claude_run, grade, roles
+from team import catalog, claude_run, grade, hermes_run, roles
 from team.ledger import state_dir
 
 Runner = Callable[..., subprocess.CompletedProcess[Any]]
@@ -113,9 +113,12 @@ DIAGNOSIS_SCHEMA = {
 class LeadError(RuntimeError):
     """The lead could not produce a usable answer; ``usage_limited`` when Claude refused on quota."""
 
-    def __init__(self, message: str, usage_limited: bool = False):
+    def __init__(
+        self, message: str, usage_limited: bool = False, result: dict | None = None
+    ):
         super().__init__(message)
         self.usage_limited = usage_limited
+        self.result = result
 
 
 # --- what the lead may choose from ----------------------------------------------
@@ -421,10 +424,27 @@ def plan_prompt(
     notes: str = "",
     refused: list[str] | None = None,
     previous: Any = None,
+    plan_context: dict | None = None,
 ) -> str:
     lines = [f"Goal from Eli:\n{goal}"]
     if notes:
         lines.append(f"What the boss knows that the repo does not say:\n{notes}")
+    before = (plan_context or {}).get("before") or []
+    alongside = (plan_context or {}).get("alongside") or []
+    if before:
+        lines += [
+            "Earlier goals in the same plan, already planned. They land before your workers "
+            "start, so everything below will exist in the code even though this checkout does "
+            "not have it yet. Do not plan any of it again: build on it, and use the interfaces "
+            "it names.",
+            json.dumps(before, indent=1)[:12000],
+        ]
+    if alongside:
+        lines += [
+            "Goals in the same plan that run at the same time as this one. Their workers own "
+            "these files; do not give any of them to your parts:",
+            json.dumps(alongside, indent=1)[:6000],
+        ]
     lines += [
         f"The check that decides done for every part: `{check}`.",
         f"You are in a clean read-only checkout of the target at the goal's base. "
@@ -443,7 +463,12 @@ def plan_prompt(
 
 
 def diagnose_prompt(
-    order: dict, failure: str, diff: str, attempt: int, *, refused: list[str] | None = None
+    order: dict,
+    failure: str,
+    diff: str,
+    attempt: int,
+    *,
+    refused: list[str] | None = None,
 ) -> str:
     lines = [
         f"Attempt {attempt} at this work order failed Team's check.",
@@ -472,8 +497,8 @@ def call(
     cfg: dict,
     runner: Runner = subprocess.run,
 ) -> dict:
-    """One ``claude -p`` run as the lead; raises LeadError when it gives no structured answer."""
-    result = claude_run.run(
+    """One gateway-backed Hermes run as the lead; raises LeadError when it gives no structured answer."""
+    result = hermes_run.run(
         cwd,
         prompt,
         max_turns=cfg["lead.max_turns"],
@@ -487,12 +512,13 @@ def call(
         raise LeadError(
             f"lead call failed: {_tail(str(result['result']), 500)}",
             usage_limited=claude_run.usage_limited(result),
+            result=result,
         )
     if result.get("structured") is None:
         try:
             result["structured"] = json.loads(result["result"])
         except (TypeError, ValueError):
-            raise LeadError("lead gave no structured answer") from None
+            raise LeadError("lead gave no structured answer", result=result) from None
     return result
 
 
@@ -509,7 +535,14 @@ def ask(
     """Ask, validate, and ask once more with the refusals; the validated answer or LeadError."""
     refused, previous = None, None
     for _ in range(2):
-        result = call(root, cwd, make_prompt(refused, previous), schema, cfg, runner)
+        try:
+            result = call(
+                root, cwd, make_prompt(refused, previous), schema, cfg, runner
+            )
+        except LeadError as exc:
+            if on_call and exc.result is not None:
+                on_call(exc.result)
+            raise
         if on_call:
             on_call(result)
         value, refused = check(result["structured"])

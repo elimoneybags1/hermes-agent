@@ -82,13 +82,12 @@ def classify(
 
 def profile_name() -> str | None:
     """The profile this process runs as: HERMES_PROFILE, else the HERMES_HOME profile dir."""
-    name = os.environ.get("HERMES_PROFILE")
-    if name:
-        return name
-    home = Path(os.environ.get("HERMES_HOME") or "")
+    from hermes_constants import get_hermes_home
+
+    home = get_hermes_home()
     if home.parent.name == "profiles":
         return home.name
-    return "default" if home.name else None
+    return os.environ.get("HERMES_PROFILE") or "default"
 
 
 def record(**kw: Any) -> None:
@@ -99,6 +98,8 @@ def record(**kw: Any) -> None:
     except (OSError, sqlite3.Error):
         return
     try:
+        from agent.opencode_affinity import resolve_affinity_key
+
         task_ref = os.environ.get("HERMES_KANBAN_TASK") or None
         profile = profile_name()
         provider = kw.get("provider")
@@ -113,6 +114,9 @@ def record(**kw: Any) -> None:
         except catalog.GateError:
             cat = None
         kind, detail = classify(provider, base_url, model, response_model, cat)
+        error = kw.get("error")
+        if error:
+            detail = str(error)[:500]
         job = ledger.open_job_for_task(conn, task_ref) if task_ref else None
         ledger.record_call(
             conn,
@@ -123,7 +127,7 @@ def record(**kw: Any) -> None:
             tokens_in,
             tokens_out,
             latency_ms,
-            kind is None,
+            kind is None and not error,
             detail,
             api_calls=_int(kw.get("api_call_count")),
             task_ref=task_ref,
@@ -131,6 +135,7 @@ def record(**kw: Any) -> None:
             profile=profile,
             response_model=response_model,
             base_url=base_url,
+            gateway_session_id=resolve_affinity_key(kw.get("session_id")),
         )
         if kind:
             ledger.record_violation(conn, kind, detail or kind, task_ref=task_ref)

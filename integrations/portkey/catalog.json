@@ -38,7 +38,8 @@
    "free_basis": "'Free of charge' in the Free Tier column (https://ai.google.dev/gemini-api/docs/pricing)",
    "limits": "per project, shown only in AI Studio",
    "notes": "free only while billing is OFF on the key's Google Cloud project; free-tier prompts may be used to improve Google products and read by reviewers. 2026-10-27: free-tier latency 6-32 s on flash-lite and two 60 s timeouts on 3.8-flash, so the Portkey target timeout is 120 s",
-   "request_timeout_ms": 120000
+   "strict_open_ai_compliance": false,
+      "request_timeout_ms": 120000
   },
   "mistral": {
    "portkey": "mistral-ai",
@@ -369,7 +370,7 @@
   {
    "id": "laguna-xs-2.1",
    "tier": "medium",
-   "order": 3,
+   "order": 2,
    "context": 262144,
    "max_output": 32768,
    "tools": true,
@@ -393,7 +394,7 @@
   {
    "id": "laguna-s-2.1",
    "tier": "medium",
-   "order": 4,
+   "order": 3,
    "context": 262144,
    "max_output": 32768,
    "tools": true,
@@ -412,7 +413,7 @@
   {
    "id": "gemma-4-31b",
    "tier": "medium",
-   "order": 8,
+   "order": 7,
    "context": 262144,
    "max_output": 32768,
    "tools": true,
@@ -444,7 +445,7 @@
   {
    "id": "gemini-2.5-flash",
    "tier": "medium",
-   "order": 5,
+   "order": 4,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -462,7 +463,7 @@
   {
    "id": "gemini-3-flash-preview",
    "tier": "medium",
-   "order": 7,
+   "order": 6,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -480,7 +481,7 @@
   {
    "id": "ministral-14b",
    "tier": "medium",
-   "order": 1,
+   "order": 8,
    "context": 262144,
    "tools": true,
    "vision": true,
@@ -498,7 +499,7 @@
   {
    "id": "glm-4.7-flash",
    "tier": "medium",
-   "order": 6,
+   "order": 5,
    "context": 200000,
    "max_output": 128000,
    "tools": true,
@@ -516,7 +517,7 @@
   {
    "id": "north-mini-code",
    "tier": "medium",
-   "order": 2,
+   "order": 1,
    "context": 256000,
    "max_output": 64000,
    "tools": true,

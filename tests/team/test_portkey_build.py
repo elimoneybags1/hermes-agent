@@ -267,3 +267,14 @@ def test_a_pair_is_skipped_when_its_key_is_missing(catalog, keys):
     keys.pop(catalog["providers"][gone]["key_env"])
     files = build.render(catalog, keys)
     assert not any(p.endswith(f"--{gone}.json") for p in files)
+
+
+def test_provider_can_preserve_native_tool_replay_fields(catalog, keys):
+    model = build.routed(catalog)[0]
+    served = model["live"][0]
+    provider = catalog["providers"][served["provider"]]
+    provider["strict_open_ai_compliance"] = False
+    assert build.target(catalog, model, served, keys)["strict_open_ai_compliance"] is False
+    provider["strict_open_ai_compliance"] = "false"
+    with pytest.raises(SystemExit, match="must be boolean"):
+        build.target(catalog, model, served, keys)

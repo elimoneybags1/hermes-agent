@@ -111,10 +111,10 @@ def propose(
         clean.append({"goal": text, "after": after, "check": g.get("check") or None})
     plan_id = ledger.create_plan(conn, target, headline, summary=summary, status="draft")
     try:
-        for g in clean:
+        for i, g in enumerate(clean):
             g["draft"] = run.draft_goal(
                 root, conn, target, g["goal"], check=g["check"], notes=notes,
-                runner=runner, cat=cat, log=log,
+                runner=runner, cat=cat, log=log, plan_context=plan_context(clean, i),
             )
     except run.RunError as e:
         ledger.update_plan(conn, plan_id, status="done", summary=f"not drafted: {e}")
@@ -136,10 +136,71 @@ def propose(
         "status": "waiting",
         "decision_id": decision,
         "goals": clean,
+        "warnings": overlaps(clean),
         "created": ledger._now(),
     }
     _save(p)
     return p
+
+
+def _ancestors(goals: list[dict], i: int) -> set[int]:
+    """Indexes of the goals goal ``i`` waits for, directly or through others."""
+    seen: set[int] = set()
+    todo = [a - 1 for a in goals[i]["after"]]
+    while todo:
+        j = todo.pop()
+        if j not in seen:
+            seen.add(j)
+            todo += [a - 1 for a in goals[j]["after"]]
+    return seen
+
+
+def _brief(n: int, g: dict) -> dict:
+    return {
+        "goal": n,
+        "text": g["goal"],
+        "parts": [
+            {"title": p["title"], "owned_paths": p["owned_paths"], "interfaces": p.get("interfaces", [])}
+            for p in g["draft"]["parts"]
+        ],
+    }
+
+
+def plan_context(goals: list[dict], i: int) -> dict:
+    """What the lead drafting goal ``i`` must know about the plan's earlier goals.
+
+    ``before``: goals it waits for; they land first, so it builds on them and must
+    not plan them again. ``alongside``: earlier goals that run at the same time;
+    their files are not its to own.
+    """
+    up = _ancestors(goals, i)
+    before = [_brief(j + 1, goals[j]) for j in sorted(up)]
+    alongside = [
+        {"goal": j + 1, "text": goals[j]["goal"],
+         "owned_paths": sorted({f for p in goals[j]["draft"]["parts"] for f in p["owned_paths"]})}
+        for j in range(i) if j not in up
+    ]
+    return {"before": before, "alongside": alongside}
+
+
+def overlaps(goals: list[dict]) -> list[str]:
+    """Files more than one goal's parts change: a conflict when the goals run at the same
+    time, and worth a look when one builds on the other (it may be redoing that work)."""
+    out = []
+    for i in range(len(goals)):
+        up = _ancestors(goals, i)
+        mine = {f for p in goals[i]["draft"]["parts"] for f in p["owned_paths"]}
+        for j in range(i):
+            theirs = {f for p in goals[j]["draft"]["parts"] for f in p["owned_paths"]}
+            shared = sorted(mine & theirs)
+            if not shared:
+                continue
+            files = ", ".join(shared)
+            if j in up:
+                out.append(f"goal {i + 1} changes {files} again after goal {j + 1}: check it builds on that work instead of redoing it")
+            else:
+                out.append(f"goals {j + 1} and {i + 1} run at the same time and both change {files}: they will conflict")
+    return out
 
 
 def card(p: dict) -> dict:
@@ -178,6 +239,9 @@ def card(p: dict) -> dict:
         "decision_id": p["decision_id"],
         "goals": goals,
         "goal_ids": p.get("goal_ids", []),
+        "warnings": p.get("warnings", []),
+        "error": p.get("error"),
+        "created": p.get("created"),
     }
 
 
@@ -215,7 +279,11 @@ def flow(conn: sqlite3.Connection, target: str | None = None, limit: int = 20) -
             else:
                 g["station"] = "stopped"
         c["error"] = p.get("error")
-        if c["status"] == "waiting" and c["goals"] and c["goals"][0]["station"] == "lead":
+        if (
+            c["status"] == "waiting"
+            and c["goals"]
+            and c["goals"][0]["station"] == "lead"
+        ):
             c["status"] = "accepted"
         out.append(c)
     return out
@@ -333,7 +401,11 @@ def status(conn: sqlite3.Connection, target: str) -> str:
     active = ledger.active_goals(conn, target)
     out.append(f"running goals: {len(active)}")
     for g in active[:10]:
-        state = f"attempt {g['attempt']}" if g["current_task"] else "waits for its dependencies"
+        state = (
+            f"attempt {g['attempt']}"
+            if g["current_task"]
+            else "waits for its dependencies"
+        )
         out.append(f"  goal {g['id']}: {state} - {_line(g['goal'], 70)}")
     waiting = [p for p in proposals(target) if p["status"] == "waiting"]
     out.append(f"proposals waiting for Eli: {len(waiting)}")
@@ -381,6 +453,9 @@ def findings(conn: sqlite3.Connection, target: str, limit: int = 40) -> str:
     if cost:
         out.append("worker input tokens per landed goal (newest first):")
         out += [f"  goal {r['id']}: {r['tin']} over {r['n']} calls" for r in cost]
+    from team import model_tracking
+
+    out += model_tracking.findings(conn, jobs)
     return "\n".join(out)
 
 
@@ -399,6 +474,16 @@ def suggest(conn: sqlite3.Connection, target: str, title: str, change: str, why:
         source="boss-suggestion",
     )
     with path.open("a") as f:
-        f.write(json.dumps({"decision_id": decision, "title": title, "change": change,
-                            "why": why, "created": ledger._now()}) + "\n")
+        f.write(
+            json.dumps(
+                {
+                    "decision_id": decision,
+                    "title": title,
+                    "change": change,
+                    "why": why,
+                    "created": ledger._now(),
+                }
+            )
+            + "\n"
+        )
     return decision

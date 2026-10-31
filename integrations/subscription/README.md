@@ -31,6 +31,16 @@ stack. Setup preserves existing provider keys and adds the local token.
 ```sh
 python3 -m integrations.subscription.setup --state-dir "${TEAM_STATE:-$HOME/state/team}"
 claude auth status
+python3 -m integrations.subscription.service --state-dir "${TEAM_STATE:-$HOME/state/team}"
+```
+
+On macOS, `service` installs the user launchd job `com.team.subscription`,
+bound to `127.0.0.1:8790`, with automatic restart and logs at
+`$TEAM_STATE/subscription/bridge.log`. It passes only runtime paths to the
+service; the local token stays in its mode-600 file. Re-running replaces
+that service. For a foreground run instead:
+
+```sh
 scripts/run-in-hermes-env python3 -m integrations.subscription.server \
   --plugin-dir "${TEAM_STATE:-$HOME/state/team}/subscription/20048e6e2c1c48d6023e73ae6951595f58352b20" \
   --token-file "${TEAM_STATE:-$HOME/state/team}/subscription/token"
@@ -44,19 +54,23 @@ is an upstream test-only escape from that guard.
 With the bridge running, regenerate the proxy configuration with
 `python3 integrations/portkey/build.py`, check it with `--check`, and restart
 LiteLLM using the stack's existing supervisor. Portkey reloads named configs.
+Run `python3 integrations/portkey/build.py --check` and
+`team/bin/team gate audit` before `team/bin/team run --once`. If preflight
+reports a missing `SUBSCRIPTION_TOKEN`, run setup first: catalog registration
+alone does not provision the local credential or start the bridge.
 All four Claude model IDs are explicit LiteLLM model groups; `tier-claude`
 is also available and has no cross-tier fallback. Other tiers retain their
 existing routes.
 
-The implement role now uses `runs_on.harness = "hermes-subscription"` with
-`runs_on.model = "claude-opus-5-5"`. Run `team/bin/team roles sync implement`
-after setup. Sync installs a small `team-subscription` provider profile into
-that role's isolated home. It sends requests to LiteLLM and promotes native
+A subscription role uses `runs_on.harness = "hermes-subscription"` with
+`runs_on.model = "claude-opus-5-5"`. Run `team/bin/team roles sync <role>`
+after configuring such a role. Sync installs a small `team-subscription`
+provider profile into that role's isolated home. It sends requests to LiteLLM and promotes native
 replay metadata from LiteLLM's `provider_specific_fields`, allowing Hermes to
 retain it across tool rounds. Using the ordinary `litellm` profile would lose
 this metadata. Subscription roles expose exactly the toolsets in their role
 manifest, with no automatic learning-tool additions, and never escalate to
-the separate full Claude Code worker. Auxiliary calls retain the base free
+another rescue worker. Auxiliary calls retain the base free
 routes. No running profiles or services are changed merely by editing the
 role manifest.
 
@@ -72,7 +86,7 @@ one tool call and its result, with one upstream request per call. Input usage
 was 750 tokens on the first call and 793 on the second, including the supplied
 prompt and single tool. This demonstrates that the full Claude Code prompt
 and tool stack is not required; it is not a fixed overhead measurement or a
-long-context cache-hit benchmark. Live production services were not switched.
+long-context cache-hit benchmark. That initial probe did not switch production.
 
 A further wire-level check on Claude Code 2.1.314 enabled the production
 LiteLLM callbacks and observed the JSON body immediately before the native
@@ -92,3 +106,20 @@ prompt and protocol framing; they are not measurements of overhead alone.
 The upstream transport is experimental and version-sensitive. Non-streaming
 disconnections may run until native completion or timeout; streaming closes
 the transport when the response is cancelled.
+
+Production activation was verified on 2026-10-30: the token was provisioned,
+the launchd bridge started, the proxy configuration rebuilt and LiteLLM
+restarted. The production path completed a custom-tool round trip with 764
+input tokens on the first call and 807 on the follow-up, one admitted upstream
+request each. The catalog check and Team profile audit passed. This activation
+preserved the current role assignments; it did not switch free-tier workers
+to Claude or enable Claude Code's native tools.
+
+
+Planner and rescue now use `team/hermes_run.py`: an isolated Hermes home,
+explicit role instructions and tools, and the same LiteLLM/Portkey route.
+Lead uses the model in its role manifest (Sonnet); implement's escalation
+model is Opus. Neither invokes the full Claude Code agent loop. The bridge
+still uses the native CLI strictly as its inference transport. Plan validation,
+one refusal retry, quota pauses, file-ownership grading and check/commit gates
+remain in Team. Auxiliary requests retain the existing free LiteLLM routes.

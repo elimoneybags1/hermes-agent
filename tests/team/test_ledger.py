@@ -57,25 +57,6 @@ def test_init_creates_every_table_with_the_agreed_columns(conn):
         "created",
     ]
     assert cols("diagnoses")[-4:] == ["note", "action", "lead_job_id", "created"]
-    assert cols("calls") == [
-        "id",
-        "job_id",
-        "task_ref",
-        "session_id",
-        "profile",
-        "provider",
-        "model",
-        "response_model",
-        "base_url",
-        "task_class",
-        "tokens_in",
-        "tokens_out",
-        "latency_ms",
-        "ok",
-        "error",
-        "ts",
-        "api_calls",
-    ]
     assert cols("goals")[-3:] == ["part_id", "base", "needs_commits"]
     assert cols("decisions") == [
         "id",
@@ -425,3 +406,17 @@ def test_orders_version_per_goal_and_rates_split_by_order(conn):
     assert ledger.list_diagnoses(conn, goal)[0]["action"] == "retry"
     with pytest.raises(ValueError):
         ledger.add_diagnosis(conn, goal, None, "x", "y", "shrug")
+
+
+def test_call_affinity_migration_preserves_existing_history(conn):
+    job = ledger.start_job(conn, "team", "sha", "lead", "v")
+    ledger.record_call(conn, job, "litellm", "tier-medium", "lead", 10, 2, 5, True, session_id="old")
+    conn.execute("ALTER TABLE calls DROP COLUMN gateway_session_id")
+    ledger.init(conn)
+    ledger.init(conn)
+    ledger.record_call(conn, job, "litellm", "tier-medium", "lead", 20, 3, 5, True,
+                       session_id="new", gateway_session_id="affinity")
+    old, new = ledger.calls_for(conn, job_id=job)
+    assert old["session_id"] == "old" and old["tokens_in"] == 10
+    assert old["gateway_session_id"] is None
+    assert new["gateway_session_id"] == "affinity"

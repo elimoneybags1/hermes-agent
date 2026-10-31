@@ -44,6 +44,7 @@ def test_register_binds_both_hooks_and_the_boss_tools():
     assert set(bound) == {
         "post_api_request",
         "api_request_error",
+        "post_auxiliary_call",
         "pre_tool_call",
     }
     assert "team_propose" in tools and len(tools) == 7
@@ -162,3 +163,20 @@ def test_record_never_raises(team_state, monkeypatch):
     log = (team_state / "logs" / "plugin.log").read_text()
     assert "ledger sink failed: boom" in log
     assert json.loads('{"ok": true}')["ok"]
+
+
+def test_scoped_boss_attribution_overrides_process_default(team_state, monkeypatch):
+    from hermes_constants import set_hermes_home_override, reset_hermes_home_override
+    sink = load_sink()
+    monkeypatch.setenv("HERMES_PROFILE", "default")
+    token = set_hermes_home_override(team_state / "hermes" / "profiles" / "boss")
+    try:
+        assert sink.profile_name() == "boss"
+        sink.record(provider="litellm", base_url="http://127.0.0.1:4000/v1", model="tier-simple",
+                    session_id="boss-aux", aux_task="compression", error="429 quota")
+    finally:
+        reset_hermes_home_override(token)
+    conn = ledger.connect()
+    row = conn.execute("SELECT profile, ok, error FROM calls WHERE session_id='boss-aux'").fetchone()
+    assert tuple(row) == ("boss", 0, "429 quota")
+    conn.close()

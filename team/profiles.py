@@ -96,6 +96,7 @@ def role_config(root: Path, role: dict, cat: dict | None = None) -> dict:
             "api_mode": "chat_completions",
             "model": model,
             "models": [model],
+            "session_affinity_header": "x-litellm-session-id",
         }
         cfg["model"] = {"provider": "team-subscription", "default": model}
     tools = list(role.get("tools") or [])

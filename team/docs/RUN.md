@@ -2,9 +2,8 @@
 
 Team uses Hermes kanban as its queue. Each goal gets a branch and worktree;
 Team runs the target's check and lands a passing branch with a `--no-ff` merge.
-Only the `implement` role is active. Boss planning, the Team dashboard plugin,
-and replay/evaluation/adoption are later phases. The standard Hermes dashboard
-and kanban board are available separately.
+Boss and lead handle planning; implement executes the parts. The standard
+Hermes dashboard and kanban board are available separately.
 
 ## Commands
 
@@ -60,8 +59,11 @@ then `tier-complex`. A failed review reopens the same task with its comments
 and updates the actual kanban model override. A failed worker may instead
 receive a new task on the same goal branch.
 
-After those attempts, Team tries Claude Code through the subscription with API
-credentials scrubbed. If that fails too, Team blocks the task, preserves the
+After those attempts, Team runs an isolated Hermes rescue on Opus through
+LiteLLM → Portkey → the subscription bridge, with API credentials scrubbed.
+The rescue exposes file and terminal tools, checks file edits against the
+owned paths, and reruns the check before returning. Terminal commands are
+not an OS sandbox; Team still rejects out-of-scope changes at grading. If that fails too, Team blocks the task, preserves the
 branch, marks the goal failed, and opens a decision. Completed or archived
 kanban tasks are not moved back to blocked.
 
@@ -88,3 +90,22 @@ Existing in-flight work is still inspected when dispatch is paused.
 
 Use `team/bin/team-hermes dashboard --no-open --port 9119` for Hermes's dashboard.
 The `/team` plugin page and the `boss` profile are not implemented by this phase.
+
+
+## Model health and token accounting
+
+LiteLLM writes every deployment attempt to `$TEAM_STATE/litellm/usage.db`,
+including failed requests and fallbacks. Rows identify the requested group,
+actual model, session and deployment. Input, output and total tokens are
+recorded for streaming and non-streaming responses. Cache reads, cache writes
+and reasoning tokens are separate detail fields when supplied by the provider;
+these details must not be added again to the totals. Raw usage is retained in
+`usage_json`. `usage_reported = 0` means no raw usage was supplied (or the row
+predates the migration), not that the request consumed zero tokens.
+
+The model order lives in `integrations/portkey/catalog.json`. Health probes
+must include a tool call followed by its result: plain-text responses can pass
+while a provider's tool-history translation is broken. Probe results measure
+current availability and basic protocol correctness, not coding quality or
+sustained quota capacity. Keep comparison rates next to their baseline and
+leave unknown usage or responders unknown.

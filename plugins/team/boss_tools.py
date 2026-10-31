@@ -90,6 +90,8 @@ def propose(args: dict) -> str:
                 f"  - {part['title']} [{part['model']}; {', '.join(part['toolsets'])}; "
                 f"owns {', '.join(part['owned_paths'])}]"
             )
+    for w in p.get("warnings") or []:
+        lines.append(f"warning: {w}")
     return "\n".join(lines)
 
 

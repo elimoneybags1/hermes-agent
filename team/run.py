@@ -3,7 +3,7 @@
 A goal is one branch and one worktree. Each attempt is a ledger job: free
 attempts are kanban tasks on that branch (one task for the goal's whole
 life, reopened from ``review`` on a failure), the last one may be Claude
-Code on Eli's subscription. Every tick, for every enabled target: run the
+through LiteLLM on Eli's subscription. Every tick, for every enabled target: run the
 preflight (gate audit, catalog check, spend guard), let kanban dispatch, then
 step each goal Team tracks. What Team tracks lives in the ledger's ``goals``
 table, so ``team run`` can stop and restart at any point.
@@ -46,6 +46,8 @@ from team import (
     claude_roles,
     claude_run,
     grade,
+    hermes_run,
+    model_tracking,
     kanban,
     lead,
     ledger,
@@ -256,9 +258,18 @@ class Loop:
 
             try:
                 boss.release_approved(
-                    self.root, self.conn, runner=self.runner, cat=self._cat, log=self.log
+                    self.root,
+                    self.conn,
+                    runner=self.runner,
+                    cat=self._cat,
+                    log=self.log,
                 )
-            except (boss.BossError, RunError, kanban.KanbanError, grade.GradeError) as e:
+            except (
+                boss.BossError,
+                RunError,
+                kanban.KanbanError,
+                grade.GradeError,
+            ) as e:
                 self.log(f"could not release a proposal: {e}")
         for target in targets.list_targets():
             if not target.get("enabled", True):
@@ -653,8 +664,12 @@ class Loop:
         grade.ensure_worktree(
             self._repo(goal), goal["worktree"], goal["branch"], runner=self.runner
         )
+        model = (
+            roles.load(self.root, goal["role"]).get("escalation", {}).get("model")
+            or hermes_run.RESCUE_MODEL
+        )
         choice = catalog.ModelChoice(
-            "claude", "subscription", "claude", "escalation after free attempts"
+            model, "team-subscription", model, "escalation after free attempts"
         )
         job = self._start_job(goal, attempt, "claude:", choice)
         ledger.update_goal(self.conn, goal["id"], attempt=attempt, job_id=job)
@@ -667,7 +682,7 @@ class Loop:
         decision_file.unlink(missing_ok=True)
         owned = self._owned(goal)
         order = ledger.latest_order(self.conn, goal["id"])
-        result = claude_run.run(
+        result = hermes_run.run(
             goal["worktree"],
             lead.render(
                 order["order"],
@@ -686,28 +701,14 @@ class Loop:
             role=goal["role"],
             root=self.root,
             check=goal["check_cmd"],
+            model=model,
             allowed_files=owned,
             decision_file=decision_file,
         )
         ledger.set_task_ref(
             self.conn, job, f"claude:{result.get('session_id') or 'unknown'}"
         )
-        usage = result.get("usage") or {}
-        ledger.record_call(
-            self.conn,
-            job,
-            "subscription",
-            "claude",
-            goal["role"],
-            claude_run.input_tokens(usage),
-            usage.get("output_tokens"),
-            result.get("duration_ms"),
-            bool(result["ok"]),
-            None if result["ok"] else _tail(str(result["result"]), 500),
-            session_id=result.get("session_id"),
-            profile=goal["role"],
-            response_model="claude",
-        )
+        model_tracking.record_result(self.conn, job, result, goal["role"])
         asked = self._claude_decision(goal, decision_file)
         if asked:
             ledger.finish_job(
@@ -940,6 +941,7 @@ class Loop:
         return True
 
     def _lead_job(self, target: str, commit: str, why: str) -> int:
+        model = roles.load(self.root, lead.ROLE)["runs_on"].get("model") or hermes_run.LEAD_MODEL
         return ledger.start_job(
             self.conn,
             target,
@@ -948,29 +950,15 @@ class Loop:
             roles.version(self.root, lead.ROLE),
             task_ref="claude:",
             model_choice=catalog.ModelChoice(
-                "claude", "subscription", "claude", why
+                model, "team-subscription", model, why
             ).as_dict(),
         )
 
     def _lead_call(self, job_id: int, result: dict) -> None:
-        usage = result.get("usage") or {}
         ledger.set_task_ref(
             self.conn, job_id, f"claude:{result.get('session_id') or 'unknown'}"
         )
-        ledger.record_call(
-            self.conn,
-            job_id,
-            "subscription",
-            "claude",
-            lead.ROLE,
-            claude_run.input_tokens(usage),
-            usage.get("output_tokens"),
-            result.get("duration_ms"),
-            True,
-            session_id=result.get("session_id"),
-            profile=lead.ROLE,
-            response_model="claude",
-        )
+        model_tracking.record_result(self.conn, job_id, result, lead.ROLE)
 
     def _diagnose(self, goal: dict, job: dict, failure: str) -> dict | None:
         """The lead's reading of a failed check, or None (no order, turned off, or unavailable)."""
@@ -978,13 +966,20 @@ class Loop:
         if order is None or not self.cfg["lead.diagnose"]:
             return None
         repo, base = self._repo(goal), goal.get("base") or "main"
-        diff = grade._git(
-            repo, "diff", f"{base}...{goal['branch']}", runner=self.runner
-        ).stdout or "(no diff)"
+        diff = (
+            grade._git(
+                repo, "diff", f"{base}...{goal['branch']}", runner=self.runner
+            ).stdout
+            or "(no diff)"
+        )
         lead_job = self._lead_job(goal["target"], job["target_commit"], "diagnosis")
         try:
             with lead.workspace(
-                repo, goal["target"], f"diagnose-{goal['id']}", goal["branch"], self.runner
+                repo,
+                goal["target"],
+                f"diagnose-{goal['id']}",
+                goal["branch"],
+                self.runner,
             ) as tree:
                 found = lead.ask(
                     self.root,
@@ -1015,7 +1010,11 @@ class Loop:
             self.log(f"goal {goal['id']}: no diagnosis, retrying without it: {e}")
             return None
         ledger.finish_job(
-            self.conn, lead_job, "pass", "lead-validate", f"{found['action']}: {found['cause']}"
+            self.conn,
+            lead_job,
+            "pass",
+            "lead-validate",
+            f"{found['action']}: {found['cause']}",
         )
         ledger.add_diagnosis(
             self.conn,
@@ -1099,7 +1098,15 @@ def plan_goal(
 ) -> list[dict]:
     """``team goal`` with the lead: draft the plan, then release it at once."""
     draft = draft_goal(
-        root, conn, target, goal, check=check, runner=runner, base=base, cat=cat, log=log
+        root,
+        conn,
+        target,
+        goal,
+        check=check,
+        runner=runner,
+        base=base,
+        cat=cat,
+        log=log,
     )
     return release_goal(root, conn, target, draft, runner=runner, cat=cat, log=log)
 
@@ -1116,11 +1123,14 @@ def draft_goal(
     base: str = "main",
     cat: dict | None = None,
     log: Callable[[str], None] = _log,
+    plan_context: dict | None = None,
 ) -> dict:
     """Ask the lead for a validated plan; nothing is created on the board.
 
     ``notes`` is what the boss knows that the repo does not say (decisions,
     the larger plan this goal belongs to); the lead plans with it.
+    ``plan_context`` names the plan's other goals: ``before`` (drafted, and
+    landed by the time this one runs) and ``alongside`` (running at once).
     Returns ``{goal, check, base, summary, parts, lead_job}``.
     """
     record = targets.require(target)
@@ -1149,6 +1159,7 @@ def draft_goal(
                     notes=notes,
                     refused=refused,
                     previous=previous,
+                    plan_context=plan_context,
                 ),
                 lead.PLAN_SCHEMA,
                 lambda data: _with_summary(data, tree, menu, loop),

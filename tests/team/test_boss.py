@@ -228,3 +228,35 @@ def test_flow_moves_each_goal_from_boss_to_landed(team):
     team["loop"].tick()
     goal = boss.flow(team["conn"])[0]["goals"][0]
     assert goal["station"] == "landed" and goal["parts"][0]["state"] == "landed"
+
+
+def test_a_later_goal_is_planned_knowing_what_the_earlier_ones_will_have_done(team):
+    team["answers"].queue += [
+        plan_answer(part(title="Add files to board", owned_paths=["app.py"], interfaces=["goal_card()['files']"])),
+        plan_answer(part(title="Show the files", owned_paths=["lib.py"])),
+        plan_answer(part(title="Unrelated", owned_paths=["app.py"])),
+    ]
+    p = boss.propose(
+        team["root"], team["conn"], "team", "Files on cards.", "Board, then the page; a third alongside.",
+        [{"goal": "board"}, {"goal": "page", "after": [1]}, {"goal": "other"}],
+        runner=team["hermes"], cat=CATALOG, log=lambda m: None,
+    )
+    first, second, third = team["answers"].prompts
+    assert "Earlier goals in the same plan" not in first
+    assert "Do not plan any of it again" in second and "Add files to board" in second
+    assert "goal_card()['files']" in second
+    assert "run at the same time" in third and '"app.py"' in third and '"lib.py"' in third  # goals 1 and 2 both
+    assert p["warnings"] == ["goals 1 and 3 run at the same time and both change app.py: they will conflict"]
+    assert boss.card(p)["warnings"] == p["warnings"]
+
+
+def test_a_goal_that_changes_an_earlier_goals_file_is_flagged_for_a_look(team):
+    team["answers"].queue += [plan_answer(), plan_answer()]
+    p = boss.propose(
+        team["root"], team["conn"], "team", "Two steps.", "Same file twice.",
+        [{"goal": "a"}, {"goal": "b", "after": [1]}],
+        runner=team["hermes"], cat=CATALOG, log=lambda m: None,
+    )
+    assert p["warnings"] == [
+        "goal 2 changes app.py again after goal 1: check it builds on that work instead of redoing it"
+    ]

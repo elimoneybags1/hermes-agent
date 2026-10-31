@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS calls (
     job_id         INTEGER REFERENCES jobs(id),
     task_ref       TEXT,
     session_id     TEXT,
+    gateway_session_id TEXT,
     profile        TEXT,
     provider       TEXT NOT NULL,
     model          TEXT NOT NULL,
@@ -249,6 +250,10 @@ def init(conn: sqlite3.Connection) -> None:
                 "ALTER TABLE jobs ADD COLUMN order_id INTEGER REFERENCES orders(id)"
             )
 
+        call_columns = {r["name"] for r in conn.execute("PRAGMA table_info(calls)")}
+        if "gateway_session_id" not in call_columns:
+            conn.execute("ALTER TABLE calls ADD COLUMN gateway_session_id TEXT")
+
 
 def _check(value: str, allowed: tuple[str, ...], what: str) -> None:
     if value not in allowed:
@@ -403,6 +408,7 @@ def record_call(
     profile: str | None = None,
     response_model: str | None = None,
     base_url: str | None = None,
+    gateway_session_id: str | None = None,
 ) -> int:
     """Record one model call and return its id.
 
@@ -415,8 +421,8 @@ def record_call(
         cur = conn.execute(
             "INSERT INTO calls (job_id, task_ref, session_id, profile, provider, model,"
             " response_model, base_url, task_class, tokens_in, tokens_out, latency_ms,"
-            " ok, error, ts, api_calls)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " ok, error, ts, api_calls, gateway_session_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 job_id,
                 task_ref,
@@ -434,6 +440,7 @@ def record_call(
                 error,
                 _now(),
                 api_calls,
+                gateway_session_id,
             ),
         )
     return cur.lastrowid

@@ -10,7 +10,8 @@ tools = ["terminal", "file", "todo", "skills", "kanban"]
 harness = "hermes"
 
 [escalation]
-harness = "claude"
+harness = "hermes-subscription"
+model = "claude-opus-5-5"
 after_failures = 2
 
 [budget]

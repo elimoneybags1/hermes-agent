@@ -15,12 +15,12 @@ from pathlib import Path
 
 from team import catalog
 
-# "claude": a role Team itself runs through Claude Code on the subscription
-# (the lead); it has no Hermes profile and is never a kanban assignee.
+# "claude" is retained for reading legacy manifests; active roles use Hermes.
 HARNESSES = ("hermes", "hermes-subscription", "claude")
 STATUSES = ("active", "planned")
 # Hermes toolsets a worker may be given (platform_toolsets.cli).
 TOOLSETS = (
+    "read-only",
     "terminal",
     "file",
     "code_execution",

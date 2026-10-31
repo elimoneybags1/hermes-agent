@@ -30,10 +30,10 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
     "escalation.claude": (
         bool,
         True,
-        "After a role's free attempts fail, try once on Claude Code (subscription).",
+        "After a role's free attempts fail, try once on Claude through LiteLLM (subscription).",
     ),
-    "escalation.claude_max_turns": (int, 60, "Turn limit for a Claude Code attempt."),
-    "escalation.claude_timeout_s": (int, 1800, "Time limit for a Claude Code attempt."),
+    "escalation.claude_max_turns": (int, 60, "Turn limit for a Claude gateway attempt."),
+    "escalation.claude_timeout_s": (int, 1800, "Time limit for a Claude gateway attempt."),
     "lead.enabled": (
         bool,
         True,

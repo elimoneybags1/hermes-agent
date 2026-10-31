@@ -9,6 +9,7 @@ requests.jsonl and Team's ledger line up on one id.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -32,6 +33,12 @@ CREATE TABLE IF NOT EXISTS calls (
     model        TEXT,               -- catalog id (LiteLLM's view; Portkey's log names the provider)
     tokens_in    INTEGER,
     tokens_out   INTEGER,
+    tokens_total INTEGER,
+    cache_read_tokens INTEGER,
+    cache_write_tokens INTEGER,
+    reasoning_tokens INTEGER,
+    usage_reported INTEGER NOT NULL DEFAULT 0,
+    usage_json TEXT,
     latency_ms   INTEGER,
     ok           INTEGER NOT NULL CHECK (ok IN (0, 1)),
     rate_limited INTEGER NOT NULL DEFAULT 0 CHECK (rate_limited IN (0, 1)),
@@ -46,10 +53,44 @@ def connect() -> sqlite3.Connection:
     DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB, timeout=5)
     conn.executescript(SCHEMA)
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(calls)")}
+    with conn:
+        for name, kind in {"tokens_total": "INTEGER", "cache_read_tokens": "INTEGER",
+                           "cache_write_tokens": "INTEGER", "reasoning_tokens": "INTEGER",
+                           "usage_reported": "INTEGER NOT NULL DEFAULT 0", "usage_json": "TEXT"}.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE calls ADD COLUMN {name} {kind}")
     return conn
 
 
-def row(kwargs: dict, ok: bool) -> dict:
+def usage_fields(response, slo: dict, ok: bool) -> dict:
+    usage = response.get("usage") if isinstance(response, dict) else getattr(response, "usage", None)
+    if hasattr(usage, "model_dump"):
+        usage = usage.model_dump()
+    usage = usage if isinstance(usage, dict) else {}
+    prompt = usage.get("prompt_tokens_details") or {}
+    completion = usage.get("completion_tokens_details") or {}
+    incoming = usage.get("prompt_tokens")
+    if incoming is None and usage.get("input_tokens") is not None:
+        incoming = sum(usage.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    if incoming is None and ok:
+        incoming = slo.get("prompt_tokens")
+    outgoing = usage.get("completion_tokens", usage.get("output_tokens"))
+    if outgoing is None and ok:
+        outgoing = slo.get("completion_tokens")
+    return {
+        "tokens_in": incoming,
+        "tokens_out": outgoing,
+        "tokens_total": usage.get("total_tokens", incoming + outgoing if incoming is not None and outgoing is not None else None),
+        "cache_read_tokens": prompt.get("cached_tokens", usage.get("cache_read_input_tokens")),
+        "cache_write_tokens": prompt.get("cache_write_tokens", usage.get("cache_creation_input_tokens")),
+        "reasoning_tokens": completion.get("reasoning_tokens", usage.get("reasoning_tokens")),
+        "usage_reported": int(bool(usage)),
+        "usage_json": json.dumps(usage, separators=(",", ":")) if usage else None,
+    }
+
+
+def row(kwargs: dict, ok: bool, response=None) -> dict:
     slo = kwargs.get("standard_logging_object") or {}
     lp = kwargs.get("litellm_params") or {}
     meta = lp.get("metadata") or {}
@@ -71,9 +112,8 @@ def row(kwargs: dict, ok: bool) -> dict:
         "deployment": deployment,
         # build.py names the Portkey config after the deployment slug: <slug> or tier-<t>/<slug>.
         "config": f"team-model-{deployment.rsplit('/', 1)[-1]}" if deployment else None,
-        "model": slo.get("model"),
-        "tokens_in": slo.get("prompt_tokens"),
-        "tokens_out": slo.get("completion_tokens"),
+        "model": slo.get("model") or kwargs.get("model"),
+        **usage_fields(response, slo, ok),
         "latency_ms": int((slo.get("response_time") or 0) * 1000),
         "ok": int(ok),
         "rate_limited": int(limited),
@@ -82,9 +122,9 @@ def row(kwargs: dict, ok: bool) -> dict:
 
 
 class UsageLog(CustomLogger):
-    def _write(self, kwargs: dict, ok: bool) -> None:
+    def _write(self, kwargs: dict, ok: bool, response=None) -> None:
         try:
-            r = row(kwargs, ok)
+            r = row(kwargs, ok, response)
             cols = ", ".join(f'"{c}"' for c in r)
             with connect() as conn:
                 conn.execute(f"INSERT INTO calls ({cols}) VALUES ({', '.join('?' * len(r))})", tuple(r.values()))
@@ -92,10 +132,10 @@ class UsageLog(CustomLogger):
             log.warning("usage_log: could not record call: %s", e)
 
     async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
-        self._write(kwargs, True)
+        self._write(kwargs, True, response_obj)
 
     async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
-        self._write(kwargs, False)
+        self._write(kwargs, False, response_obj)
 
 
 logger = UsageLog()

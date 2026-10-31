@@ -77,7 +77,10 @@ def test_a_range_past_the_end_is_clipped_and_one_past_the_start_refused(tree):
         ({"role": "lead"}, "role 'lead' is not one of"),
         ({"steps": []}, "no steps"),
         ({"owned_paths": ["../etc/passwd"]}, "must be relative inside the repo"),
-        ({"context": [{"path": "nope.py", "start": 1, "end": 2, "why": ""}]}, "does not exist"),
+        (
+            {"context": [{"path": "nope.py", "start": 1, "end": 2, "why": ""}]},
+            "does not exist",
+        ),
         ({"depends_on": ["ghost"]}, "unknown part 'ghost'"),
     ],
 )
@@ -87,21 +90,35 @@ def test_refusals(tree, over, says):
 
 
 def test_cycles_parallel_overlaps_and_too_many_parts_are_refused(tree):
-    a, b = part("a", depends_on=["b"]), part("b", depends_on=["a"], owned_paths=["lib.py"])
-    assert lead.validate_plan({"parts": [a, b]}, tree, MENU, 6, CATALOG)[1] == ["depends_on has a cycle"]
+    a, b = (
+        part("a", depends_on=["b"]),
+        part("b", depends_on=["a"], owned_paths=["lib.py"]),
+    )
+    assert lead.validate_plan({"parts": [a, b]}, tree, MENU, 6, CATALOG)[1] == [
+        "depends_on has a cycle"
+    ]
     a, b = part("a"), part("b")
-    assert "can run in parallel but both own ['app.py']" in lead.validate_plan(
-        {"parts": [a, b]}, tree, MENU, 6, CATALOG
-    )[1][0]
+    assert (
+        "can run in parallel but both own ['app.py']"
+        in lead.validate_plan({"parts": [a, b]}, tree, MENU, 6, CATALOG)[1][0]
+    )
     b = part("b", depends_on=["a"])  # one after the other may share a file
     assert lead.validate_plan({"parts": [a, b]}, tree, MENU, 6, CATALOG)[1] == []
     many = [part(f"p{n}", owned_paths=[f"f{n}.py"]) for n in range(3)]
-    assert "3 parts; at most 2" in lead.validate_plan({"parts": many}, tree, MENU, 2, CATALOG)[1]
+    assert (
+        "3 parts; at most 2"
+        in lead.validate_plan({"parts": many}, tree, MENU, 2, CATALOG)[1]
+    )
 
 
 def test_diagnosis_validation(tree):
     found, errors = lead.validate_diagnosis(
-        {"cause": "c", "note": "n", "action": "retry", "context": [{"path": "app.py", "start": 1, "end": 1}]},
+        {
+            "cause": "c",
+            "note": "n",
+            "action": "retry",
+            "context": [{"path": "app.py", "start": 1, "end": 1}],
+        },
         tree,
     )
     assert errors == [] and found["context"][0]["path"] == "app.py"
@@ -114,7 +131,12 @@ def test_diagnosis_validation(tree):
 # --- rendering --------------------------------------------------------------------
 
 
-GOAL = {"goal": "Set VALUE to 2", "worktree": "/w", "branch": "team/x", "check_cmd": "./check.sh"}
+GOAL = {
+    "goal": "Set VALUE to 2",
+    "worktree": "/w",
+    "branch": "team/x",
+    "check_cmd": "./check.sh",
+}
 
 
 def test_render_carries_the_order_and_the_code(tree):
@@ -124,14 +146,26 @@ def test_render_carries_the_order_and_the_code(tree):
     assert "### app.py:1-1 (the line to change)\n```\nVALUE = 1\n```" in body
     assert "Do not touch check.sh" in body and "kanban_request_review" in body
     assert "do not search the repo" in body
-    assert "kanban_request_review" not in lead.render(order, GOAL, tree, 24000, claude=True)
-    noted = lead.render(dict(order, lead_note="You forgot to commit."), GOAL, tree, 24000, failure="boom", attempt=2)
+    assert "kanban_request_review" not in lead.render(
+        order, GOAL, tree, 24000, claude=True
+    )
+    noted = lead.render(
+        dict(order, lead_note="You forgot to commit."),
+        GOAL,
+        tree,
+        24000,
+        failure="boom",
+        attempt=2,
+    )
     assert "## From the lead, after the last attempt\nYou forgot to commit." in noted
     assert "## Attempt 1 failed. What it left\nboom" in noted
 
 
 def test_render_keeps_excerpts_inside_the_budget(tree):
-    refs = [{"path": "lib.py", "start": 1, "end": 10, "why": ""}, {"path": "app.py", "start": 1, "end": 1, "why": ""}]
+    refs = [
+        {"path": "lib.py", "start": 1, "end": 10, "why": ""},
+        {"path": "app.py", "start": 1, "end": 1, "why": ""},
+    ]
     text, skipped = lead.excerpts(refs, tree, 60)
     assert skipped == 1 and "VALUE = 1" in text and "line 1" not in text
     order = dict(part(), context=refs)
@@ -161,7 +195,11 @@ class Answers:
                     "result": "",
                     "structured_output": answer,
                     "session_id": f"lead-{len(self.prompts)}",
-                    "usage": {"input_tokens": 10, "cache_read_input_tokens": 990, "output_tokens": 100},
+                    "usage": {
+                        "input_tokens": 10,
+                        "cache_read_input_tokens": 990,
+                        "output_tokens": 100,
+                    },
                 }
             return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(out), stderr="")
 
@@ -220,8 +258,13 @@ def test_two_refusals_or_a_usage_limit_stop_the_goal(led):
         run.plan_goal(led["root"], led["conn"], "team", "x", runner=led["hermes"], cat=CATALOG)
     led["answers"].queue.append(RuntimeError("You've hit your usage limit"))
     with pytest.raises(run.RunError, match="usage limit"):
-        run.plan_goal(led["root"], led["conn"], "team", "x", runner=led["hermes"], cat=CATALOG)
-    assert [j["outcome"] for j in ledger.list_jobs(led["conn"], role="lead")] == ["error", "error"]
+        run.plan_goal(
+            led["root"], led["conn"], "team", "x", runner=led["hermes"], cat=CATALOG
+        )
+    assert [j["outcome"] for j in ledger.list_jobs(led["conn"], role="lead")] == [
+        "error",
+        "error",
+    ]
     assert ledger.list_goals(led["conn"], all_goals=True) == []
 
 
@@ -264,7 +307,10 @@ def test_a_failed_check_gets_the_leads_note_before_the_retry(led):
     g = ledger.get_goal(led["conn"], goal["id"])
     assert g["attempt"] == 2 and g["outcome"] is None
     comments = led["hermes"].comments[goal["current_task"]]
-    assert comments[-1].startswith("LEAD: Set 3, not 2.") and "1. Write VALUE = 2" in comments[-1]
+    assert (
+        comments[-1].startswith("LEAD: Set 3, not 2.")
+        and "1. Write VALUE = 2" in comments[-1]
+    )
     assert "VALUE = 3" in comments[-1]  # the excerpt is read from the worker's branch
     order = ledger.latest_order(led["conn"], goal["id"])
     assert order["version"] == 2 and order["order"]["lead_note"] == "Use 2."
@@ -298,7 +344,10 @@ def test_no_diagnosis_still_retries(led):
 
 def test_menu_lists_only_active_hermes_roles(led):
     m = lead.menu(led["root"], CATALOG)
-    assert list(m) == ["implement"] and m["implement"]["toolsets"] == ["file", "terminal"]
+    assert list(m) == ["implement"] and m["implement"]["toolsets"] == [
+        "file",
+        "terminal",
+    ]
 
 
 def test_menu_leaves_out_a_planned_role(tmp_path):
@@ -307,11 +356,18 @@ def test_menu_leaves_out_a_planned_role(tmp_path):
     assert list(lead.menu(tmp_path, CATALOG)) == ["implement"]
 
 
-def test_lead_has_no_hermes_profile(led):
+def test_lead_uses_subscription_gateway_profile(led):
     from team import profiles
 
-    assert profiles.sync(led["root"], "lead", CATALOG, runner=led["hermes"]) == []
-    assert not profiles.profile_dir("lead").exists()
+    from team import roles
+
+    cfg = profiles.role_config(led["root"], roles.load(led["root"], "lead"))
+    assert cfg["model"]["provider"] == "team-subscription"
+    assert (
+        cfg["providers"]["team-subscription"]["base_url"]
+        == cfg["providers"]["litellm"]["base_url"]
+    )
+    assert cfg["platform_toolsets"]["cli"] == ["read-only"]
 
 
 def test_the_lead_reads_a_detached_clean_checkout(led):
