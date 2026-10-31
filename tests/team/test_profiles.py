@@ -71,14 +71,16 @@ def test_role_config_applies_overrides(root):
     assert profiles.audit(cfg) == []
     boss = {
         "name": "boss",
-        "runs_on": {"harness": "hermes-subscription", "model": "opus"},
+        "runs_on": {"harness": "hermes-subscription", "model": "claude-opus-5-5"},
         "tools": ["kanban", "team"],
         "budget": {"max_turns": 40},
         "models": {"candidates": []},
     }
     cfg = profiles.role_config(root, boss)
-    assert cfg["model"] == {"provider": "subscription", "default": "opus"}
-    assert cfg["providers"]["subscription"]["key_env"] == "SUBSCRIPTION_TOKEN"
+    assert cfg["model"] == {"provider": "team-subscription", "default": "claude-opus-5-5"}
+    assert cfg["providers"]["team-subscription"]["key_env"] == "LITELLM_MASTER_KEY"
+    assert cfg["providers"]["team-subscription"]["base_url"] == cfg["providers"]["litellm"]["base_url"]
+    assert cfg["platform_toolsets"]["cli"] == ["kanban", "team"]
     assert cfg["auxiliary"]["vision"]["provider"] == "litellm"
     assert profiles.audit(cfg) == []
 

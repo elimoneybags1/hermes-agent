@@ -419,13 +419,17 @@ class Loop:
 
     def _role(self, name: str) -> dict:
         role = roles.load(self.root, name, self.cat)
-        if role["runs_on"]["harness"] != "hermes":
+        if role["runs_on"]["harness"] not in ("hermes", "hermes-subscription"):
             raise RunError(f"role {name} does not run on hermes workers")
         if role["status"] != "active":
             raise RunError(f"role {name} is not active")
         return role
 
     def _choice(self, role: dict, attempt: int) -> catalog.ModelChoice:
+        if role["runs_on"]["harness"] == "hermes-subscription":
+            model = role["runs_on"].get("model") or "claude-opus-5-5"
+            choice = catalog.resolve(f"claude-subscription:{model}", self.cat)
+            return choice._replace(provider="team-subscription")
         spec = roles.candidate(role, attempt)
         if not spec:
             raise RunError(f"role {role['name']} has no model candidates")
@@ -576,6 +580,7 @@ class Loop:
         elif (
             nxt == role["escalation"]["after_failures"] + 1
             and self.cfg["escalation.claude"]
+            and role["runs_on"]["harness"] != "hermes-subscription"
         ):
             self._claude_attempt(goal, nxt, failure)
         else:

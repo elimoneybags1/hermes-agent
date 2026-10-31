@@ -1,5 +1,9 @@
 # Portkey gateway and LiteLLM, from source, free-only
 
+Claude now routes through the local subscription bridge, with no Anthropic
+API key. See [subscription setup and verification limits](../subscription/README.md).
+The historical acceptance evidence below describes the earlier gateway setup.
+
 The connection at the heart of Team's model routing (PLAN.md Phase 2):
 
 ```

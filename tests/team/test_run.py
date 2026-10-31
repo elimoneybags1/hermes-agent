@@ -630,3 +630,18 @@ def test_block_leaves_completed_task_done(world, status):
     world["hermes"].tasks[goal["current_task"]]["status"] = status
     world["loop"]._block(goal, "landing needs attention")
     assert world["hermes"].tasks[goal["current_task"]]["status"] == status
+
+
+def test_subscription_role_dispatches_through_proxy_profile(world):
+    catalog = json.loads((REPO / 'integrations/portkey/catalog.json').read_text())
+    (world['root'] / 'team/roles/implement/role.toml').write_text(ROLE.replace(
+        'harness = "hermes"',
+        'harness = "hermes-subscription"\nmodel = "claude-opus-5-5"',
+    ).replace('candidates = ["tier-simple", "nvidia:z-ai/glm-5.3"]', 'candidates = []'))
+    profiles.sync(world['root'], 'implement', catalog, runner=world['hermes'])
+    goal = run.start_goal(world['root'], world['conn'], 'team', 'Use subscription',
+                          runner=world['hermes'], cat=catalog)
+    task = world['hermes'].tasks[goal['current_task']]
+    assert task['provider'] == 'team-subscription'
+    assert task['model'] == 'claude-opus-5-5'
+    assert (profiles.profile_dir('implement') / 'plugins/model-providers/team-subscription/__init__.py').is_file()

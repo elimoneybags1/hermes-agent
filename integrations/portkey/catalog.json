@@ -75,26 +75,22 @@
    "limits": "5 RPM, 30K uncached TPM, 1M tokens/day; trial context 64K, output 32K",
    "notes": "not a lasting free tier; 'Payment required' since 2026-10-26, every cerebras served_by row is unavailable"
   },
-  "anthropic": {
-   "portkey": "anthropic",
-   "key_env": "ANTHROPIC_API_KEY",
-   "free_basis": "Claude Max 5x includes $100/month of API credit, claimed by linking a Console organization; it does not roll over (platform.claude.com/docs/en/about-claude/api-credits-for-subscribers)",
-   "limits": "spend guard: integrations/portkey/spend.py totals requests.jsonl at the prices on each model; LiteLLM stops routing to Claude at stop_at_usd. The Console organization must have no card and no auto-reload, so running out fails instead of billing",
-   "notes": "never a key with a payment method behind it; Claude Code itself stays on the subscription login (claude -p), not this key",
-   "request_timeout_ms": 300000,
-   "allowance": {
-    "monthly_usd": 100,
-    "stop_at_usd": 90,
-    "cycle_day": 1,
-    "cycle_day_why": "the day of the month the credit resets (UTC); set it to the plan's billing day"
-   }
+  "claude-subscription": {
+   "portkey": "openai",
+   "key_env": "SUBSCRIPTION_TOKEN",
+   "custom_host": "http://127.0.0.1:8790/v1",
+   "free_basis": "Claude subscription allowance through the official Claude CLI; no Anthropic API key. Account extra-usage settings still apply.",
+   "limits": "Native subscription limits; 429 propagates. No monthly API-credit spend guard.",
+   "notes": "Local bridge token only. Hermes supplies tools and context; native tools, skills, memory and CLAUDE.md loading are disabled by the pinned DirectSDK transport.",
+   "request_timeout_ms": 300000
   }
  },
  "tiers": [
   "simple",
   "medium",
   "complex",
-  "reasoning"
+  "reasoning",
+  "claude"
  ],
  "tier_fallbacks": {
   "reasoning": [
@@ -111,7 +107,8 @@
   ],
   "simple": [
    "medium"
-  ]
+  ],
+  "claude": []
  },
  "policy": {
   "about": "How the gateway behaves, as opposed to what it may call. build.py validates every value and writes it into the Portkey configs and LiteLLM's config.yaml; integrations/litellm/run.sh reads session_pin_ttl_s. Change a value, run build.py, restart both launchd jobs.",
@@ -1107,14 +1104,16 @@
     "long_input_per_mtok": 0.5,
     "long_output_per_mtok": 2.5
    },
-   "price_why": "Anthropic first-party rates per million tokens (claude-api skill, cached 2026-10-06); every prompt token is counted as uncached input, so the guard errs high",
+   "price_why": "API list-price comparison only; not a subscription invoice or allowance meter.",
    "served_by": [
     {
-     "provider": "anthropic",
+     "provider": "claude-subscription",
      "provider_model_id": "claude-haiku-5-5",
      "free": "allowance"
     }
-   ]
+   ],
+   "tier": "claude",
+   "order": 1
   },
   {
    "id": "claude-sonnet-5-5",
@@ -1128,14 +1127,16 @@
     "input_per_mtok": 2.0,
     "output_per_mtok": 10.0
    },
-   "price_why": "Anthropic first-party rates per million tokens (claude-api skill, cached 2026-10-06); every prompt token is counted as uncached input, so the guard errs high",
+   "price_why": "API list-price comparison only; not a subscription invoice or allowance meter.",
    "served_by": [
     {
-     "provider": "anthropic",
+     "provider": "claude-subscription",
      "provider_model_id": "claude-sonnet-5-5",
      "free": "allowance"
     }
-   ]
+   ],
+   "tier": "claude",
+   "order": 2
   },
   {
    "id": "claude-opus-5-5",
@@ -1149,14 +1150,16 @@
     "input_per_mtok": 4.0,
     "output_per_mtok": 20.0
    },
-   "price_why": "Anthropic first-party rates per million tokens (claude-api skill, cached 2026-10-06); every prompt token is counted as uncached input, so the guard errs high",
+   "price_why": "API list-price comparison only; not a subscription invoice or allowance meter.",
    "served_by": [
     {
-     "provider": "anthropic",
+     "provider": "claude-subscription",
      "provider_model_id": "claude-opus-5-5",
      "free": "allowance"
     }
-   ]
+   ],
+   "tier": "claude",
+   "order": 3
   },
   {
    "id": "claude-fable-5-1",
@@ -1170,14 +1173,16 @@
     "input_per_mtok": 10.0,
     "output_per_mtok": 50.0
    },
-   "price_why": "Anthropic first-party rates per million tokens (claude-api skill, cached 2026-10-06); every prompt token is counted as uncached input, so the guard errs high",
+   "price_why": "API list-price comparison only; not a subscription invoice or allowance meter.",
    "served_by": [
     {
-     "provider": "anthropic",
+     "provider": "claude-subscription",
      "provider_model_id": "claude-fable-5-1",
      "free": "allowance"
     }
-   ]
+   ],
+   "tier": "claude",
+   "order": 4
   }
  ],
  "excluded": {

@@ -28,7 +28,7 @@ from team.ledger import state_dir
 
 Runner = Callable[..., subprocess.CompletedProcess[Any]]
 
-ALLOWED_PROVIDERS = ("litellm", "subscription")
+ALLOWED_PROVIDERS = ("litellm", "team-subscription")
 # Secrets a profile's .env may hold: both are loopback tokens, never a provider key.
 ALLOWED_ENV = ("SUBSCRIPTION_TOKEN", "LITELLM_MASTER_KEY")
 AUX_TASKS = (
@@ -88,18 +88,19 @@ def role_config(root: Path, role: dict, cat: dict | None = None) -> dict:
                 "default": choice.model if choice else spec,
             }
     else:
-        model = role.get("runs_on", {}).get("model") or "opus"
-        cfg["providers"]["subscription"] = {
-            "base_url": "http://127.0.0.1:8790/v1",
-            "key_env": "SUBSCRIPTION_TOKEN",
+        model = role.get("runs_on", {}).get("model") or "claude-opus-5-5"
+        cfg["providers"]["team-subscription"] = {
+            "base_url": cfg["providers"]["litellm"]["base_url"],
+            "api_key": "${LITELLM_MASTER_KEY}",
+            "key_env": "LITELLM_MASTER_KEY",
             "api_mode": "chat_completions",
             "model": model,
-            "models": ["opus", "sonnet"],
+            "models": [model],
         }
-        cfg["model"] = {"provider": "subscription", "default": model}
+        cfg["model"] = {"provider": "team-subscription", "default": model}
     tools = list(role.get("tools") or [])
     cfg.setdefault("platform_toolsets", {})["cli"] = sorted(
-        set(tools) | set(LEARNING_TOOLSETS)
+        set(tools) | (set(LEARNING_TOOLSETS) if harness == "hermes" else set())
     )
     cfg.setdefault("agent", {})["max_turns"] = int(role["budget"]["max_turns"])
     return cfg
@@ -297,6 +298,10 @@ def sync(
             )
         changes.append(f"created profile {role_name}")
     cfg = role_config(root, role, cat)
+    if role["runs_on"]["harness"] == "hermes-subscription":
+        from integrations.subscription.setup import install_profile
+
+        install_profile(pdir)
     if _write(pdir / "config.yaml", yaml.safe_dump(cfg)):
         changes.append("config.yaml")
     if write_env(pdir):

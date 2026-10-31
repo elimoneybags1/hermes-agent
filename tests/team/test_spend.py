@@ -33,7 +33,19 @@ spend = _load("team_spend", ROOT / "integrations" / "portkey" / "spend.py")
 
 @pytest.fixture
 def catalog() -> dict:
-    return json.loads(CATALOG.read_text())
+    catalog = json.loads(CATALOG.read_text())
+    # A synthetic API-credit provider keeps the generic allowance guard covered;
+    # the deployed catalog now routes Claude through the subscription bridge.
+    catalog["providers"].pop("claude-subscription")
+    catalog["providers"]["anthropic"] = {
+        "portkey": "anthropic", "key_env": "ANTHROPIC_API_KEY",
+        "allowance": {"monthly_usd": 100, "stop_at_usd": 90, "cycle_day": 1},
+    }
+    for model in catalog["models"]:
+        for source in model["served_by"]:
+            if source["provider"] == "claude-subscription":
+                source["provider"] = "anthropic"
+    return catalog
 
 
 @pytest.fixture
@@ -56,7 +68,7 @@ def row(model, tin, tout, provider="anthropic", time="2026-10-29T12:00:00.000Z")
     return {"time": time, "provider": provider, "provider_model": model, "prompt_tokens": tin, "completion_tokens": tout}
 
 
-def test_the_real_catalog_meters_claude_and_lists_every_config_that_reaches_it(catalog, keys):
+def test_allowance_lists_every_config_that_reaches_it(catalog, keys):
     files = build.render(catalog, keys)
     a = json.loads(files["litellm/allowances.json"])["anthropic"]
     assert (a["monthly_usd"], a["stop_at_usd"], a["cycle_day"]) == (100, 90, 1)
