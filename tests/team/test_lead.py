@@ -9,6 +9,7 @@ import pytest
 
 from team import grade, ledger, lead, run
 from tests.team.test_catalog import CATALOG
+from tests.team.test_roles import ROLE, write_role
 from tests.team.test_run import REPO, git, world, worker_commits
 
 MENU = {
@@ -298,6 +299,12 @@ def test_no_diagnosis_still_retries(led):
 def test_menu_lists_only_active_hermes_roles(led):
     m = lead.menu(led["root"], CATALOG)
     assert list(m) == ["implement"] and m["implement"]["toolsets"] == ["file", "terminal"]
+
+
+def test_menu_leaves_out_a_planned_role(tmp_path):
+    write_role(tmp_path, "implement")
+    write_role(tmp_path, "scout", ROLE.replace('status = "active"', 'status = "planned"'))
+    assert list(lead.menu(tmp_path, CATALOG)) == ["implement"]
 
 
 def test_lead_has_no_hermes_profile(led):
