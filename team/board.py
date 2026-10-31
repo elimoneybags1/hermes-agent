@@ -257,24 +257,30 @@ def _goal_jobs(conn, goal: dict) -> list[dict]:
     return [j for j in rows if j and j["role"] != "lead"]
 
 
+_MERGE_FILES: dict[tuple[str, int], list[str]] = {}
+
+
 def merge_files(repo: Path, branch: str, goal_id: int) -> list[str]:
-    """Files changed by the goal's merge commit versus its first parent; [] if the commit is not found."""
-    # Run git log to find merge commits with the expected title pattern
+    """Files changed by the goal's merge commit versus its first parent; [] if the commit is not found.
+
+    A landed goal's merge never changes, so a found answer is kept for the
+    process: the page polls this for every landed goal, and each lookup is two
+    git runs of about 0.2 s in this repository.
+    """
+    key = (str(repo), goal_id)
+    if key in _MERGE_FILES:
+        return list(_MERGE_FILES[key])
     result = subprocess.run(
         ["git", "-C", str(repo), "log", "--merges", "--format=%H%x09%s", "--fixed-strings", "--grep", f"Merge {branch}: "],
         capture_output=True,
         text=True,
         check=False,
     )
-    
     if result.returncode != 0:
         return []
-    
-    # Search for the merge commit with matching branch and goal id
     for line in result.stdout.splitlines():
         sha, _, subject = line.partition("\t")
         if subject.startswith(f"Merge {branch}: ") and subject.endswith(f"(goal {goal_id})"):
-            # Found the merge commit, run diff to get changed files
             diff_result = subprocess.run(
                 ["git", "-C", str(repo), "diff", "--name-only", f"{sha}^1", sha],
                 capture_output=True,
@@ -283,9 +289,12 @@ def merge_files(repo: Path, branch: str, goal_id: int) -> list[str]:
             )
             if diff_result.returncode != 0:
                 return []
-            return [x for x in diff_result.stdout.splitlines() if x]
-    
+            files = [x for x in diff_result.stdout.splitlines() if x]
+            _MERGE_FILES[key] = files
+            return list(files)
     return []
+
+
 def goal_card(conn, gw, goal: dict, order, cooldown_s: int = 0) -> dict:
     part = ledger.get_part(conn, goal["part_id"]) if goal.get("part_id") else None
     latest = ledger.latest_order(conn, goal["id"])
