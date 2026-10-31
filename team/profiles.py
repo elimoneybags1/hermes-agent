@@ -277,10 +277,25 @@ def write_env(home: Path) -> bool:
     return changed
 
 
+def candidate_profile(role: str, review_id: int) -> str:
+    """The profile a harness review's branch arm runs on: the role's files from the branch."""
+    return f"{role}-h{review_id}"
+
+
 def sync(
-    root: Path, role_name: str, cat: dict | None = None, runner: Runner = subprocess.run
+    root: Path,
+    role_name: str,
+    cat: dict | None = None,
+    runner: Runner = subprocess.run,
+    *,
+    profile: str | None = None,
 ) -> list[str]:
-    """Make the role's profile match its files; returns what changed."""
+    """Make the role's profile match its files; returns what changed.
+
+    ``profile`` names the profile to write when it is not the role's own: a
+    harness review syncs the role's files from its branch worktree (``root``)
+    into ``candidate_profile(role, review)``.
+    """
     root = Path(root)
     role = roles.load(root, role_name, cat)
     if role["runs_on"]["harness"] == "claude":
@@ -288,14 +303,15 @@ def sync(
     changes: list[str] = []
     if write_root_config(root):
         changes.append("root config.yaml")
-    pdir = profile_dir(role_name)
+    profile = profile or role_name
+    pdir = profile_dir(profile)
     if not pdir.exists():
         result = runner(
             [
                 str(kanban.wrapper()),
                 "profile",
                 "create",
-                role_name,
+                profile,
                 "--clone-from",
                 "default",
                 "--no-alias",
@@ -307,9 +323,9 @@ def sync(
         )
         if result.returncode != 0 or not pdir.exists():
             raise ProfileError(
-                f"hermes profile create {role_name} failed: {(result.stderr or result.stdout)[-800:]}"
+                f"hermes profile create {profile} failed: {(result.stderr or result.stdout)[-800:]}"
             )
-        changes.append(f"created profile {role_name}")
+        changes.append(f"created profile {profile}")
     cfg = role_config(root, role, cat)
     if role["runs_on"]["harness"] == "hermes-subscription":
         from integrations.subscription.setup import install_profile

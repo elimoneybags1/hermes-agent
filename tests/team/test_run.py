@@ -40,6 +40,9 @@ class FakeHermes:
         self.calls.append(list(cmd))
         if cmd[0].endswith("team-hermes") and cmd[1] == "kanban":
             return self.kanban(cmd[2:])
+        if cmd[0].endswith("team-hermes") and cmd[1:3] == ["profile", "create"]:
+            profiles.profile_dir(cmd[3]).mkdir(parents=True, exist_ok=True)
+            return subprocess.CompletedProcess(cmd, 0, stdout="created", stderr="")
         if cmd[1:4] == ["-P", "-m", "team.hermes_run"]:
             request = json.loads(cmd[4])
             kwargs["env"]["TEAM_CHECK"] = request.get("check") or ""

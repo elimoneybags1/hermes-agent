@@ -58,6 +58,11 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
         6000,
         "Cap on the boss's project notes, so its standing context stays small.",
     ),
+    "replay.size": (
+        int,
+        4,
+        "Finished worker orders frozen into the replay set that grades a harness change.",
+    ),
     "ask.block_after_claude_fails": (
         bool,
         True,

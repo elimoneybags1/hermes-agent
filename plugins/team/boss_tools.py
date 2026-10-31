@@ -115,6 +115,29 @@ def suggest(args: dict) -> str:
     return f"suggestion is decision {d} in Eli's inbox"
 
 
+def harness_read(args: dict) -> str:
+    return boss.harness_read(_REPO, str(args.get("role") or ""))
+
+
+def propose_harness(args: dict) -> str:
+    target = _target(args)
+    with _conn() as conn:
+        r = boss.propose_harness(
+            _REPO,
+            conn,
+            target,
+            str(args.get("headline") or ""),
+            str(args.get("why") or ""),
+            list(args.get("edits") or []),
+            log=lambda _m: None,
+        )
+    return (
+        f"harness change {r['id']} is on {r['branch']}: replaying {r['items']} finished orders "
+        f"on {' and '.join(r['arms'])}. The counts go to Eli's inbox when the replay finishes; "
+        "team_status shows it meanwhile."
+    )
+
+
 TOOLS = [
     (
         "team_status",
@@ -187,6 +210,35 @@ TOOLS = [
         },
         ["title", "change", "why"],
         suggest,
+    ),
+    (
+        "team_harness_read",
+        "A worker role's files as they are now (SOUL.md, role.toml, skills), to rewrite for team_propose_harness.",
+        {"role": {"type": "string", "description": "The role, e.g. implement."}},
+        ["role"],
+        harness_read,
+    ),
+    (
+        "team_propose_harness",
+        "Propose a change to a worker role's own files. Team puts it on a branch, re-runs the replay set of finished "
+        "worker orders on both versions, and sends Eli the pass counts and worker tokens next to the base rate. "
+        "Nothing changes until Eli adopts it.",
+        {
+            "target": _TARGET,
+            "headline": {"type": "string", "description": "One sentence: what changes for the role."},
+            "why": {"type": "string", "description": "The evidence from team_findings: counts next to the base rate."},
+            "edits": {
+                "type": "array",
+                "description": "The whole new content of each file: team/roles/<role>/SOUL.md, role.toml or skills/<name>/SKILL.md.",
+                "items": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"],
+                },
+            },
+        },
+        ["headline", "why", "edits"],
+        propose_harness,
     ),
 ]
 

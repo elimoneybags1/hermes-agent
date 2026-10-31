@@ -198,6 +198,21 @@ CREATE TABLE IF NOT EXISTS diagnoses (
     created     TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS harness_reviews (
+    id          INTEGER PRIMARY KEY,
+    target      TEXT NOT NULL,
+    headline    TEXT NOT NULL,
+    why         TEXT NOT NULL,
+    roles       TEXT NOT NULL,
+    branch      TEXT NOT NULL,
+    status      TEXT NOT NULL CHECK (status IN ('evaluating', 'waiting', 'adopted', 'dismissed', 'failed')),
+    decision_id INTEGER REFERENCES decisions(id),
+    result      TEXT,
+    merge_sha   TEXT,
+    created     TEXT NOT NULL,
+    ended       TEXT
+);
+
 CREATE INDEX IF NOT EXISTS calls_job_id ON calls(job_id);
 CREATE INDEX IF NOT EXISTS orders_goal_id ON orders(goal_id);
 CREATE INDEX IF NOT EXISTS diagnoses_goal_id ON diagnoses(goal_id);
@@ -253,6 +268,12 @@ def init(conn: sqlite3.Connection) -> None:
         call_columns = {r["name"] for r in conn.execute("PRAGMA table_info(calls)")}
         if "gateway_session_id" not in call_columns:
             conn.execute("ALTER TABLE calls ADD COLUMN gateway_session_id TEXT")
+
+        goal_columns = {r["name"] for r in conn.execute("PRAGMA table_info(goals)")}
+        if "harness_id" not in goal_columns:
+            # A replay goal: one arm of a harness review, thrown away after grading.
+            conn.execute("ALTER TABLE goals ADD COLUMN harness_id INTEGER REFERENCES harness_reviews(id)")
+            conn.execute("ALTER TABLE goals ADD COLUMN arm TEXT")
 
 
 def _check(value: str, allowed: tuple[str, ...], what: str) -> None:
@@ -475,7 +496,7 @@ def attach_calls(conn: sqlite3.Connection, task_ref: str, job_id: int) -> int:
 
 # --- goals ------------------------------------------------------------------
 
-GOAL_FIELDS = ("attempt", "current_task", "job_id", "detail")
+GOAL_FIELDS = ("attempt", "current_task", "job_id", "detail", "harness_id", "arm")
 
 
 def create_goal(
@@ -987,3 +1008,80 @@ def order_rates(
         p, n = conn.execute(sql, args).fetchone()
         out[name] = (int(p), int(n))
     return out
+
+
+# --- harness reviews ----------------------------------------------------------
+
+HARNESS_STATUSES = ("evaluating", "waiting", "adopted", "dismissed", "failed")
+HARNESS_FIELDS = ("branch", "status", "decision_id", "result", "merge_sha", "ended")
+
+
+def create_harness(
+    conn: sqlite3.Connection,
+    target: str,
+    headline: str,
+    why: str,
+    roles: list[str],
+    branch: str = "",
+) -> int:
+    """A proposed change to a role's files, about to be graded on the replay set."""
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO harness_reviews (target, headline, why, roles, branch, status, created)"
+            " VALUES (?, ?, ?, ?, ?, 'evaluating', ?)",
+            (target, headline, why, json.dumps(list(roles)), branch, _now()),
+        )
+    return cur.lastrowid
+
+
+def _harness_row(row: sqlite3.Row) -> dict:
+    d = dict(row)
+    d["roles"] = json.loads(d["roles"])
+    d["result"] = json.loads(d["result"]) if d["result"] else None
+    return d
+
+
+def get_harness(conn: sqlite3.Connection, review_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM harness_reviews WHERE id = ?", (review_id,)).fetchone()
+    return _harness_row(row) if row else None
+
+
+def list_harness(
+    conn: sqlite3.Connection, target: str | None = None, status: str | None = None
+) -> list[dict]:
+    """Harness changes, oldest first."""
+    where, args = [], []
+    if target is not None:
+        where.append("target = ?")
+        args.append(target)
+    if status is not None:
+        _check(status, HARNESS_STATUSES, "status")
+        where.append("status = ?")
+        args.append(status)
+    sql = "SELECT * FROM harness_reviews"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    return [_harness_row(r) for r in conn.execute(sql + " ORDER BY id", args)]
+
+
+def update_harness(conn: sqlite3.Connection, review_id: int, **fields) -> None:
+    bad = set(fields) - set(HARNESS_FIELDS)
+    if bad:
+        raise ValueError(f"cannot update review fields {sorted(bad)}")
+    if "status" in fields:
+        _check(fields["status"], HARNESS_STATUSES, "status")
+    if "result" in fields and not isinstance(fields["result"], str):
+        fields["result"] = json.dumps(fields["result"], sort_keys=True)
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    with conn:
+        conn.execute(f"UPDATE harness_reviews SET {sets} WHERE id = ?", (*fields.values(), review_id))
+
+
+def harness_goals(conn: sqlite3.Connection, review_id: int) -> list[dict]:
+    """Every replay goal of a review, oldest first."""
+    return [
+        dict(r)
+        for r in conn.execute(
+            "SELECT * FROM goals WHERE harness_id = ? ORDER BY id", (review_id,)
+        )
+    ]

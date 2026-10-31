@@ -264,6 +264,13 @@ class Loop:
                     cat=self._cat,
                     log=self.log,
                 )
+                boss.settle_reviews(
+                    self.root,
+                    self.conn,
+                    runner=self.runner,
+                    cat=self._cat,
+                    log=self.log,
+                )
             except (
                 boss.BossError,
                 RunError,
@@ -368,7 +375,9 @@ class Loop:
             )
             job = ledger.get_job(self.conn, job["id"])
         if job["ended"] is not None:
-            if job["outcome"] == "pass":
+            if goal.get("harness_id"):
+                self._finish_replay(goal, job)
+            elif job["outcome"] == "pass":
                 self._land(goal)
             elif claude and (job["grader_detail"] or "").startswith(CLAUDE_LIMIT):
                 if (
@@ -487,9 +496,12 @@ class Loop:
     ) -> str:
         """A kanban task for attempt ``attempt`` on the goal's branch; returns its id."""
         role = self._role(goal["role"])
-        if not profiles.profile_dir(goal["role"]).exists():
+        profile = goal["role"]
+        if goal.get("harness_id") and goal.get("arm") == "branch":
+            profile = profiles.candidate_profile(goal["role"], goal["harness_id"])
+        if not profiles.profile_dir(profile).exists():
             raise RunError(
-                f"missing Hermes profile {goal['role']}; run `team roles sync` first"
+                f"missing Hermes profile {profile}; run `team roles sync` first"
             )
         order = ledger.latest_order(self.conn, goal["id"])
         if order is not None and attempt == 1:
@@ -520,7 +532,7 @@ class Loop:
             goal["target"],
             title,
             body,
-            assignee=goal["role"],
+            assignee=profile,
             model=choice,
             workspace=f"worktree:{goal['worktree']}",
             branch=goal["branch"],
@@ -591,14 +603,19 @@ class Loop:
         ledger.finish_job(
             self.conn, job["id"], "pass" if ok else "fail", "check", detail
         )
+        if ok and status == "review":
+            kanban.complete(
+                goal["target"],
+                task_id,
+                result=f"passed: {detail[-200:]}",
+                runner=self.runner,
+            )
+        if goal.get("harness_id"):
+            if not ok:
+                self._block(goal, f"replay attempt failed: {_tail(detail, 200)}")
+            self._finish_replay(goal, ledger.get_job(self.conn, job["id"]))
+            return
         if ok:
-            if status == "review":
-                kanban.complete(
-                    goal["target"],
-                    task_id,
-                    result=f"passed: {detail[-200:]}",
-                    runner=self.runner,
-                )
             self._land(goal)
             return
         kanban.comment(
@@ -650,9 +667,27 @@ class Loop:
 
     # -- escalation ------------------------------------------------------------
 
+    def _finish_replay(self, goal: dict, job: dict) -> None:
+        """A replay arm is one attempt, never retried or landed: record it, drop the branch."""
+        try:
+            grade.remove_worktree(
+                self._repo(goal), goal["worktree"], goal["branch"], runner=self.runner
+            )
+        except grade.GradeError as e:
+            self.log(f"goal {goal['id']}: replay graded, but {e}")
+        ledger.finish_goal(
+            self.conn,
+            goal["id"],
+            job["outcome"] or "error",
+            f"replay {goal.get('arm')}: {_tail(job['grader_detail'], 200)}",
+        )
+
     def _next_attempt(self, goal: dict, failure: str | None) -> None:
         """Free attempts up to the role's after_failures, then one on Claude, then Eli."""
         goal = ledger.get_goal(self.conn, goal["id"])
+        if goal.get("harness_id"):
+            self._finish_replay(goal, ledger.get_job(self.conn, goal["job_id"]))
+            return
         role = self._role(goal["role"])
         nxt = goal["attempt"] + 1
         if nxt <= role["escalation"]["after_failures"]:

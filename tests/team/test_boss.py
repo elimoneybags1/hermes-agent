@@ -239,6 +239,7 @@ def test_the_tools_register_and_refuse_politely(team, monkeypatch):
     assert set(registered) == {
         "team_status", "team_findings", "team_notes_read", "team_notes_write",
         "team_propose", "team_proposals", "team_suggest",
+        "team_harness_read", "team_propose_harness",
     }
     assert all(r["toolset"] == "team" for r in registered.values())
     assert not any("approve" in n or "release" in n for n in registered)

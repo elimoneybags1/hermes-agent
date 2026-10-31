@@ -47,7 +47,7 @@ def test_register_binds_both_hooks_and_the_boss_tools():
         "post_auxiliary_call",
         "pre_tool_call",
     }
-    assert "team_propose" in tools and len(tools) == 7
+    assert "team_propose" in tools and len(tools) == 9
 
 
 def test_classify():

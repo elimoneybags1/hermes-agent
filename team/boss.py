@@ -23,6 +23,8 @@ board directly: its tools (``plugins/team``) call the functions here.
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import sqlite3
 import subprocess
 from collections import Counter
@@ -30,13 +32,19 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from team import ledger, run, settings, targets
+from team import grade, ledger, profiles, replay, roles, run, settings, targets
 from team.goals_landed import all_goals_landed
 
 HEADLINE_CHARS = 160
 SUMMARY_CHARS = 1500
 PLAN_OPTIONS = ["approve", "dismiss"]
 SUGGESTION_OPTIONS = ["apply", "dismiss"]
+HARNESS_OPTIONS = ["adopt", "dismiss"]
+HARNESS_FILE_CHARS = 20000
+HARNESS_EDITS = 6
+HARNESS_PATH = re.compile(
+    r"^team/roles/([a-z][a-z0-9_-]*)/(SOUL\.md|role\.toml|skills/[a-z0-9_-]+/SKILL\.md)$"
+)
 
 
 class BossError(ValueError):
@@ -429,6 +437,16 @@ def status(conn: sqlite3.Connection, target: str) -> str:
     waiting = [p for p in proposals(target) if p["status"] == "waiting"]
     out.append(f"proposals waiting for Eli: {len(waiting)}")
     out += [f"  proposal {p['id']}: {p['headline']}" for p in waiting[:5]]
+    replaying = ledger.list_harness(conn, target, status="evaluating")
+    judged = ledger.list_harness(conn, target, status="waiting")
+    if replaying or judged:
+        out.append(
+            f"harness changes: {len(replaying)} being replayed, {len(judged)} waiting for Eli"
+        )
+        out += [
+            f"  harness {r['id']} ({r['status']}): {_line(r['headline'], 70)}"
+            for r in (replaying + judged)[:5]
+        ]
     closed = [p for p in proposals(target) if p['status'] == 'closed']
     if closed:
         for p in closed[:5]:
@@ -512,3 +530,237 @@ def suggest(conn: sqlite3.Connection, target: str, title: str, change: str, why:
             + "\n"
         )
     return decision
+
+
+# --- harness changes ---------------------------------------------------------------
+
+
+def harness_read(root: Path, role: str) -> str:
+    """A role's files as they are on main, each under its path, for the boss to rewrite."""
+    root = Path(root)
+    if role not in roles.names(root):
+        raise BossError(f"no role {role!r}; roles: {', '.join(roles.names(root))}")
+    out = []
+    for p in sorted(x for x in (roles.roles_dir(root) / role).rglob("*") if x.is_file()):
+        out.append(f"=== {p.relative_to(root)}\n{p.read_text()}")
+    return "\n".join(out)
+
+
+def propose_harness(
+    root: Path,
+    conn: sqlite3.Connection,
+    target: str,
+    headline: str,
+    why: str,
+    edits: list[dict],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
+    cat: dict | None = None,
+    log: Callable[[str], None] = run._log,
+) -> dict:
+    """Put a change to a worker role's files on a branch and start grading it on the replay set.
+
+    ``edits`` are ``{path, content}``: the whole new file, for ``team/roles/<role>/SOUL.md``,
+    ``role.toml`` or ``skills/<name>/SKILL.md``. The branch arm runs the set on a profile
+    synced from the branch; the base arm runs it on the live profile when the set has no
+    measurement for the role's current files. The result becomes a decision for Eli.
+    """
+    targets.require(target)
+    root = Path(root)
+    cfg = settings.load(root)
+    headline, why = " ".join(headline.split()), why.strip()
+    if not headline or len(headline) > HEADLINE_CHARS:
+        raise BossError(f"headline must be one sentence of at most {HEADLINE_CHARS} characters")
+    if not why:
+        raise BossError("say why, with the counts from team_findings next to the base rate")
+    if not edits or len(edits) > HARNESS_EDITS:
+        raise BossError(f"a harness change edits 1 to {HARNESS_EDITS} files")
+    touched: dict[str, list[tuple[str, str]]] = {}
+    for e in edits:
+        path, content = str((e or {}).get("path") or "").strip(), (e or {}).get("content")
+        m = HARNESS_PATH.match(path)
+        if not m:
+            raise BossError(
+                f"{path!r}: a harness change edits team/roles/<role>/SOUL.md, role.toml or "
+                "skills/<name>/SKILL.md, nothing else"
+            )
+        role = m.group(1)
+        if role == "boss":
+            raise BossError("the boss does not change its own files; use team_suggest")
+        if role not in roles.names(root):
+            raise BossError(f"no role {role!r}; roles: {', '.join(roles.names(root))}")
+        if not isinstance(content, str) or not content.strip():
+            raise BossError(f"{path}: content is the whole new file and cannot be empty")
+        if len(content) > HARNESS_FILE_CHARS:
+            raise BossError(f"{path}: at most {HARNESS_FILE_CHARS} characters")
+        current = root / path
+        if current.exists() and current.read_text() == content:
+            raise BossError(f"{path}: that is what the file already says")
+        touched.setdefault(role, []).append((path, content))
+    for role in touched:
+        if roles.load(root, role, cat)["runs_on"]["harness"] != "hermes":
+            raise BossError(
+                f"{role} does not run as a Hermes worker; the replay set re-runs worker orders, "
+                "so only worker roles can be graded this way. Use team_suggest for it."
+            )
+    s = replay.load_set(target)
+    if s is None:
+        try:
+            s = replay.build_set(conn, target, cfg["replay.size"], runner=runner)
+        except replay.ReplayError as e:
+            raise BossError(str(e)) from e
+        replay.save_set(s)
+    review_id = ledger.create_harness(conn, target, headline, why, sorted(touched))
+    try:
+        path, branch = grade.create_worktree(
+            root, "harness", f"harness-{review_id}", base="main", runner=runner
+        )
+    except grade.GradeError as e:
+        ledger.update_harness(
+            conn, review_id, status="failed", result={"error": str(e)}, ended=ledger._now()
+        )
+        raise BossError(str(e)) from e
+    try:
+        files = []
+        for role, pairs in touched.items():
+            for rel, content in pairs:
+                f = path / rel
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text(content)
+                files.append(rel)
+            roles.load(path, role, cat)  # the branch must still describe a loadable role
+        sha = grade.commit_paths(path, f"harness {review_id}: {headline}", *files, runner=runner)
+        for role in touched:
+            profiles.sync(
+                path, role, cat, runner=runner, profile=profiles.candidate_profile(role, review_id)
+            )
+        arms = ["branch"] + ([] if replay.base_is_current(s, root, sorted(touched)) else ["base"])
+        ledger.update_harness(conn, review_id, branch=branch)
+        goal_ids = replay.start(
+            root, conn, review_id, target, s, arms, runner=runner, cat=cat, log=log
+        )
+    except Exception as e:
+        ledger.update_harness(
+            conn, review_id, status="failed", result={"error": str(e)}, ended=ledger._now()
+        )
+        try:
+            grade.remove_worktree(root, path, branch, runner=runner)
+        except grade.GradeError:
+            pass
+        raise BossError(f"harness change {review_id} could not start: {e}") from e
+    ledger.update_harness(
+        conn, review_id, result={"arms": arms, "items": len(s["items"]), "sha": sha}
+    )
+    log(
+        f"harness change {review_id} on {branch}: replaying {len(s['items'])} orders "
+        f"on {', '.join(arms)}"
+    )
+    return {
+        "id": review_id,
+        "branch": branch,
+        "sha": sha,
+        "arms": arms,
+        "items": len(s["items"]),
+        "goals": goal_ids,
+    }
+
+
+def _drop_candidates(r: dict) -> None:
+    for role in r["roles"]:
+        shutil.rmtree(
+            profiles.profile_dir(profiles.candidate_profile(role, r["id"])), ignore_errors=True
+        )
+
+
+def settle_reviews(
+    root: Path,
+    conn: sqlite3.Connection,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
+    cat: dict | None = None,
+    log: Callable[[str], None] = run._log,
+) -> list[str]:
+    """Turn finished replays into a decision for Eli; merge what he adopts. Returns what happened."""
+    root = Path(root)
+    done: list[str] = []
+    for r in ledger.list_harness(conn, status="evaluating"):
+        res = replay.results(conn, r["id"])
+        if res is None:
+            continue
+        s = replay.load_set(r["target"]) or {"target": r["target"], "items": [], "base": None}
+        if "base" in res:
+            s["base"] = {**res["base"], "versions": replay.versions(root, r["roles"]), "review": r["id"]}
+            replay.save_set(s)
+        base = {k: (s.get("base") or {}).get(k, 0) for k in ("pass", "n", "tokens")}
+        rec = replay.verdict(base, res["branch"])
+        line = replay.describe(base, res["branch"])
+        context = (
+            f"{r['why']}\n\nReplay of {res['branch']['n']} finished orders with the changed "
+            f"{', '.join(r['roles'])} files: {line}.\nBranch {r['branch']}; "
+            f"`git diff main...{r['branch']}` shows the change. Adopt merges it and syncs the "
+            "profile; dismiss keeps the branch for later."
+        )
+        d = ledger.create_decision(
+            conn,
+            r["target"],
+            f"Adopt harness change {r['id']}: {r['headline']}",
+            context,
+            HARNESS_OPTIONS,
+            rec,
+            source=f"boss-harness:{r['id']}",
+        )
+        ledger.update_harness(
+            conn,
+            r["id"],
+            status="waiting",
+            decision_id=d,
+            result={**(r["result"] or {}), "base": base, "branch": res["branch"], "recommendation": rec},
+        )
+        done.append(f"harness change {r['id']} replayed: {line}; recommend {rec}")
+    for r in ledger.list_harness(conn, status="waiting"):
+        d = ledger.get_decision(conn, r["decision_id"]) if r["decision_id"] else None
+        if d is None or d["status"] == "open":
+            continue
+        if d["status"] == "dismissed" or not str(d["answer"] or "").lower().startswith("adopt"):
+            ledger.update_harness(conn, r["id"], status="dismissed", ended=ledger._now())
+            _drop_candidates(r)
+            done.append(f"harness change {r['id']} dismissed; branch {r['branch']} is kept")
+            continue
+        try:
+            sha = grade.land(
+                root, r["branch"], f"Adopt harness change {r['id']}: {r['headline']}", "main",
+                runner=runner,
+            )
+        except grade.LandLater as e:
+            log(f"harness change {r['id']}: waiting to land: {e}")
+            continue
+        except grade.GradeError as e:
+            ledger.update_harness(
+                conn, r["id"], status="failed",
+                result={**(r["result"] or {}), "error": str(e)}, ended=ledger._now(),
+            )
+            done.append(f"harness change {r['id']} could not land: {e}")
+            continue
+        for role in r["roles"]:
+            try:
+                profiles.sync(root, role, cat, runner=runner)
+            except profiles.ProfileError as e:
+                log(f"harness change {r['id']}: landed as {sha[:10]}, but profile {role} did not sync: {e}")
+        s = replay.load_set(r["target"])
+        if s is not None and (r["result"] or {}).get("branch"):
+            s["base"] = {**r["result"]["branch"], "versions": replay.versions(root, r["roles"]), "review": r["id"]}
+            replay.save_set(s)
+        try:
+            grade.remove_worktree(
+                root, grade.worktree_path("harness", f"harness-{r['id']}"), r["branch"], runner=runner
+            )
+        except grade.GradeError as e:
+            log(f"harness change {r['id']}: adopted, but {e}")
+        ledger.update_harness(
+            conn, r["id"], status="adopted", merge_sha=sha, ended=ledger._now()
+        )
+        _drop_candidates(r)
+        done.append(f"harness change {r['id']} adopted as {sha[:10]}")
+    for m in done:
+        log(m)
+    return done

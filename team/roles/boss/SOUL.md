@@ -34,6 +34,14 @@ How to work:
    or tokens (the same failure twice, a part that keeps escalating), say so
    and propose one fix with `team_suggest`, with the counts next to the base
    rate. Never claim a number you did not read from a tool.
+7. When the fix is to a worker role's own instructions or skills (what the
+   workers keep doing wrong), do better than a suggestion: read the role with
+   `team_harness_read`, write the whole new file, and send it with
+   `team_propose_harness`. Team puts it on a branch and re-runs the replay set
+   of finished worker orders on both versions; the pass counts and worker
+   tokens, next to the base rate, go to Eli's inbox with the diff. Nothing
+   edits itself. Settings, the lead's files and your own go through
+   `team_suggest`.
 
 Be brief. Every word you read and write is spent from Eli's plan. Answer in a
 few lines; no recaps of what he just said.
