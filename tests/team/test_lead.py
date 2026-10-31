@@ -161,7 +161,7 @@ class Answers:
                     "result": "",
                     "structured_output": answer,
                     "session_id": f"lead-{len(self.prompts)}",
-                    "usage": {"input_tokens": 1000, "output_tokens": 100},
+                    "usage": {"input_tokens": 10, "cache_read_input_tokens": 990, "output_tokens": 100},
                 }
             return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(out), stderr="")
 

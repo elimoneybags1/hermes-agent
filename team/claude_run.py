@@ -118,6 +118,14 @@ def _result(ok: bool, result: Any, duration_ms: int, **more: Any) -> dict[str, A
     return out
 
 
+def input_tokens(usage: dict | None) -> int | None:
+    """Every input token of a run: ``input_tokens`` alone leaves out the cached ones."""
+    if not usage:
+        return None
+    keys = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    return sum(int(usage.get(k) or 0) for k in keys)
+
+
 USAGE_LIMIT = "usage_limit_reached"
 
 
