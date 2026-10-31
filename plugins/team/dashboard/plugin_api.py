@@ -16,6 +16,7 @@ _REPO = Path(__file__).resolve().parents[3]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
+from team import board as board_mod
 from team import boss, ledger
 
 router = APIRouter()
@@ -35,6 +36,12 @@ class Answer(BaseModel):
 def flow() -> dict:
     with _conn() as conn:
         return {"stations": list(boss.STATIONS), "plans": boss.flow(conn)}
+
+
+@router.get("/board")
+def board() -> dict:
+    with _conn() as conn:
+        return board_mod.board(conn, _REPO)
 
 
 @router.get("/inbox")
