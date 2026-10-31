@@ -6,6 +6,7 @@ team roles list|sync [ROLE]                    the roster; sync profiles
 team goal <target> "<goal>" [--no-lead] [--role R] [--check CMD]
 team run [--once] [--interval S]               the loop
 team boss                                      talk to the boss
+team app [--port N]                            the boss chat and live chart, in a browser
 team plans [show <id>|approve <id>|dismiss <id>]  the boss's proposals
 team ledger [--target T] [--all] [--json]      jobs and goals
 team decide list|answer <id> "<text>"|dismiss <id>
@@ -179,6 +180,14 @@ def cmd_boss(args) -> int:
     return subprocess.call([str(kanban.wrapper()), "-p", "boss", *args.rest], cwd=home)
 
 
+def cmd_app(args) -> int:
+    """Team's own app: the boss chat beside the live chart, and the Team, LiteLLM, Portkey editors."""
+    from team.app import server
+
+    server.serve(ROOT, args.port)
+    return 0
+
+
 def cmd_plans(args) -> int:
     conn = _conn()
     if args.plans_cmd in (None, "list"):
@@ -327,6 +336,10 @@ def build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("boss", help="talk to the boss (extra args go to hermes)")
     b.add_argument("rest", nargs=argparse.REMAINDER)
     b.set_defaults(func=cmd_boss)
+
+    ap = sub.add_parser("app", help="the boss chat and live chart in a browser (127.0.0.1)")
+    ap.add_argument("--port", type=int, default=8792)
+    ap.set_defaults(func=cmd_app)
 
     pl = sub.add_parser("plans", help="the boss's proposals: one line each")
     pls = pl.add_subparsers(dest="plans_cmd")

@@ -15,9 +15,12 @@ never creates it. Nothing is estimated: a number the logs do not hold is
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import subprocess
 import tomllib
 from collections import defaultdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from team import boss, catalog, ledger
@@ -37,6 +40,43 @@ def ranks(cat: dict) -> dict[str, list[str]]:
             continue
         out[m["tier"]].append((m.get("order") or 99, m["id"]))
     return {t: [i for _, i in sorted(rows)] for t, rows in out.items()}
+
+
+def ranks_at(root: Path, cat: dict):
+    """Tier order as it was at a moment: from catalog.json's git history, and the file on
+    disk (dated by its mtime) when it has uncommitted changes. An attempt is ranked against
+    the order LiteLLM had when it ran, not today's."""
+    rel = "integrations/portkey/catalog.json"
+    versions: list[tuple[str, dict]] = []
+    log = subprocess.run(["git", "-C", str(root), "log", "--format=%H %cI", "--", rel],
+                         capture_output=True, text=True, check=False)
+    for line in log.stdout.splitlines():
+        sha, when = line.split(" ", 1)
+        shown = subprocess.run(["git", "-C", str(root), "show", f"{sha}:{rel}"],
+                               capture_output=True, text=True, check=False)
+        try:
+            versions.append((_utc(when), ranks(json.loads(shown.stdout))))
+        except (ValueError, KeyError, TypeError):
+            continue
+    dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--", rel],
+                           capture_output=True, text=True, check=False).stdout.strip()
+    path = Path(root) / rel
+    if dirty and path.exists():
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+        versions.append((mtime.isoformat(timespec="seconds"), ranks(cat)))
+    versions.sort(key=lambda v: v[0])
+    now = ranks(cat)
+
+    def at(ts: str) -> dict[str, list[str]]:
+        ts = _utc(ts)
+        before = [r for when, r in versions if when <= ts]
+        return before[-1] if before else (versions[0][1] if versions else now)
+
+    return at
+
+
+def _utc(ts: str) -> str:
+    return datetime.fromisoformat(ts).astimezone(UTC).isoformat(timespec="seconds")
 
 
 def configured(root: Path) -> dict[str, dict]:
@@ -176,7 +216,8 @@ def _before(ts: str, seconds: int) -> str:
     return (datetime.fromisoformat(ts) - timedelta(seconds=seconds)).isoformat(timespec="seconds")
 
 
-def _attempt(conn, gw, job: dict, order: dict, cooldown_s: int = 0) -> dict:
+def _attempt(conn, gw, job: dict, order, cooldown_s: int = 0) -> dict:
+    order = order(job["started"]) if callable(order) else order
     calls = conn.execute("SELECT * FROM calls WHERE job_id=?", (job["id"],)).fetchall()
     sessions = set()
     for c in calls:
@@ -215,7 +256,7 @@ def _goal_jobs(conn, goal: dict) -> list[dict]:
     return [j for j in rows if j and j["role"] != "lead"]
 
 
-def goal_card(conn, gw, goal: dict, order: dict, cooldown_s: int = 0) -> dict:
+def goal_card(conn, gw, goal: dict, order, cooldown_s: int = 0) -> dict:
     part = ledger.get_part(conn, goal["part_id"]) if goal.get("part_id") else None
     latest = ledger.latest_order(conn, goal["id"])
     attempts = [_attempt(conn, gw, j, order, cooldown_s) for j in _goal_jobs(conn, goal)]
@@ -298,7 +339,8 @@ def board(conn: sqlite3.Connection, root: Path, cat: dict | None = None) -> dict
     gw = _gateway()
     try:
         goals = ledger.list_goals(conn, all_goals=True)
-        cards = [goal_card(conn, gw, g, order, cooldown_s) for g in goals]
+        at = ranks_at(root, cat)
+        cards = [goal_card(conn, gw, g, at, cooldown_s) for g in goals]
         waiting = [boss.card(p) for p in boss.proposals() if p["status"] == "waiting"]
         cols = {z: [c for c in cards if c["station"] == z] for z in ("lead", "implement", "rescue")}
         done = [c for c in cards if c["station"] in ("landed", "stopped")][:LANDED_SHOWN]
