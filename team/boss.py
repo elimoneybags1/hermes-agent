@@ -181,6 +181,7 @@ def card(p: dict) -> dict:
     }
 
 
+# The tab draws these top to bottom: Boss, Planner (the lead), Implementer, Landed.
 STATIONS = ("boss", "lead", "workers", "landed")
 
 
