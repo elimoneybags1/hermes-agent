@@ -177,7 +177,7 @@
     const input = h("textarea", { class: "chat-input", rows: "3", placeholder: "Talk to the boss… (Enter sends, Shift+Enter for a new line)" });
     const sendBtn = h("button", { class: "btn btn--primary", onclick: send }, "Send");
     const chart = h("div", { class: "chart-wrap" }, h("div", { class: "muted" }, "Loading…"));
-    let busy = false, lastCount = -1, lastPartial = "";
+    let busy = false;
 
     input.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
@@ -196,7 +196,7 @@
 
     async function newChat() {
       if (!confirm("Start a new conversation with the boss? The old one is kept on disk.")) return;
-      try { await api("chat/new", {}); lastCount = -1; await loadChat(); } catch (e) { fail(e); }
+      try { await api("chat/new", {}); lastSig = ""; await loadChat(); } catch (e) { fail(e); }
     }
 
     function toolChip(t) {
@@ -219,32 +219,70 @@
             " · cache ", num(t.cache_read), " / ", num(t.cache_write)) : null));
     }
 
+    let chatData = null, plans = [], lastSig = "";
+    const planEls = {};
+
+    function stamp(ts) { return ts ? Date.parse(ts.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")) : NaN; }
+
+    // The conversation with each plan placed right after the boss message that proposed it.
+    function drawChat() {
+      if (!chatData) return;
+      const c = chatData;
+      const sig = JSON.stringify([c.messages.length, c.current && c.current.text, c.current && c.current.tools,
+        plans.map(function (p) { return [p.id, p.status]; })]);
+      if (sig === lastSig) return;
+      lastSig = sig;
+      const atBottom = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 80;
+      const first = c.messages.length ? stamp(c.messages[0].at) : Infinity;
+      const live = function (p) { return p.status === "waiting" || p.status === "accepted"; };
+      const shown = plans.filter(function (p) { return live(p) || stamp(p.created) >= first; })
+        .sort(function (a, b) { return stamp(a.created) - stamp(b.created); });
+      const after = {}, tail = [];
+      shown.forEach(function (p) {
+        const t = stamp(p.created);
+        let k = -1;
+        c.messages.forEach(function (m, i) {
+          if (m.role === "boss" && stamp(m.at) <= t && t <= stamp(m.done || m.at) + 1000) k = i;
+        });
+        if (k < 0) c.messages.forEach(function (m, i) { if (stamp(m.at) <= t) k = i; });
+        if (k < 0 || (c.current && t >= stamp(c.current.at))) tail.push(p);  // proposed in the turn still running
+        else (after[k] = after[k] || []).push(p);
+      });
+      fill(chatList);
+      if (!c.messages.length && !c.current && !shown.length) {
+        chatList.appendChild(h("div", { class: "empty" },
+          h("p", null, "Tell the boss what you want built. It asks what it needs, writes the goals, and has the planner split them into parts."),
+          h("p", { class: "muted" }, "Each plan shows up here, goal by goal and part by part, with Accept, Send back and Dismiss.")));
+      }
+      c.messages.forEach(function (m, i) {
+        chatList.appendChild(message(m));
+        (after[i] || []).forEach(function (p) { chatList.appendChild(planEl(p)); });
+      });
+      if (c.current) chatList.appendChild(message(c.current, true));
+      tail.forEach(function (p) { chatList.appendChild(planEl(p)); });
+      if (atBottom || busy) chatList.scrollTop = chatList.scrollHeight;
+    }
+
+    // Reused while a plan's status is unchanged, so an open section or a half-typed note survives a refresh.
+    function planEl(p) {
+      const key = p.status + JSON.stringify(p.goal_ids);
+      if (!planEls[p.id] || planEls[p.id].key !== key) planEls[p.id] = { key: key, el: planCard(p, reload) };
+      return planEls[p.id].el;
+    }
+
     async function loadChat() {
-      const c = await api("chat");
-      busy = !!c.current;
+      chatData = await api("chat");
+      busy = !!chatData.current;
       sendBtn.disabled = busy;
       sendBtn.textContent = busy ? "Answering…" : "Send";
-      const partial = c.current ? c.current.text + JSON.stringify(c.current.tools) : "";
-      if (c.messages.length === lastCount && partial === lastPartial) return;
-      const atBottom = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 80;
-      lastCount = c.messages.length; lastPartial = partial;
-      fill(chatList);
-      if (!c.messages.length && !c.current) {
-        chatList.appendChild(h("div", { class: "empty" },
-          h("p", null, "Tell the boss what you want built. It asks what it needs, writes the goals, and has the planner draft the work orders."),
-          h("p", { class: "muted" }, "A plan it proposes shows up here with a ✓ to accept it.")));
-      }
-      c.messages.forEach(function (m) { chatList.appendChild(message(m)); });
-      if (c.current) chatList.appendChild(message(c.current, true));
-      if (atBottom || busy) chatList.scrollTop = chatList.scrollHeight;
+      drawChat();
     }
 
     async function loadInbox() {
       const box = await api("inbox");
-      const waiting = box.plans.filter(function (p) { return p.status === "waiting"; });
+      plans = box.plans;
+      drawChat();
       fill(inboxBox);
-      if (waiting.length) inboxBox.appendChild(h("div", { class: "inbox-title" }, "Plans waiting for your ✓"));
-      waiting.forEach(function (p) { inboxBox.appendChild(planCard(p, reload)); });
       if (box.decisions.length) inboxBox.appendChild(h("div", { class: "inbox-title" }, "Questions for you"));
       box.decisions.forEach(function (d) { inboxBox.appendChild(decisionCard(d, reload)); });
     }
@@ -255,7 +293,7 @@
     }
 
     async function reload() {
-      await Promise.all([loadInbox().catch(fail), loadBoard().catch(fail)]);
+      await Promise.all([loadInbox().catch(fail), loadBoard().catch(fail), loadChat().catch(fail)]);
     }
 
     main.appendChild(h("section", { class: "pane pane--chat" },
@@ -266,37 +304,73 @@
 
     const stops = [
       every(function () { return busy ? 1000 : 5000; }, function () { return loadChat().catch(fail); }),
-      every(6000, function () { return Promise.all([loadInbox(), loadBoard()]).catch(fail); }),
+      every(function () { return busy ? 3000 : 6000; }, function () { return Promise.all([loadInbox(), loadBoard()]).catch(fail); }),
     ];
     input.focus();
     return function () { stops.forEach(function (s) { s(); }); };
   }
 
+  const PLAN_STATUS = {
+    waiting: ["Waiting for you", "badge--live"],
+    accepted: ["Accepted: starts within a minute", "badge--ok"],
+    releasing: ["Starting", "badge--ok"],
+    released: ["Building: see the chart", "badge--ok"],
+    dismissed: ["Dismissed", "badge--outline"],
+    failed: ["Could not start", "badge--bad"],
+  };
+
+  // A plan, goal by goal and part by part, with what you can do about it.
   function planCard(c, after) {
-    let open = false;
-    const body = h("div", { class: "card-body", hidden: true },
+    const st = PLAN_STATUS[c.status] || [c.status, "badge--outline"];
+    const waiting = c.status === "waiting";
+    const nParts = c.goals.reduce(function (n, g) { return n + g.parts.length; }, 0);
+    let goalsOpen = waiting;
+    const goalsBox = h("div", { class: "plan-goals", hidden: !goalsOpen }, c.goals.map(function (g) {
+      return h("div", { class: "plan-goal" },
+        h("div", { class: "plan-goal-head" }, h("span", { class: "goal-n" }, "Goal " + g.n),
+          h("span", null, g.goal),
+          g.after && g.after.length ? badge("after goal " + g.after.join(", "), "badge--outline") : badge("starts right away", "badge--outline")),
+        g.plan ? h("div", { class: "muted plan-why" }, "Planner: " + g.plan) : null,
+        h("div", { class: "plan-parts" }, g.parts.map(partView)));
+    }));
+    const note = h("textarea", { class: "chat-input", rows: "2", placeholder: "What should change? The boss re-proposes it." });
+    const sendBack = h("div", { class: "sendback", hidden: true }, note,
+      h("div", { class: "actions" },
+        h("button", { class: "btn btn--primary", onclick: async function () {
+          try { await api("plans/" + c.id + "/sendback", { text: note.value }); toast("Sent back to the boss."); after(); } catch (e) { fail(e); }
+        } }, "Send back to the boss"),
+        h("button", { class: "btn btn--ghost", onclick: function () { sendBack.hidden = true; } }, "Cancel")));
+    const toggle = h("button", { class: "linkish plan-toggle", onclick: function () {
+      goalsOpen = !goalsOpen; goalsBox.hidden = !goalsOpen; toggle.textContent = (goalsOpen ? "▾ " : "▸ ") + label;
+    } });
+    const label = c.goals.length + " goal" + (c.goals.length > 1 ? "s" : "") + ", " + nParts + " part" + (nParts > 1 ? "s" : "") + " for free workers";
+    toggle.textContent = (goalsOpen ? "▾ " : "▸ ") + label;
+    return h("div", { class: "plan plan--" + c.status },
+      h("div", { class: "plan-top" }, h("span", { class: "plan-kicker" }, "Plan " + c.id), badge(st[0], st[1])),
+      h("div", { class: "plan-headline" }, c.headline),
       h("div", { class: "summary" }, prose(c.summary || "")),
-      c.goals.map(function (g) {
-        return h("div", { class: "plan-goal" },
-          h("div", null, h("span", { class: "n" }, g.n), g.goal, g.after && g.after.length ? h("span", { class: "muted" }, " after " + g.after.join(", ")) : null),
-          h("div", { class: "muted" }, g.plan),
-          g.parts.map(partView));
-      }));
-    return h("div", { class: "card card--waiting" },
-      h("div", { class: "card-head" },
-        h("button", { class: "check", title: "Accept: its " + c.goals.length + " goal(s) go to the implementers", onclick: async function () {
-          try { await api("plans/" + c.id + "/approve", {}); toast("Accepted. `team run` releases it on its next tick."); after(); } catch (e) { fail(e); }
-        } }, "✓"),
-        h("button", { class: "card-title", onclick: function () { open = !open; body.hidden = !open; } }, c.headline),
-        h("button", { class: "btn btn--ghost btn--small", onclick: async function () {
+      (c.warnings || []).length ? h("div", { class: "plan-warn" }, h("strong", null, "Check before accepting"),
+        h("ul", null, c.warnings.map(function (w) { return h("li", null, w); }))) : null,
+      c.error ? h("div", { class: "problems" }, c.error) : null,
+      toggle, goalsBox,
+      waiting ? h("div", { class: "plan-actions" },
+        h("button", { class: "btn btn--primary btn--big", onclick: async function (e) {
+          e.target.disabled = true;
+          try { await api("plans/" + c.id + "/approve", {}); toast("Accepted. Its goals start within a minute; watch the chart."); after(); }
+          catch (err) { fail(err); e.target.disabled = false; }
+        } }, "✓ Accept plan"),
+        h("button", { class: "btn", onclick: function () { sendBack.hidden = false; note.focus(); } }, "Send back with changes"),
+        h("button", { class: "btn btn--ghost", onclick: async function () {
+          if (!confirm("Dismiss plan " + c.id + "? Nothing in it will be built.")) return;
           try { await api("plans/" + c.id + "/dismiss", {}); after(); } catch (e) { fail(e); }
-        } }, "Dismiss")),
-      body);
+        } }, "Dismiss")) : null,
+      sendBack);
   }
 
   function partView(p) {
     return h("div", { class: "part" },
-      h("div", null, h("strong", null, p.title), " ", h("span", { class: "muted" }, p.model + " · " + p.steps + " steps")),
+      h("div", null, h("strong", null, p.title)),
+      h("div", { class: "muted" }, p.role + " on " + p.model + " · " + p.steps + " steps" + (p.depends_on && p.depends_on.length ? " · after " + p.depends_on.join(", ") : "")),
       h("div", { class: "tags" }, p.toolsets.map(function (t) { return badge(t); }), p.skills.map(function (s) { return badge(s, "badge--outline"); })),
       h("div", { class: "muted" }, "owns ", h("code", null, p.owned_paths.join(", "))),
       p.context.length ? h("div", { class: "muted" }, "reads " + p.context.join(", ")) : null);

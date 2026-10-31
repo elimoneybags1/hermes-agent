@@ -156,3 +156,17 @@ def test_the_server_needs_its_token_and_its_own_host(root, tmp_path):
         assert get("/static/../server.py", {})[0] == 404
     finally:
         httpd.shutdown()
+
+
+def test_sending_a_plan_back_dismisses_it_and_tells_the_boss_why(root, tmp_path, monkeypatch):
+    c = chat.Chat(tmp_path, popen=popen_with(Proc([result("s1", "Re-proposed.", 1, 1, 0, 0)])))
+    app = server.App(root, chat=c)
+    monkeypatch.setattr(server.boss, "proposals", lambda: [{"id": 3, "status": "waiting", "decision_id": 7}])
+    settled = []
+    monkeypatch.setattr(server.App, "_settle", lambda self, d, a: settled.append((d, a)) or {"ok": True})
+    with pytest.raises(edit.EditError):
+        app.post("/api/plans/3/sendback", {"text": " "})
+    app.post("/api/plans/3/sendback", {"text": "make it one goal"})
+    assert settled == [(7, None)]
+    first = c.view()["messages"][0]
+    assert first["role"] == "you" and "proposal 3 back" in first["text"] and "make it one goal" in first["text"]

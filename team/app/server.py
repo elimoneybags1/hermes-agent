@@ -54,7 +54,15 @@ class App:
         if path == "/api/inbox":
             with _conn() as conn:
                 decisions = [d for d in ledger.list_decisions(conn) if not d["source"].startswith("boss-plan:")]
-            return {"plans": [boss.card(p) for p in boss.proposals()[:30]], "decisions": decisions}
+                plans = []
+                for p in boss.proposals()[:30]:
+                    c = boss.card(p)
+                    if c["status"] == "waiting":
+                        d = ledger.get_decision(conn, c["decision_id"])
+                        if d and d["status"] == "answered":
+                            c["status"] = "accepted"  # team run releases it on its next tick
+                    plans.append(c)
+            return {"plans": plans, "decisions": decisions}
         if path == "/api/chat":
             return self.chat.view()
         if path == "/api/team":
@@ -74,6 +82,16 @@ class App:
             return {"ok": True}
         if path == "/api/chat/new":
             self.chat.new()
+            return {"ok": True}
+        if len(parts) == 4 and parts[1] == "plans" and parts[3] == "sendback":
+            text = str(d.get("text") or "").strip()
+            if not text:
+                raise edit.EditError("say what should change")
+            if self.chat.view()["current"]:
+                raise chat_mod.Busy("the boss is still answering; send it back when it is done")
+            self._plan(int(parts[2]), None)
+            self.chat.send(f"I sent proposal {parts[2]} back without approving it. What should change: {text}\n"
+                           "Re-propose it with that changed.")
             return {"ok": True}
         if len(parts) == 4 and parts[1] == "plans" and parts[3] in ("approve", "dismiss"):
             return self._plan(int(parts[2]), "approve" if parts[3] == "approve" else None)
