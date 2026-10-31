@@ -26,6 +26,19 @@ class GradeError(RuntimeError):
     """A grading or landing step that cannot proceed, with the reason."""
 
 
+class LandLater(GradeError):
+    """The branch can land, just not now: the base checkout has uncommitted edits
+    (modified, staged or untracked) to files the branch changes. Git would refuse
+    the merge rather than overwrite them, so Team waits and tries again later."""
+
+    def __init__(self, files: list[str]):
+        self.files = list(files)
+        super().__init__(
+            "the checkout has uncommitted edits to files this branch changes: "
+            + ", ".join(self.files)
+        )
+
+
 def _run(
     cmd: list[str], runner: Runner, **kwargs: Any
 ) -> subprocess.CompletedProcess[Any]:
@@ -216,6 +229,24 @@ def outside_owned(changed: list[str], owned: list[str]) -> list[str]:
     return sorted(p for p in changed if not covered(p))
 
 
+def blocking_edits(
+    repo: str | Path, branch: str, base: str = "main", runner: Runner = subprocess.run
+) -> list[str]:
+    """Files ``branch`` changes that are also modified, staged or untracked in ``repo``."""
+    changed = set(changed_files(repo, branch, base, runner=runner))
+    status = _git(
+        Path(repo), "status", "--porcelain", "--untracked-files=all", runner=runner
+    )
+    if status.returncode != 0:
+        raise GradeError(f"git status failed: {(status.stderr or '').strip()}")
+    dirty = {
+        line[3:].split(" -> ")[-1].strip('"')
+        for line in (status.stdout or "").splitlines()
+        if len(line) > 3
+    }
+    return sorted(changed & dirty)
+
+
 def land(
     repo: str | Path,
     branch: str,
@@ -227,6 +258,8 @@ def land(
 
     Refuses staged changes (which could enter the merge commit), when ``base`` is
     not the checked-out branch, or when the merge conflicts (aborted cleanly).
+    Raises ``LandLater`` when the checkout has uncommitted edits to files the
+    branch changes: nothing is wrong with the branch, it just has to wait.
     """
     repo = Path(repo)
     if _must(
@@ -238,6 +271,9 @@ def land(
     )
     if current != base:
         raise GradeError(f"checked-out branch is {current!r}, not {base!r}")
+    blocked = blocking_edits(repo, branch, base, runner=runner)
+    if blocked:
+        raise LandLater(blocked)
     result = _git(
         repo,
         "-c",

@@ -196,3 +196,25 @@ def test_land_preserves_unrelated_edits_and_refuses_overwriting(repo, team_state
     assert (repo / "README.md").read_text() == "another session\n"
     assert (repo / "notes.txt").read_text() == "untracked\n"
     assert git(repo, "show", "HEAD:README.md").stdout == "# Test\n"
+
+
+def test_land_waits_while_the_checkout_edits_the_same_files(repo, team_state):
+    path, branch = grade.create_worktree(repo, "team", "waits")
+    commit_in(path, "a.py", "x = 2\n")
+    (repo / "a.py").write_text("in progress\n")
+    with pytest.raises(grade.LandLater) as e:
+        grade.land(repo, branch, "must wait")
+    assert e.value.files == ["a.py"] and "a.py" in str(e.value)
+    assert isinstance(e.value, grade.GradeError)
+    assert (repo / "a.py").read_text() == "in progress\n"
+    git(repo, "restore", "a.py")
+    (repo / "README.md").write_text("unrelated edit\n")
+    assert grade.blocking_edits(repo, branch) == []
+    # an untracked file the branch would create counts too
+    commit_in(path, "new.py", "y = 1\n")
+    (repo / "new.py").write_text("draft\n")
+    assert grade.blocking_edits(repo, branch) == ["new.py"]
+    (repo / "new.py").unlink()
+    grade.land(repo, branch, "lands once the tree is clean")
+    assert (repo / "a.py").read_text() == "x = 2\n"
+    assert (repo / "README.md").read_text() == "unrelated edit\n"

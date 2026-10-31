@@ -866,6 +866,14 @@ class Loop:
                 base,
                 runner=self.runner,
             )
+        except grade.LandLater as e:
+            # The checkout is mid-edit on these files. The goal keeps its passed
+            # job, so step() comes back here every tick until the tree is clean.
+            reason = f"waiting to land: {e}"
+            if goal.get("detail") != reason:
+                self.log(f"goal {goal['id']}: {reason}")
+                ledger.update_goal(self.conn, goal["id"], detail=reason)
+            return
         except grade.GradeError as e:
             reason = f"passed its check but could not land: {e}. Branch {goal['branch']} is kept."
             self._block(goal, reason)

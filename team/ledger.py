@@ -475,7 +475,7 @@ def attach_calls(conn: sqlite3.Connection, task_ref: str, job_id: int) -> int:
 
 # --- goals ------------------------------------------------------------------
 
-GOAL_FIELDS = ("attempt", "current_task", "job_id")
+GOAL_FIELDS = ("attempt", "current_task", "job_id", "detail")
 
 
 def create_goal(
@@ -512,7 +512,7 @@ def create_goal(
 
 
 def update_goal(conn: sqlite3.Connection, goal_id: int, **fields) -> None:
-    """Change a goal's attempt, current_task or job_id."""
+    """Change a goal's attempt, current_task, job_id or detail (while it waits to land)."""
     bad = set(fields) - set(GOAL_FIELDS)
     if bad:
         raise ValueError(f"cannot update goal fields {sorted(bad)}")

@@ -298,6 +298,31 @@ def test_start_goal_refusals(world):
         )
 
 
+def test_pass_waits_to_land_while_the_checkout_edits_its_files(world):
+    goal = run.start_goal(
+        world["root"],
+        world["conn"],
+        "team",
+        "Set VALUE to 2",
+        runner=world["hermes"],
+        cat=CATALOG,
+    )
+    worker_commits(world, goal)
+    (world["repo"] / "app.py").write_text("VALUE = 1  # someone is editing\n")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] is None and g["finished"] is None
+    assert g["detail"].startswith("waiting to land") and "app.py" in g["detail"]
+    assert (world["repo"] / "app.py").read_text() == "VALUE = 1  # someone is editing\n"
+    world["loop"].tick()  # still waiting; nothing breaks on the retry
+    assert ledger.get_goal(world["conn"], goal["id"])["outcome"] is None
+    git(world["repo"], "restore", "app.py")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["detail"].startswith("landed ")
+    assert (world["repo"] / "app.py").read_text().startswith("VALUE = 2\n")
+
+
 def test_pass_lands_and_records(world):
     goal = run.start_goal(
         world["root"],
