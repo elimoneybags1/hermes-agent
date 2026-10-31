@@ -53,6 +53,11 @@ def build_kanban_policy(connection, params, config):
     for name, value in (('model', task.model_override), ('provider', task.provider_override), ('reasoning', task.reasoning_effort)):
         if value:
             params_policy[name] = value
+    if task.toolsets:  # [team] narrows the profile's toolsets, never widens them
+        from hermes_cli.tools_config import _get_platform_tools
+        if not set(task.toolsets) <= set(_get_platform_tools(config, 'cli')):
+            raise RuntimeStoreError('toolsets_not_in_profile')
+        params_policy['toolsets'] = list(task.toolsets)
     private = {}
     policy = build_policy(params_policy, config, private_secrets=private)
     if policy.model is None:
