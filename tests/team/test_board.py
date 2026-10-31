@@ -3,6 +3,7 @@
 import json
 import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,138 @@ from tests.team.test_catalog import CATALOG
 from tests.team.test_run import git
 
 REPO = Path(__file__).resolve().parents[2]
+def git(repo, *args):
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+    )
+
+
+def merged_repo(tmp_path, files_by_branch):
+    """Create a temporary git repo with merge commits for testing.
+    
+    Args:
+        tmp_path: pytest temporary path
+        files_by_branch: dict of {(branch, goal_id): {path: content}}
+    
+    Returns:
+        Path to the repository
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.name", "T")
+    git(repo, "config", "user.email", "t@t")
+    
+    # Create initial base.txt commit
+    git(repo, "-c", "core.hooksPath=/dev/null", "commit", "-q", "--allow-empty", "-m", "initial")
+    
+    # Process each branch and create files, then merge
+    for (branch, goal_id), files in files_by_branch.items():
+        git(repo, "checkout", "-q", "-b", branch)
+        
+        # Create files
+        for path, content in files.items():
+            file_path = Path(repo) / path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content)
+        
+        git(repo, "add", "-A")
+        git(repo, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "x")
+        
+        # Merge back to main
+        git(repo, "checkout", "-q", "main")
+        git(repo, "merge", "--no-ff", "-q", "-m", f"Merge {branch}: do it (goal {goal_id})", branch)
+    
+    return repo
+
+
+def test_merge_files_lists_what_the_merge_commit_changed(tmp_path):
+    """Test that merge_files returns the correct changed files."""
+    files_by_branch = {
+        ("team/a", 1): {"a.txt": "content of a.txt"},
+    }
+    repo = merged_repo(tmp_path, files_by_branch)
+    from team import board
+    assert board.merge_files(repo, "team/a", 1) == ["a.txt"]
+
+
+def test_merge_files_lists_every_file_of_the_merge(tmp_path):
+    """Test that merge_files returns all changed files in a merge."""
+    files_by_branch = {
+        ("team/m", 2): {
+            "x.txt": "content of x.txt",
+            "sub/y.txt": "content of sub/y.txt",
+            "z.txt": "content of z.txt",
+        }
+    }
+    repo = merged_repo(tmp_path, files_by_branch)
+    from team import board
+    result = board.merge_files(repo, "team/m", 2)
+    # git prints them sorted by path
+    assert result == ["sub/y.txt", "x.txt", "z.txt"]
+
+
+def test_merge_files_is_empty_when_the_merge_is_not_found(tmp_path):
+    """Test that merge_files returns empty list when merge commit is not found."""
+    files_by_branch = {
+        ("team/a", 1): {"a.txt": "content of a.txt"},
+    }
+    repo = merged_repo(tmp_path, files_by_branch)
+    from team import board
+    
+    # Wrong branch
+    assert board.merge_files(repo, "team/other", 1) == []
+    # Wrong goal id
+    assert board.merge_files(repo, "team/a", 99) == []
+    # Not a repo
+    assert board.merge_files(tmp_path / "nowhere", "team/a", 1) == []
+
+
+def test_a_landed_goal_card_carries_its_files_and_others_do_not(team_state, root, tmp_path):
+    """Test that landed goal cards have files field with changed files, others don't."""
+    conn = ledger.connect(team_state / "team.db")
+    ledger.init(conn)
+    
+    # Create repo with branch team/a for goal 1
+    files_by_branch = {
+        ("team/a", 1): {"a.txt": "content of a.txt"},
+    }
+    repo = merged_repo(tmp_path, files_by_branch)
+    
+    # Create landed goal with id 1
+    g1 = ledger.create_goal(conn, "team", "do it", "implement", "team/a", "/w", "./c")
+    ledger.finish_goal(conn, g1, "pass", "landed abc")
+    
+    # Create unlanded goal
+    g2 = ledger.create_goal(conn, "team", "other", "implement", "team/b", "/w", "./c")
+    
+    # Mock repo_path to return our test repo
+    from team import board, targets
+    original_repo_path = board.targets.repo_path
+    board.targets.repo_path = lambda name: repo
+    
+    try:
+        from tests.team.test_catalog import CATALOG
+        b = board.board(conn, root, CATALOG)
+        
+        # Find the cards
+        done_cards = b['done']
+        columns = b['columns']
+        
+        # The landed goal (g1) should be in done
+        g1_card = next((c for c in done_cards if c['id'] == g1), None)
+        assert g1_card is not None
+        assert g1_card['files'] == ["a.txt"]
+        
+        # The unlanded goal (g2) should be in lead or rescue or implement
+        all_cards = done_cards + columns.get('lead', []) + columns.get('implement', []) + columns.get('rescue', [])
+        g2_card = next((c for c in all_cards if c['id'] == g2), None)
+        assert g2_card is not None
+        assert g2_card['files'] == []
+    finally:
+        # Restore original
+        board.targets.repo_path = original_repo_path
 
 
 def gateway(state, rows):

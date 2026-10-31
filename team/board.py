@@ -23,7 +23,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from team import boss, catalog, ledger
+from team import boss, catalog, ledger, targets
 
 ZONES = ("boss", "lead", "implement", "rescue", "other")
 TOKENS = ("tokens_in", "tokens_out", "cache_read", "cache_write")
@@ -256,6 +256,35 @@ def _goal_jobs(conn, goal: dict) -> list[dict]:
     return [j for j in rows if j and j["role"] != "lead"]
 
 
+def merge_files(repo: Path, branch: str, goal_id: int) -> list[str]:
+    """Files changed by the goal's merge commit versus its first parent; [] if the commit is not found."""
+    # Run git log to find merge commits with the expected title pattern
+    result = subprocess.run(
+        ["git", "-C", str(repo), "log", "--merges", "--format=%H%x09%s", "--fixed-strings", "--grep", f"Merge {branch}: "],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    
+    if result.returncode != 0:
+        return []
+    
+    # Search for the merge commit with matching branch and goal id
+    for line in result.stdout.splitlines():
+        sha, _, subject = line.partition("\t")
+        if subject.startswith(f"Merge {branch}: ") and subject.endswith(f"(goal {goal_id})"):
+            # Found the merge commit, run diff to get changed files
+            diff_result = subprocess.run(
+                ["git", "-C", str(repo), "diff", "--name-only", f"{sha}^1", sha],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if diff_result.returncode != 0:
+                return []
+            return [x for x in diff_result.stdout.splitlines() if x]
+    
+    return []
 def goal_card(conn, gw, goal: dict, order, cooldown_s: int = 0) -> dict:
     part = ledger.get_part(conn, goal["part_id"]) if goal.get("part_id") else None
     latest = ledger.latest_order(conn, goal["id"])
@@ -269,6 +298,12 @@ def goal_card(conn, gw, goal: dict, order, cooldown_s: int = 0) -> dict:
         station = attempts[-1]["zone"]
     else:
         station = "lead"
+    files: list[str] = []
+    if station == "landed":
+        try:
+            files = merge_files(targets.repo_path(goal["target"]), goal["branch"], goal["id"])
+        except (targets.TargetError, OSError):
+            files = []
     return {
         "id": goal["id"],
         "target": goal["target"],
@@ -280,6 +315,7 @@ def goal_card(conn, gw, goal: dict, order, cooldown_s: int = 0) -> dict:
         "branch": goal["branch"],
         "owns": part["owned_paths"] if part else [],
         "depends_on": part["depends_on"] if part else [],
+        "files": files,
         "order_bytes": latest["body_bytes"] if latest else None,
         "order_version": latest["version"] if latest else None,
         "planned": _attempt(conn, gw, lead_job, order, cooldown_s) if lead_job else None,
