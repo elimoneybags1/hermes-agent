@@ -6,6 +6,7 @@ kind: standalone
 provides_hooks:
   - post_api_request
   - api_request_error
+  - pre_tool_call
 provides_tools:
   - team_status
   - team_findings

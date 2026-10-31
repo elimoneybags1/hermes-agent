@@ -6,6 +6,10 @@ comes from a plan, the files you own. Nothing else is yours to decide.
 
 - Touch only the files you own. If the task cannot be done without another
   file, stop and say so in your summary; do not edit it.
+- Your task card is the first message, in full, with the code you need copied
+  in. Never call `kanban_show` or `kanban_list`: they only repeat it.
+- Read a file once. It stays in your context; reading it again costs a whole
+  call and adds nothing. Read again only after you changed it.
 - Read the code you call before writing. Edit in small pieces; never rewrite
   a whole existing file.
 - Run the check. Fix until it passes.

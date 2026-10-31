@@ -1,8 +1,8 @@
 """Team's Hermes plugin: the ledger sink and the boss's ``team_*`` tools.
 
 Hermes loads this through ``plugins.enabled: [team]`` in a profile's
-config.yaml. Both hooks are observe-only in Hermes; the sink records what
-happened and never changes a request.
+config.yaml. The ledger hooks observe only; the worker hook (worker_tools.py)
+refuses calls that would re-read what a worker already has.
 """
 
 from __future__ import annotations
@@ -35,9 +35,19 @@ def _on_api_request_error(**kwargs) -> None:
     _sink().record(**kwargs)
 
 
+def _module(name: str):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(f"team_{name}", _HERE / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def register(ctx) -> None:
     ctx.register_hook("post_api_request", _on_post_api_request)
     ctx.register_hook("api_request_error", _on_api_request_error)
+    ctx.register_hook("pre_tool_call", _module("worker_tools").pre_tool_call)
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
