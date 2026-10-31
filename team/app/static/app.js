@@ -152,22 +152,59 @@
     return function () { alive = false; clearTimeout(timer); };
   }
 
-  // ---------- services in the header ----------
+  // ---------- the sidebar: services, roles, tokens ----------
 
-  let gatewayCache = null;
+  let gatewayCache = null, boardCache = null, chatBusy = false, chatTools = [];
   async function services() {
     try {
       const o = await api("gateway");
       gatewayCache = o;
-      const box = document.getElementById("services");
-      box.replaceChildren.apply(box, Object.keys(o.services).map(function (name) {
+      fill(document.getElementById("services"), Object.keys(o.services).map(function (name) {
         const s = o.services[name];
         return h("a", { class: "svc " + (s.healthy ? "svc--ok" : "svc--bad"), href: "#" + name,
-          title: name + " on " + s.host + ":" + s.port + (s.healthy ? ", healthy" : ", not answering") }, h("span", { class: "dot" }), name);
+          title: name + " on " + s.host + ":" + s.port + (s.healthy ? ", healthy" : ", not answering") },
+          h("span", { class: "dot" }), name, h("span", { class: "svc-state" }, s.healthy ? "up" : "down"));
       }));
     } catch (e) { /* the pages show their own errors */ }
   }
   every(30000, services);
+
+  // The roles, like a squad list: who is working right now, and on what model.
+  function drawSidebar() {
+    const b = boardCache;
+    if (!b) return;
+    const cfg = b.configured, z = b.tokens.zones;
+    const planning = chatTools.some(function (t) { return t.name === "team_propose" && !t.done; });
+    const roles = [
+      { key: "boss", title: "Boss", sub: cfg.boss.model || "?", working: chatBusy, note: b.waiting.length ? b.waiting.length + " plan" + (b.waiting.length > 1 ? "s" : "") + " for you" : null },
+      { key: "lead", title: "Planner", sub: cfg.lead.model || "?", working: planning, note: planning ? "drafting" : null },
+      { key: "implement", title: "Implementer", sub: (cfg.implement.tiers || []).join(" → "), working: b.columns.implement.length > 0, note: b.columns.implement.length ? b.columns.implement.length + " building" : null },
+      { key: "rescue", title: "Rescue", sub: cfg.rescue.model || "?", working: b.columns.rescue.length > 0, note: b.columns.rescue.length ? b.columns.rescue.length + " rescuing" : null },
+    ];
+    fill(document.getElementById("roles"), roles.map(function (r) {
+      return h("button", { class: "role" + (r.working ? " role--working" : ""), title: "Open " + r.title + " in Team", onclick: function () {
+        try { sessionStorage.setItem("team-sel", r.key === "lead" ? "lead" : r.key === "rescue" ? "implement" : r.key); } catch (e) { /* private window */ }
+        location.hash = "#team";
+      } },
+        h("span", { class: "role-dot" }),
+        h("span", { class: "role-text" }, h("span", { class: "role-name" }, r.title), h("span", { class: "role-sub" }, r.sub)),
+        h("span", { class: "role-state" }, r.note || (r.working ? "working" : "idle")));
+    }));
+    const t = b.tokens.total;
+    fill(document.getElementById("side-tokens"),
+      h("div", { class: "tile-label" }, "Tokens" + (b.tokens.since ? " since " + b.tokens.since.slice(5, 10).replace("-", "/") : "")),
+      h("div", { class: "tile-big" }, fmt(t.tokens_in), h("span", { class: "tile-unit" }, " in")),
+      h("div", { class: "tile-row" }, h("span", null, fmt(t.tokens_out) + " out"), h("span", null, (t.calls || 0) + " calls")),
+      h("div", { class: "tile-row muted" }, "cache ", t.cache_read === null && t.cache_write === null ? "not recorded" : fmt(t.cache_read) + " / " + fmt(t.cache_write)));
+  }
+  async function pollSidebar() {
+    try {
+      const r = await Promise.all([api("board"), api("chat")]);
+      boardCache = r[0]; chatBusy = !!r[1].current; chatTools = r[1].current ? r[1].current.tools : [];
+      drawSidebar();
+    } catch (e) { /* the pages show their own errors */ }
+  }
+  every(15000, pollSidebar);
 
   // ---------- Work: chat + chart ----------
 
@@ -273,6 +310,7 @@
     async function loadChat() {
       chatData = await api("chat");
       busy = !!chatData.current;
+      if (chatBusy !== busy) { chatBusy = busy; chatTools = chatData.current ? chatData.current.tools : []; drawSidebar(); }
       sendBtn.disabled = busy;
       sendBtn.textContent = busy ? "Answering…" : "Send";
       drawChat();
@@ -289,6 +327,7 @@
 
     async function loadBoard() {
       const b = await api("board");
+      boardCache = b; drawSidebar();
       fill(chart, Chart(b, reload));
     }
 
@@ -297,7 +336,9 @@
     }
 
     main.appendChild(h("section", { class: "pane pane--chat" },
-      h("div", { class: "pane-head" }, h("h2", null, "Boss"), h("button", { class: "btn btn--ghost", onclick: newChat }, "New conversation")),
+      h("div", { class: "pane-head" },
+        h("div", { class: "pane-title" }, h("span", { class: "avatar" }, "B"), h("div", null, h("h2", null, "Boss"), h("div", { class: "muted" }, "plans the work with you"))),
+        h("button", { class: "btn btn--ghost btn--small", onclick: newChat }, "New conversation")),
       chatList, inboxBox,
       h("div", { class: "composer" }, input, sendBtn)));
     main.appendChild(h("section", { class: "pane pane--chart" }, chart));
@@ -447,41 +488,57 @@
   function goalCard(g) {
     const last = g.attempts[g.attempts.length - 1];
     const body = h("div", { class: "card-body", hidden: !openGoals[g.id] },
-      h("div", null, h("span", { class: "muted" }, "check "), h("code", null, g.check)),
-      h("div", null, h("span", { class: "muted" }, "branch "), h("code", null, g.branch)),
+      h("div", { class: "kv-line" }, h("span", { class: "muted" }, "check "), h("code", null, g.check)),
+      h("div", { class: "kv-line" }, h("span", { class: "muted" }, "branch "), h("code", null, g.branch)),
       g.order_bytes ? h("div", { class: "muted" }, "work order v" + g.order_version + ", " + fmt(g.order_bytes) + " bytes") : null,
-      (g.files && g.files.length) ? h("div", { class: "goal-files" }, h("span", { class: "muted" }, "files "), g.files.map(function (f) { return h("div", null, h("code", null, f)); })) : null,
+      (g.files && g.files.length) ? h("div", { class: "goal-files" }, h("span", { class: "muted" }, "changed "), g.files.map(function (f) { return h("div", null, h("code", null, f)); })) : null,
       g.planned ? attemptView(g.planned) : null,
       g.attempts.map(attemptView),
       g.detail ? h("div", { class: "detail" }, g.detail) : null);
-    const text = h("span", { class: "goal-text" + (openGoals[g.id] ? "" : " clamp"), title: g.goal }, h("span", { class: "n" }, g.id), g.goal);
+    const text = h("div", { class: "goal-text" + (openGoals[g.id] ? "" : " clamp"), title: g.goal }, g.goal);
     return h("div", { class: "card goal goal--" + g.station },
-      h("button", { class: "card-head card-head--button", onclick: function () {
+      h("button", { class: "goal-head", onclick: function () {
         openGoals[g.id] = !openGoals[g.id]; body.hidden = !openGoals[g.id]; text.classList.toggle("clamp", !openGoals[g.id]);
-      } }, text, g.outcome ? outcome(g.outcome) : null),
+      } },
+        h("div", { class: "goal-top" }, h("span", { class: "goal-id" }, "#" + g.id), g.outcome ? outcome(g.outcome) : (last ? badge("attempt " + last.attempt, "badge--live") : badge("waiting", "badge--outline"))),
+        text),
       h("div", { class: "goal-meta" },
-        g.owns.length ? h("div", null, h("span", { class: "muted" }, "owns "), h("code", null, g.owns.join(", "))) : null,
-        last ? routeView(last) : h("div", { class: "muted" }, "waiting for its dependencies")),
+        last ? routeView(last) : h("div", { class: "muted" }, "waiting for its dependencies"),
+        g.owns.length ? h("div", { class: "tags" }, g.owns.map(function (f) { return h("code", { class: "chip", title: f }, f.split("/").pop()); })) : null),
       body);
   }
 
-  function column(title, sub, t, items) {
-    return h("div", { class: "col" + (items.length ? " col--busy" : "") },
-      h("div", { class: "drop" }),
+  const COLORS = { lead: "violet", implement: "blue", rescue: "amber", done: "green" };
+
+  function column(key, title, sub, items, extra) {
+    return h("div", { class: "col col--" + COLORS[key] },
       h("div", { class: "col-head" },
-        h("div", { class: "col-title" }, title, badge(String(items.length), items.length ? "badge--live" : "badge--outline")),
-        h("div", { class: "muted" }, sub), tokens(t)),
-      h("div", { class: "col-body" }, items.length ? items.map(goalCard) : h("div", { class: "muted empty-col" }, "nothing here now")));
+        h("span", { class: "col-dot" }), h("span", { class: "col-title" }, title),
+        h("span", { class: "col-count" }, String(items.length))),
+      h("div", { class: "col-sub muted" }, sub),
+      h("div", { class: "col-body" },
+        extra || null,
+        items.length ? items.map(goalCard) : (extra ? null : h("div", { class: "empty-col" }, "Nothing here"))));
+  }
+
+  function tile(label, value, sub, cls) {
+    return h("div", { class: "tile " + (cls || "") },
+      h("div", { class: "tile-label" }, label),
+      h("div", { class: "tile-value" }, value),
+      sub ? h("div", { class: "tile-sub muted" }, sub) : null);
   }
 
   const ZONES = { boss: "Boss", lead: "Planner", implement: "Implementer", rescue: "Rescue", other: "Not attributed" };
-  let showTiers = false;
+  let showTiers = false, showTokens = false;
 
   function Chart(b) {
-    const cfg = b.configured, z = b.tokens.zones;
-    const tiersBox = h("div", { class: "tiers", hidden: !showTiers }, b.tiers.map(function (t) {
-      return h("div", { class: "tier" }, h("div", { class: "tier-name" }, t.tier),
-        t.models.map(function (m) {
+    const cfg = b.configured, z = b.tokens.zones, t = b.tokens.total;
+    const landed = b.done.filter(function (g) { return g.station === "landed"; });
+    const stopped = b.done.filter(function (g) { return g.station !== "landed"; });
+    const building = b.columns.implement.length + b.columns.rescue.length;
+    const tiersBox = h("div", { class: "tiers", hidden: !showTiers }, b.tiers.map(function (tr) {
+      return h("div", { class: "card tier" }, h("div", { class: "tier-name" }, tr.tier),
+        tr.models.map(function (m) {
           const failing = m.last_fail && m.last && m.last_fail === m.last;
           return h("div", { class: "tier-row" + (m.rank === 1 ? " tier-row--top" : "") },
             h("span", { class: "n" }, "#" + m.rank), h("span", { class: "tier-model" }, m.model),
@@ -490,25 +547,32 @@
             failing ? h("span", { class: "warn", title: m.last_fail }, "last call failed") : null);
         }));
     }));
-    return h("div", { class: "chart" },
-      h("div", { class: "org" },
-        h("div", { class: "boss" }, h("div", { class: "col-title" }, "Boss"),
-          h("div", { class: "muted" }, "plans with you · " + (cfg.boss.model || "?")), tokens(z.boss),
-          b.waiting.length ? h("div", { class: "boss-note" }, b.waiting.length + " plan(s) waiting for your ✓ in the chat") : null),
-        h("div", { class: "stem" }),
-        h("div", { class: "cols" },
-          column("Planner", "work orders, tools, context · " + (cfg.lead.model || "?"), z.lead, b.columns.lead),
-          column("Implementer", "builds each part · " + (cfg.implement.tiers || []).join(" → "), z.implement, b.columns.implement),
-          column("Rescue", "after " + (cfg.rescue.after_failures || "?") + " failed attempts · " + (cfg.rescue.model || "?"), z.rescue, b.columns.rescue))),
-      b.done.length ? h("h3", null, "Landed and stopped") : null,
-      h("div", { class: "done" }, b.done.map(goalCard)),
-      h("h3", null, "Tokens" + (b.tokens.since ? " since " + b.tokens.since.slice(0, 10) : "")),
-      h("div", { class: "token-table" },
-        h("div", { class: "token-row token-row--total" }, h("span", null, "All"), tokens(b.tokens.total)),
-        Object.keys(ZONES).map(function (k) { return h("div", { class: "token-row" }, h("span", null, ZONES[k]), tokens(z[k])); })),
-      h("h3", null, h("button", { class: "linkish", onclick: function () { showTiers = !showTiers; tiersBox.hidden = !showTiers; } },
-        (showTiers ? "▾" : "▸") + " Tiers: LiteLLM's order, #1 first")),
-      tiersBox);
+    const tokensBox = h("div", { class: "card token-table", hidden: !showTokens },
+      h("div", { class: "token-row token-row--total" }, h("span", null, "All"), tokens(t)),
+      Object.keys(ZONES).map(function (k) { return h("div", { class: "token-row" }, h("span", null, ZONES[k]), tokens(z[k])); }));
+    const toggle = function (label, get, set, box) {
+      const btn = h("button", { class: "linkish", onclick: function () { set(!get()); box.hidden = !get(); btn.textContent = (get() ? "▾ " : "▸ ") + label; } }, (get() ? "▾ " : "▸ ") + label);
+      return btn;
+    };
+    return h("div", { class: "board" },
+      h("div", { class: "board-head" },
+        h("h1", null, "Work"),
+        h("div", { class: "muted" }, b.waiting.length ? b.waiting.length + " plan" + (b.waiting.length > 1 ? "s" : "") + " waiting for you in the chat" : building ? building + " goal" + (building > 1 ? "s" : "") + " building" : "Quiet. Tell the boss what to build.")),
+      h("div", { class: "tiles" },
+        tile("Waiting for you", String(b.waiting.length), "plans to accept", b.waiting.length ? "tile--accent" : ""),
+        tile("Building", String(building), "goals with a worker on them"),
+        tile("Landed", [String(landed.length), stopped.length ? h("span", { class: "tile-dim" }, " / " + stopped.length + " stopped") : null], "check passed, merged"),
+        tile("Tokens in", fmt(t.tokens_in), fmt(t.tokens_out) + " out · " + (t.calls || 0) + " calls"),
+        tile("Cache", t.cache_read === null && t.cache_write === null ? "—" : fmt(t.cache_read) + " / " + fmt(t.cache_write), t.cache_read === null && t.cache_write === null ? "not recorded yet" : "read / write")),
+      h("div", { class: "cols" },
+        column("lead", "Planner", "work orders, tools, context · " + (cfg.lead.model || "?"), b.columns.lead),
+        column("implement", "Implementer", "builds each part · " + (cfg.implement.tiers || []).join(" → "), b.columns.implement),
+        column("rescue", "Rescue", "after " + (cfg.rescue.after_failures || "?") + " failed attempts · " + (cfg.rescue.model || "?"), b.columns.rescue),
+        column("done", "Landed", landed.length + " landed" + (stopped.length ? ", " + stopped.length + " stopped" : ""), b.done)),
+      h("div", { class: "board-more" },
+        toggle("Tokens by role", function () { return showTokens; }, function (v) { showTokens = v; }, tokensBox),
+        toggle("Tiers: LiteLLM's order, #1 first", function () { return showTiers; }, function (v) { showTiers = v; }, tiersBox)),
+      tokensBox, tiersBox);
   }
 
   // ---------- review / apply ----------
@@ -543,8 +607,9 @@
   // ---------- Team page ----------
 
   function TeamPage(main) {
-    const nav = h("aside", { class: "side" });
+    const nav = h("div", { class: "subnav" });
     const view = h("section", { class: "editor" }, h("div", { class: "muted" }, "Loading…"));
+    main.appendChild(h("div", { class: "page-head" }, h("h1", null, "Team"), h("div", { class: "muted" }, "Each role's instructions, tools and model, and how Team orchestrates them. Every change is reviewed, then committed.")));
     main.appendChild(nav); main.appendChild(view);
     let data = null, selected = sessionStorage.getItem("team-sel") || "settings";
 
@@ -556,16 +621,14 @@
     function pick(key) { selected = key; try { sessionStorage.setItem("team-sel", key); } catch (e) { /* private window */ } drawNav(); draw(); }
 
     function drawNav() {
-      fill(nav, 
-        h("div", { class: "side-title" }, "Roles"),
+      fill(nav,
         data.roles.map(function (r) {
-          const model = r.runs_on.model || (r.models && r.models.candidates ? r.models.candidates.join(" → ") : r.runs_on.harness);
-          return h("button", { class: "side-item" + (selected === r.name ? " on" : ""), onclick: function () { pick(r.name); } },
-            h("div", null, r.title, r.problem ? h("span", { class: "warn" }, " !") : null), h("div", { class: "muted" }, model));
+          return h("button", { class: "pill" + (selected === r.name ? " on" : ""), onclick: function () { pick(r.name); } },
+            r.title, r.problem ? h("span", { class: "warn" }, " !") : null);
         }),
-        h("div", { class: "side-title" }, "Team"),
-        h("button", { class: "side-item" + (selected === "settings" ? " on" : ""), onclick: function () { pick("settings"); } }, "Settings"),
-        h("button", { class: "side-item" + (selected === "history" ? " on" : ""), onclick: function () { pick("history"); } }, "History & undo"));
+        h("span", { class: "subnav-gap" }),
+        h("button", { class: "pill" + (selected === "settings" ? " on" : ""), onclick: function () { pick("settings"); } }, "Settings"),
+        h("button", { class: "pill" + (selected === "history" ? " on" : ""), onclick: function () { pick("history"); } }, "History & undo"));
     }
 
     function draw() {
@@ -774,7 +837,7 @@
 
       fill(main, 
         h("div", { class: "gw" },
-          h("div", { class: "gw-head" }, h("h2", null, "LiteLLM"), h("p", { class: "muted" }, "Picks the model inside each tier. Order is LiteLLM's priority: #1 first, the next only while the ones above are failing or cooling down. Tier fallbacks are where a request goes when its whole tier fails."),
+          h("div", { class: "gw-head" }, h("h1", null, "LiteLLM"), h("p", { class: "muted" }, "Picks the model inside each tier. Order is LiteLLM's priority: #1 first, the next only while the ones above are failing or cooling down. Tier fallbacks are where a request goes when its whole tier fails."),
             serviceCard("litellm")),
           h("h3", null, "Tiers"),
           h("div", { class: "tier-edit" }, cat.tiers.map(function (t) {
@@ -859,7 +922,7 @@
 
       fill(main, 
         h("div", { class: "gw" },
-          h("div", { class: "gw-head" }, h("h2", null, "Portkey"), h("p", { class: "muted" }, "Picks the provider for each model: tries them in order and moves on when one fails. Holds the only copy of the provider keys; keys are never shown, only a mask."),
+          h("div", { class: "gw-head" }, h("h1", null, "Portkey"), h("p", { class: "muted" }, "Picks the provider for each model: tries them in order and moves on when one fails. Holds the only copy of the provider keys; keys are never shown, only a mask."),
             serviceCard("portkey")),
           h("h3", null, "Providers"),
           h("div", { class: "providers" }, providerNames.map(function (name) {

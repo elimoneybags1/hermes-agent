@@ -8,16 +8,19 @@
 <script>window.TEAM_TOKEN = "__TEAM_TOKEN__";</script>
 </head>
 <body>
-<header class="top">
-  <a class="brand" href="#">Team</a>
-  <nav id="nav">
-    <a href="#" data-page="work">Work</a>
-    <a href="#team" data-page="team">Team</a>
-    <a href="#litellm" data-page="litellm">LiteLLM</a>
-    <a href="#portkey" data-page="portkey">Portkey</a>
+<aside class="side">
+  <a class="brand" href="#"><span class="brand-mark">T</span>Team</a>
+  <nav id="nav" class="nav">
+    <a href="#" data-page="work"><span class="ico">▣</span>Work</a>
+    <a href="#team" data-page="team"><span class="ico">◎</span>Team</a>
+    <a href="#litellm" data-page="litellm"><span class="ico">⇶</span>LiteLLM</a>
+    <a href="#portkey" data-page="portkey"><span class="ico">⌁</span>Portkey</a>
   </nav>
+  <div class="side-label">Roles</div>
+  <div id="roles" class="roles"></div>
+  <div id="side-tokens" class="side-tile"></div>
   <div id="services" class="services"></div>
-</header>
+</aside>
 <main id="main"></main>
 <div id="toast" class="toast" hidden></div>
 <script src="/static/app.js"></script>
