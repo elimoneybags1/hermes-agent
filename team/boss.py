@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from team import ledger, run, settings, targets
+from team.goals_landed import all_goals_landed
 
 HEADLINE_CHARS = 160
 SUMMARY_CHARS = 1500
@@ -394,9 +395,27 @@ def _line(text: str | None, n: int = 90) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def record_closed(conn: sqlite3.Connection, target: str) -> list[dict]:
+    """Close each released proposal whose goals all landed; once only. Returns the newly closed."""
+    out = []
+    for p in proposals(target):
+        if p['status'] != 'released':
+            continue
+        rows = [ledger.get_goal(conn, i) for i in p.get('goal_ids', []) if ledger.get_goal(conn, i) is not None]
+        if not all_goals_landed(p, rows):
+            continue
+        p['status'] = 'closed'
+        p['closed'] = ledger._now()[:10]
+        ledger.update_plan(conn, p['id'], status='done')
+        _save(p)
+        out.append(p)
+    return out
+
+
 def status(conn: sqlite3.Connection, target: str) -> str:
     """What is running, waiting for Eli, and what came back lately; a few hundred tokens."""
     targets.require(target)
+    record_closed(conn, target)
     out = [f"target {target}"]
     active = ledger.active_goals(conn, target)
     out.append(f"running goals: {len(active)}")
@@ -410,6 +429,9 @@ def status(conn: sqlite3.Connection, target: str) -> str:
     waiting = [p for p in proposals(target) if p["status"] == "waiting"]
     out.append(f"proposals waiting for Eli: {len(waiting)}")
     out += [f"  proposal {p['id']}: {p['headline']}" for p in waiting[:5]]
+    closed = [p for p in proposals(target) if p['status'] == 'closed']
+    out.append(f"closed proposals: {len(closed)}")
+    out += [f"  closed {p['closed']}: {_line(p['headline'], 70)}" for p in closed[:3]]
     open_d = [d for d in ledger.list_decisions(conn, target) if not d["source"].startswith("boss-plan")]
     out.append(f"other open decisions: {len(open_d)}")
     out += [f"  decision {d['id']}: {_line(d['question'])}" for d in open_d[:5]]
