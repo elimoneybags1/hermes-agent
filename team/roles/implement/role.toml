@@ -22,3 +22,20 @@ run_budget_s = 900
 # <provider>:<id> pins one catalog model. Attempt n uses candidate n.
 candidates = ["tier-medium", "tier-complex"]
 pinned = ""
+
+# Merged into the profile's config.yaml after the base lock. A worker's every
+# tool call re-sends its whole context, so: compact at a quarter of the
+# window instead of half, and keep only the tools a part uses in the schema
+# the model sees on every call (the rest sit behind tool_search; the Team
+# plugin refuses kanban_show and friends outright).
+[hermes.compression]
+threshold = 0.25
+
+[hermes.tools.tool_search]
+defer = [
+  "session_search", "todo_list", "process_manage", "skill_manage",
+  "kanban_show", "kanban_list", "kanban_complete", "kanban_comment",
+  "kanban_create", "kanban_link", "kanban_schedule", "kanban_unblock",
+  "kanban_heartbeat", "kanban_request_changes",
+  "kanban_attach", "kanban_attach_url", "kanban_attachments",
+]

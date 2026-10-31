@@ -41,7 +41,11 @@ def test_register_binds_both_hooks_and_the_boss_tools():
             tools.append(kw["name"])
 
     module.register(Ctx())
-    assert set(bound) == {"post_api_request", "api_request_error"}
+    assert set(bound) == {
+        "post_api_request",
+        "api_request_error",
+        "pre_tool_call",
+    }
     assert "team_propose" in tools and len(tools) == 7
 
 
