@@ -122,10 +122,15 @@ def create_task(
     max_runtime_s: int | None = None,
     max_retries: int | None = None,
     skills: tuple[str, ...] = (),
+    toolsets: tuple[str, ...] = (),
     parents: tuple[str, ...] = (),
     runner: Runner = subprocess.run,
 ) -> dict:
-    """Create a task and return it (has ``id`` and ``status``)."""
+    """Create a task and return it (has ``id`` and ``status``).
+
+    ``toolsets`` narrows the assignee profile's toolsets for this task only
+    (Team's ``[team]`` patch to Hermes kanban); empty means the profile's.
+    """
     if not isinstance(model, ModelChoice) and model is not None:
         raise TypeError(
             "model must be a team.catalog.ModelChoice (never a free-form string)"
@@ -155,6 +160,8 @@ def create_task(
         args += ["--max-retries", str(max_retries)]
     for skill in skills:
         args += ["--skill", skill]
+    for toolset in toolsets:
+        args += ["--toolset", toolset]
     if model is not None:
         args += ["--provider", model.provider, "--model", model.model]
     task = _json(_run(args, runner), "create")

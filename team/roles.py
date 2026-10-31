@@ -15,7 +15,9 @@ from pathlib import Path
 
 from team import catalog
 
-HARNESSES = ("hermes", "hermes-subscription")
+# "claude": a role Team itself runs through Claude Code on the subscription
+# (the lead); it has no Hermes profile and is never a kanban assignee.
+HARNESSES = ("hermes", "hermes-subscription", "claude")
 STATUSES = ("active", "planned")
 # Hermes toolsets a worker may be given (platform_toolsets.cli).
 TOOLSETS = (
@@ -33,6 +35,8 @@ TOOLSETS = (
     "kanban",
     "team",
 )
+# Claude Code tool groups a "claude" role may name (team.claude_roles.TOOL_MAP).
+CLAUDE_TOOLS = ("read-only", "file", "terminal", "todo", "skills")
 REQUIRED = ("name", "title", "does", "graded_by", "status")
 
 
@@ -71,8 +75,9 @@ def load(root: Path, name: str, cat: dict | None = None) -> dict:
     harness = role.get("runs_on", {}).get("harness")
     if harness not in HARNESSES:
         raise RoleError(f"role {name}: runs_on.harness must be one of {HARNESSES}")
+    known = CLAUDE_TOOLS if harness == "claude" else TOOLSETS
     for tool in role.get("tools", []):
-        if tool not in TOOLSETS:
+        if tool not in known:
             raise RoleError(f"role {name}: unknown toolset {tool!r}")
     budget = role.setdefault("budget", {})
     budget.setdefault("max_turns", 40)
@@ -96,6 +101,20 @@ def load(root: Path, name: str, cat: dict | None = None) -> dict:
                 raise RoleError(f"role {name}: candidate {spec!r} refused: {e}") from e
     role["skills"] = skills(root, name)
     return role
+
+
+def skill_summaries(root: Path, name: str) -> dict[str, str]:
+    """Skill name -> the ``description`` line of its SKILL.md front matter (or "")."""
+    out = {}
+    for skill in skills(root, name):
+        text = (roles_dir(root) / name / "skills" / skill / "SKILL.md").read_text()
+        desc = ""
+        if text.startswith("---"):
+            for line in text.split("---", 2)[1].splitlines():
+                if line.strip().startswith("description:"):
+                    desc = line.split(":", 1)[1].strip().strip("'\"")
+        out[skill] = desc
+    return out
 
 
 def load_all(root: Path, cat: dict | None = None) -> list[dict]:

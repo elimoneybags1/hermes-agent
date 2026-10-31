@@ -44,7 +44,19 @@ def test_init_creates_every_table_with_the_agreed_columns(conn):
         "task_ref",
         "model_choice",
         "part_id",
+        "order_id",
     ]
+    assert cols("orders") == [
+        "id",
+        "goal_id",
+        "part_id",
+        "version",
+        "body",
+        "body_bytes",
+        "lead_job_id",
+        "created",
+    ]
+    assert cols("diagnoses")[-4:] == ["note", "action", "lead_job_id", "created"]
     assert cols("calls") == [
         "id",
         "job_id",
@@ -381,3 +393,35 @@ def test_violations(conn):
     assert ledger.violations_for(conn, "t_2") == []
     with pytest.raises(ValueError):
         ledger.record_violation(conn, "bad-vibes", "x")
+
+
+def test_init_adds_order_id_to_an_old_ledger(tmp_path):
+    c = ledger.connect(tmp_path / "old.db")
+    c.executescript(
+        "CREATE TABLE jobs (id INTEGER PRIMARY KEY, target TEXT, target_commit TEXT,"
+        " role TEXT, role_version TEXT, attempt INTEGER, started TEXT, ended TEXT,"
+        " outcome TEXT, grader TEXT, grader_detail TEXT, task_ref TEXT,"
+        " model_choice TEXT, part_id INTEGER)"
+    )
+    ledger.init(c)
+    ledger.init(c)  # twice is fine
+    assert "order_id" in [r["name"] for r in c.execute("PRAGMA table_info(jobs)")]
+
+
+def test_orders_version_per_goal_and_rates_split_by_order(conn):
+    goal = ledger.create_goal(conn, "t", "g", "implement", "team/g", "/w", "true")
+    first = ledger.create_order(conn, goal, {"steps": ["a"]})
+    second = ledger.create_order(conn, goal, {"steps": ["b"]})
+    latest = ledger.latest_order(conn, goal)
+    assert latest["id"] == second and latest["version"] == 2
+    assert latest["order"] == {"steps": ["b"]}
+    assert ledger.latest_order(conn, goal + 1) is None
+    with_order = ledger.start_job(conn, "t", "c", "implement", "v", order_id=first)
+    without = ledger.start_job(conn, "t", "c", "implement", "v")
+    ledger.finish_job(conn, with_order, "pass", "check")
+    ledger.finish_job(conn, without, "fail", "check")
+    assert ledger.order_rates(conn) == {"with order": (1, 1), "without": (0, 1)}
+    ledger.add_diagnosis(conn, goal, without, "no commit", "commit it", "retry")
+    assert ledger.list_diagnoses(conn, goal)[0]["action"] == "retry"
+    with pytest.raises(ValueError):
+        ledger.add_diagnosis(conn, goal, None, "x", "y", "shrug")

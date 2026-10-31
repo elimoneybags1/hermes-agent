@@ -1,0 +1,14 @@
+name = "lead"
+title = "Lead"
+does = "Splits a goal into parts and writes each free worker's work order: steps, owned files, the code to read, toolsets, skills and model. Reads failures and steers the retry."
+graded_by = "Team validates every plan and diagnosis in code (team/lead.py) before a worker sees it; the parts' checks grade the outcome."
+status = "active"
+# Read, Grep, Glob only: the lead never edits.
+tools = ["read-only"]
+
+[runs_on]
+harness = "claude"
+
+[budget]
+max_turns = 30
+run_budget_s = 900

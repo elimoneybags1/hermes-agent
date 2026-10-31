@@ -3,7 +3,7 @@
 team attach <path> [--name N] [--check CMD]   register a repo as a target
 team targets                                   list targets
 team roles list|sync [ROLE]                    the roster; sync profiles
-team goal <target> "<goal>" [--role R] [--model SPEC] [--check CMD]
+team goal <target> "<goal>" [--no-lead] [--role R] [--check CMD]
 team run [--once] [--interval S]               the loop
 team ledger [--target T] [--all] [--json]      jobs and goals
 team decide list|answer <id> "<text>"|dismiss <id>
@@ -97,6 +97,11 @@ def _catalog_or_none() -> dict | None:
 
 def cmd_goal(args) -> int:
     conn = _conn()
+    if settings.load(ROOT)["lead.enabled"] and not args.no_lead:
+        for g in run.plan_goal(ROOT, conn, args.target, args.goal, check=args.check):
+            state = f"task {g['current_task']}" if g["current_task"] else "waits"
+            print(f"goal {g['id']}: {state} on {g['branch']} ({g['role']}): {g['goal'].splitlines()[0][:60]}")
+        return 0
     goal = run.start_goal(
         ROOT, conn, args.target, args.goal, role=args.role, check=args.check
     )
@@ -124,6 +129,11 @@ def cmd_ledger(args) -> int:
         return 0
     passes, total = ledger.pass_rate(conn, args.target)
     print(f"pass {passes}/{total}")
+    rates = ledger.order_rates(conn, args.target)
+    print(
+        "implement: "
+        + " · ".join(f"{name} {p}/{n}" for name, (p, n) in rates.items())
+    )
     for g in goals:
         state = (
             g["outcome"] or f"attempt {g['attempt']} {g['current_task'] or ''}".rstrip()
@@ -236,8 +246,13 @@ def build_parser() -> argparse.ArgumentParser:
     g = sub.add_parser("goal", help="hand Team a goal on a target")
     g.add_argument("target")
     g.add_argument("goal")
-    g.add_argument("--role", default="implement")
+    g.add_argument("--role", default="implement", help="with --no-lead")
     g.add_argument("--check")
+    g.add_argument(
+        "--no-lead",
+        action="store_true",
+        help="skip the lead: one task with a plain brief (the base rate to compare against)",
+    )
     g.set_defaults(func=cmd_goal)
 
     rn = sub.add_parser("run", help="dispatch, grade, land, escalate: the loop")

@@ -23,7 +23,9 @@ team/bin/team ledger --target team --all
 team/bin/team decide list
 ```
 
-`goal` queues work; `run` dispatches it. Repeat `run --once` to advance completed
+`goal` asks the lead (Claude) to split the goal into parts and write each
+worker's order, then queues the parts; `goal --no-lead` queues one task with a
+plain brief. See [LEAD.md](LEAD.md). `run` dispatches the work. Repeat `run --once` to advance completed
 workers, or use `run` for the continuous loop. `--interval` controls the delay
 between ticks. `goal` accepts `--role` and `--check`; model candidates come from
 the role manifest, not a `--model` CLI argument.

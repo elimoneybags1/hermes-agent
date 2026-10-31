@@ -34,6 +34,24 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
     ),
     "escalation.claude_max_turns": (int, 60, "Turn limit for a Claude Code attempt."),
     "escalation.claude_timeout_s": (int, 1800, "Time limit for a Claude Code attempt."),
+    "lead.enabled": (
+        bool,
+        True,
+        "Goals go to the lead first: it splits them into parts and writes each worker's order.",
+    ),
+    "lead.diagnose": (
+        bool,
+        True,
+        "After a failed check, the lead reads the failure and steers the retry.",
+    ),
+    "lead.max_turns": (int, 30, "Turn limit for one lead call (plan or diagnosis)."),
+    "lead.timeout_s": (int, 900, "Time limit for one lead call."),
+    "lead.max_parts": (int, 6, "Most parts the lead may split one goal into."),
+    "lead.context_bytes": (
+        int,
+        24000,
+        "Most code excerpt bytes copied into one work order.",
+    ),
     "ask.block_after_claude_fails": (
         bool,
         True,

@@ -8,6 +8,13 @@ preflight (gate audit, catalog check, spend guard), let kanban dispatch, then
 step each goal Team tracks. What Team tracks lives in the ledger's ``goals``
 table, so ``team run`` can stop and restart at any point.
 
+With ``lead.enabled``, ``team goal`` asks the lead first (``team.lead``): it
+splits the goal into parts, one goal row each, and writes every part's work
+order. A worker's task body is then the rendered order, and its toolsets,
+skills and first model are the order's. A part that depends on others waits
+until they have landed, then starts from the new base. After a failed check
+the lead diagnoses the attempt and the retry carries its note.
+
 "Done" is decided by code: the target's check in the worktree after ``base``
 is merged in, only owned files changed, work committed. Model calls are
 recorded by the Team Hermes plugin as they happen; grading attaches them to
@@ -40,6 +47,7 @@ from team import (
     claude_run,
     grade,
     kanban,
+    lead,
     ledger,
     profiles,
     roles,
@@ -312,6 +320,8 @@ class Loop:
     def step(self, goal: dict, full: dict | None = None) -> bool:
         """Move one goal along as far as its state allows; True when it acted."""
         job = ledger.get_job(self.conn, goal["job_id"]) if goal["job_id"] else None
+        if job is None and goal.get("part_id"):
+            return self._start_when_ready(goal)
         if job is None:
             created = goal.get("created")
             if (
@@ -455,28 +465,49 @@ class Loop:
             raise RunError(
                 f"missing Hermes profile {goal['role']}; run `team roles sync` first"
             )
-        choice = self._choice(role, attempt)
+        order = ledger.latest_order(self.conn, goal["id"])
+        if order is not None and attempt == 1:
+            choice = catalog.resolve(order["order"]["model"], self.cat)
+        else:
+            choice = self._choice(role, attempt)
         grade.ensure_worktree(
             self._repo(goal), goal["worktree"], goal["branch"], runner=self.runner
         )
         title = goal["goal"].splitlines()[0][:80]
         if attempt > 1:
             title += f" (attempt {attempt})"
+        if order is not None:
+            body = lead.render(
+                order["order"],
+                goal,
+                Path(goal["worktree"]),
+                self.cfg["lead.context_bytes"],
+                failure=failure,
+                attempt=attempt,
+            )
+            skills = tuple(order["order"]["skills"])
+            toolsets = tuple(order["order"]["toolsets"])
+        else:
+            body = brief(goal, attempt, failure, self._owned(goal))
+            skills, toolsets = tuple(role["skills"]), ()
         task = kanban.create_task(
             goal["target"],
             title,
-            brief(goal, attempt, failure, self._owned(goal)),
+            body,
             assignee=goal["role"],
             model=choice,
             workspace=f"worktree:{goal['worktree']}",
             branch=goal["branch"],
             max_runtime_s=role["budget"]["run_budget_s"],
             max_retries=1,
-            skills=tuple(role["skills"]),
+            skills=skills,
+            toolsets=toolsets,
             parents=parents,
             runner=self.runner,
         )
-        job = self._start_job(goal, attempt, task["id"], choice)
+        job = self._start_job(
+            goal, attempt, task["id"], choice, order["id"] if order else None
+        )
         ledger.update_goal(
             self.conn, goal["id"], attempt=attempt, current_task=task["id"], job_id=job
         )
@@ -550,6 +581,29 @@ class Loop:
         goal = ledger.get_goal(self.conn, goal["id"])
         role = self._role(goal["role"])
         nxt = goal["attempt"] + 1
+        diagnosis = (
+            self._diagnose(goal, job, detail)
+            if nxt <= role["escalation"]["after_failures"]
+            else None
+        )
+        if diagnosis is not None and diagnosis["action"] == "ask":
+            self._give_up(
+                goal, f"the lead asks Eli: {diagnosis['question']}", diagnosis["cause"]
+            )
+            return
+        if diagnosis is not None and diagnosis["action"] == "escalate":
+            if self.cfg["escalation.claude"]:
+                self._claude_attempt(goal, nxt, detail)
+            else:
+                self._give_up(goal, "the lead says a free model cannot do this", detail)
+            return
+        if diagnosis is not None:
+            kanban.comment(
+                goal["target"],
+                task_id,
+                self._lead_comment(goal, diagnosis),
+                runner=self.runner,
+            )
         if nxt <= role["escalation"]["after_failures"] and status == "review":
             # Same task, reopened: the worker sees the failure in its comments.
             choice = self._choice(role, nxt)
@@ -603,9 +657,20 @@ class Loop:
         decision_file.parent.mkdir(parents=True, exist_ok=True)
         decision_file.unlink(missing_ok=True)
         owned = self._owned(goal)
+        order = ledger.latest_order(self.conn, goal["id"])
         result = claude_run.run(
             goal["worktree"],
-            brief(goal, attempt, failure, owned, claude=True),
+            lead.render(
+                order["order"],
+                goal,
+                Path(goal["worktree"]),
+                self.cfg["lead.context_bytes"],
+                failure=failure,
+                attempt=attempt,
+                claude=True,
+            )
+            if order is not None
+            else brief(goal, attempt, failure, owned, claude=True),
             max_turns=self.cfg["escalation.claude_max_turns"],
             timeout_s=self.cfg["escalation.claude_timeout_s"],
             runner=self.runner,
@@ -807,7 +872,12 @@ class Loop:
         ledger.finish_goal(self.conn, goal["id"], "pass", f"landed {sha}")
 
     def _start_job(
-        self, goal: dict, attempt: int, task_ref: str, choice: catalog.ModelChoice
+        self,
+        goal: dict,
+        attempt: int,
+        task_ref: str,
+        choice: catalog.ModelChoice,
+        order_id: int | None = None,
     ) -> int:
         return ledger.start_job(
             self.conn,
@@ -819,7 +889,146 @@ class Loop:
             task_ref=task_ref,
             model_choice=choice.as_dict(),
             part_id=goal.get("part_id"),
+            order_id=order_id,
         )
+
+    # -- the lead ----------------------------------------------------------------
+
+    def _start_when_ready(self, goal: dict) -> bool:
+        """A planned part starts once every part it depends on has landed."""
+        part = ledger.get_part(self.conn, goal["part_id"])
+        waiting = []
+        for dep_id in part["depends_on"] if part else []:
+            dep = ledger.get_part(self.conn, dep_id)
+            if dep and dep["stage"] == "done":
+                continue
+            failed = [
+                g
+                for g in ledger.goals_for_part(self.conn, dep_id)
+                if g["outcome"] and g["outcome"] != "pass"
+            ]
+            if failed:
+                ledger.finish_goal(
+                    self.conn,
+                    goal["id"],
+                    "fail",
+                    f"part {dep_id} it depends on did not land: {failed[-1]['detail']}",
+                )
+                return True
+            waiting.append(dep_id)
+        if waiting:
+            return False
+        repo, base = self._repo(goal), goal.get("base") or "main"
+        if not grade.branch_exists(repo, goal["branch"], self.runner):
+            grade.create_worktree(
+                repo,
+                goal["target"],
+                goal["branch"].removeprefix("team/"),
+                base=base,
+                runner=self.runner,
+            )
+        self.free_attempt(goal, 1)
+        return True
+
+    def _lead_job(self, target: str, commit: str, why: str) -> int:
+        return ledger.start_job(
+            self.conn,
+            target,
+            commit,
+            lead.ROLE,
+            roles.version(self.root, lead.ROLE),
+            task_ref="claude:",
+            model_choice=catalog.ModelChoice(
+                "claude", "subscription", "claude", why
+            ).as_dict(),
+        )
+
+    def _lead_call(self, job_id: int, result: dict) -> None:
+        usage = result.get("usage") or {}
+        ledger.set_task_ref(
+            self.conn, job_id, f"claude:{result.get('session_id') or 'unknown'}"
+        )
+        ledger.record_call(
+            self.conn,
+            job_id,
+            "subscription",
+            "claude",
+            lead.ROLE,
+            usage.get("input_tokens"),
+            usage.get("output_tokens"),
+            result.get("duration_ms"),
+            True,
+            session_id=result.get("session_id"),
+            profile=lead.ROLE,
+            response_model="claude",
+        )
+
+    def _diagnose(self, goal: dict, job: dict, failure: str) -> dict | None:
+        """The lead's reading of a failed check, or None (no order, turned off, or unavailable)."""
+        order = ledger.latest_order(self.conn, goal["id"])
+        if order is None or not self.cfg["lead.diagnose"]:
+            return None
+        repo, base = self._repo(goal), goal.get("base") or "main"
+        diff = grade._git(
+            repo, "diff", f"{base}...{goal['branch']}", runner=self.runner
+        ).stdout or "(no diff)"
+        lead_job = self._lead_job(goal["target"], job["target_commit"], "diagnosis")
+        try:
+            with lead.workspace(
+                repo, goal["target"], f"diagnose-{goal['id']}", goal["branch"], self.runner
+            ) as tree:
+                found = lead.ask(
+                    self.root,
+                    tree,
+                    lambda refused, _prev: lead.diagnose_prompt(
+                        order["order"], failure, diff, goal["attempt"], refused=refused
+                    ),
+                    lead.DIAGNOSIS_SCHEMA,
+                    lambda data: lead.validate_diagnosis(data, tree),
+                    self.cfg,
+                    self.runner,
+                    on_call=lambda r: self._lead_call(lead_job, r),
+                )
+                if found["action"] == "retry":
+                    revised = dict(order["order"], lead_note=found["note"])
+                    if found["steps"]:
+                        revised["steps"] = found["steps"]
+                    if found["context"]:
+                        revised["context"] = found["context"]
+                    ledger.create_order(
+                        self.conn, goal["id"], revised, goal.get("part_id"), lead_job
+                    )
+                    found["excerpts"] = lead.excerpts(
+                        found["context"], tree, self.cfg["lead.context_bytes"]
+                    )[0]
+        except (lead.LeadError, grade.GradeError) as e:
+            ledger.finish_job(self.conn, lead_job, "error", "lead", str(e))
+            self.log(f"goal {goal['id']}: no diagnosis, retrying without it: {e}")
+            return None
+        ledger.finish_job(
+            self.conn, lead_job, "pass", "lead-validate", f"{found['action']}: {found['cause']}"
+        )
+        ledger.add_diagnosis(
+            self.conn,
+            goal["id"],
+            job["id"],
+            found["cause"],
+            found["note"],
+            found["action"],
+            lead_job,
+        )
+        self.log(f"goal {goal['id']}: lead says {found['action']}: {found['cause']}")
+        return found
+
+    def _lead_comment(self, goal: dict, diagnosis: dict) -> str:
+        text = f"LEAD: {diagnosis['cause']}\n\n{diagnosis['note']}"
+        if diagnosis["steps"]:
+            text += "\n\nDo this instead:\n" + lead._bullets(
+                diagnosis["steps"], numbered=True
+            )
+        if diagnosis.get("excerpts"):
+            text += "\n\nCode you need:\n\n" + diagnosis["excerpts"]
+        return text
 
 
 def start_goal(
@@ -865,6 +1074,121 @@ def start_goal(
         )
         raise
     return ledger.get_goal(conn, goal_id)
+
+
+def plan_goal(
+    root: Path,
+    conn: sqlite3.Connection,
+    target: str,
+    goal: str,
+    *,
+    check: str | None = None,
+    runner: Runner = subprocess.run,
+    base: str = "main",
+    cat: dict | None = None,
+    log: Callable[[str], None] = _log,
+) -> list[dict]:
+    """``team goal`` with the lead: plan the goal into parts; one goal row per part.
+
+    Parts with no dependencies get their worktree and first task now; the rest
+    start in ``team run`` once what they depend on has landed.
+    """
+    record = targets.require(target)
+    loop = Loop(root, conn, runner=runner, cat=cat, log=log, preflight=None)
+    check_cmd = check if check is not None else settings.check_for(root, target)
+    repo = Path(record["path"])
+    kanban.ensure_board(target, runner=runner)
+    menu = lead.menu(root, loop.cat)
+    if not menu:
+        raise RunError("no active hermes role for the lead to assign")
+    commit = grade._must(
+        grade._git(repo, "rev-parse", base, runner=runner), "git rev-parse failed"
+    )
+    slug = _free_slug(repo, target, slugify(goal), runner)
+    lead_job = loop._lead_job(target, commit, "plan")
+    try:
+        with lead.workspace(repo, target, f"plan-{slug}", base, runner) as tree:
+            parts = lead.ask(
+                root,
+                tree,
+                lambda refused, previous: lead.plan_prompt(
+                    goal,
+                    check_cmd,
+                    menu,
+                    loop.cfg["lead.max_parts"],
+                    refused=refused,
+                    previous=previous,
+                ),
+                lead.PLAN_SCHEMA,
+                lambda data: _with_summary(data, tree, menu, loop),
+                loop.cfg,
+                runner,
+                on_call=lambda r: loop._lead_call(lead_job, r),
+            )
+    except (lead.LeadError, grade.GradeError) as e:
+        ledger.finish_job(conn, lead_job, "error", "lead", str(e))
+        hint = (
+            " (Claude usage limit; try later, or `team goal --no-lead`)"
+            if getattr(e, "usage_limited", False)
+            else ""
+        )
+        raise RunError(f"the lead could not plan this goal: {e}{hint}") from e
+    summary, parts = parts
+    ledger.finish_job(
+        conn, lead_job, "pass", "lead-validate", f"{len(parts)} parts: {summary}"[:500]
+    )
+    plan_id = ledger.create_plan(
+        conn, target, goal.splitlines()[0][:120], summary=summary, status="active"
+    )
+    part_ids: dict[str, int] = {}
+    goals = []
+    for n, part in enumerate(parts, 1):
+        pslug = slug if len(parts) == 1 else f"{slug[:34]}-p{n}"
+        branch = f"team/{pslug}"
+        part_ids[part["key"]] = ledger.create_part(
+            conn,
+            plan_id,
+            target,
+            part["title"],
+            stage="implement",
+            branch=branch,
+            depends_on=[part_ids[d] for d in part["depends_on"]],
+            owned_paths=part["owned_paths"],
+        )
+        goal_id = ledger.create_goal(
+            conn,
+            target,
+            part["title"] if len(parts) > 1 else goal,
+            part["role"],
+            branch,
+            str(grade.worktree_path(target, pslug)),
+            check_cmd,
+            part_id=part_ids[part["key"]],
+            base=base,
+        )
+        ledger.create_order(
+            conn, goal_id, dict(part, goal=goal), part_ids[part["key"]], lead_job
+        )
+        if not part["depends_on"]:
+            try:
+                grade.create_worktree(repo, target, pslug, base=base, runner=runner)
+                loop.free_attempt(ledger.get_goal(conn, goal_id), 1)
+            except Exception as e:
+                ledger.finish_goal(
+                    conn, goal_id, "error", f"could not create the first task: {e}"
+                )
+                raise
+        goals.append(ledger.get_goal(conn, goal_id))
+    return goals
+
+
+def _with_summary(data: Any, tree: Path, menu: dict, loop: Loop) -> tuple:
+    """``validate_plan`` for ``lead.ask``: ((summary, parts), refusals)."""
+    parts, errors = lead.validate_plan(
+        data, tree, menu, loop.cfg["lead.max_parts"], loop.cat
+    )
+    summary = str((data or {}).get("summary") or "") if isinstance(data, dict) else ""
+    return ((summary, parts), errors)
 
 
 def run_loop(

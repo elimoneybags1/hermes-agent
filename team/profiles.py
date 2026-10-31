@@ -272,6 +272,8 @@ def sync(
     """Make the role's profile match its files; returns what changed."""
     root = Path(root)
     role = roles.load(root, role_name, cat)
+    if role["runs_on"]["harness"] == "claude":
+        return []  # runs through Claude Code, not a Hermes profile
     changes: list[str] = []
     if write_root_config(root):
         changes.append("root config.yaml")

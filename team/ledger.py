@@ -18,6 +18,10 @@ Tables (all present from day one, see PLAN.md Phase 4):
 - ``pauses``: a target paused (free quota) until a time.
 - ``violations``: anything that reached a non-catalog model or an
   off-gateway URL.
+- ``orders``: the lead's work order for a part (steps, owned files, context,
+  toolsets, skills, model), as validated JSON; ``jobs.order_id`` links the
+  attempts that worked from it.
+- ``diagnoses``: the lead's reading of a failed attempt before the retry.
 """
 
 from __future__ import annotations
@@ -57,7 +61,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     grader_detail TEXT,
     task_ref      TEXT,
     model_choice  TEXT,
-    part_id       INTEGER REFERENCES parts(id)
+    part_id       INTEGER REFERENCES parts(id),
+    order_id      INTEGER REFERENCES orders(id)
 );
 
 CREATE TABLE IF NOT EXISTS calls (
@@ -170,7 +175,31 @@ CREATE TABLE IF NOT EXISTS violations (
     detail   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS orders (
+    id          INTEGER PRIMARY KEY,
+    goal_id     INTEGER NOT NULL REFERENCES goals(id),
+    part_id     INTEGER REFERENCES parts(id),
+    version     INTEGER NOT NULL DEFAULT 1,
+    body        TEXT NOT NULL,
+    body_bytes  INTEGER NOT NULL,
+    lead_job_id INTEGER REFERENCES jobs(id),
+    created     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS diagnoses (
+    id          INTEGER PRIMARY KEY,
+    goal_id     INTEGER NOT NULL REFERENCES goals(id),
+    job_id      INTEGER REFERENCES jobs(id),
+    cause       TEXT NOT NULL,
+    note        TEXT NOT NULL,
+    action      TEXT NOT NULL CHECK (action IN ('retry', 'escalate', 'ask')),
+    lead_job_id INTEGER REFERENCES jobs(id),
+    created     TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS calls_job_id ON calls(job_id);
+CREATE INDEX IF NOT EXISTS orders_goal_id ON orders(goal_id);
+CREATE INDEX IF NOT EXISTS diagnoses_goal_id ON diagnoses(goal_id);
 CREATE INDEX IF NOT EXISTS calls_task_ref ON calls(task_ref);
 CREATE INDEX IF NOT EXISTS goals_target ON goals(target);
 CREATE INDEX IF NOT EXISTS decisions_target_status ON decisions(target, status);
@@ -213,6 +242,12 @@ def init(conn: sqlite3.Connection) -> None:
     """Create every table and index. Safe to run on an existing ledger."""
     with conn:
         conn.executescript(SCHEMA)
+        # Columns added after the first ledgers were written.
+        have = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+        if "order_id" not in have:
+            conn.execute(
+                "ALTER TABLE jobs ADD COLUMN order_id INTEGER REFERENCES orders(id)"
+            )
 
 
 def _check(value: str, allowed: tuple[str, ...], what: str) -> None:
@@ -233,6 +268,7 @@ def start_job(
     task_ref: str | None = None,
     model_choice: dict | None = None,
     part_id: int | None = None,
+    order_id: int | None = None,
 ) -> int:
     """Record that a job has started and return its id.
 
@@ -243,8 +279,8 @@ def start_job(
     with conn:
         cur = conn.execute(
             "INSERT INTO jobs (target, target_commit, role, role_version, attempt,"
-            " started, task_ref, model_choice, part_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " started, task_ref, model_choice, part_id, order_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 target,
                 target_commit,
@@ -255,6 +291,7 @@ def start_job(
                 task_ref,
                 json.dumps(model_choice) if model_choice is not None else None,
                 part_id,
+                order_id,
             ),
         )
     return cur.lastrowid
@@ -505,6 +542,16 @@ def active_goals(conn: sqlite3.Connection, target: str | None = None) -> list[di
         args.append(target)
     sql += " ORDER BY id"
     return [dict(row) for row in conn.execute(sql, args)]
+
+
+def goals_for_part(conn: sqlite3.Connection, part_id: int) -> list[dict]:
+    """Every goal row for a planned part, oldest first."""
+    return [
+        dict(r)
+        for r in conn.execute(
+            "SELECT * FROM goals WHERE part_id = ? ORDER BY id", (part_id,)
+        )
+    ]
 
 
 def get_goal(conn: sqlite3.Connection, goal_id: int) -> dict | None:
@@ -848,3 +895,88 @@ def violations_for(conn: sqlite3.Connection, task_ref: str) -> list[dict]:
             "SELECT * FROM violations WHERE task_ref = ? ORDER BY id", (task_ref,)
         )
     ]
+
+
+# --- the lead's orders and diagnoses -----------------------------------------
+
+
+def create_order(
+    conn: sqlite3.Connection,
+    goal_id: int,
+    order: dict,
+    part_id: int | None = None,
+    lead_job_id: int | None = None,
+) -> int:
+    """Store a validated work order for a goal; versions count up per goal."""
+    body = json.dumps(order, sort_keys=True)
+    with conn:
+        version = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM orders WHERE goal_id = ?",
+            (goal_id,),
+        ).fetchone()[0]
+        cur = conn.execute(
+            "INSERT INTO orders (goal_id, part_id, version, body, body_bytes,"
+            " lead_job_id, created) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (goal_id, part_id, version, body, len(body.encode()), lead_job_id, _now()),
+        )
+    return cur.lastrowid
+
+
+def latest_order(conn: sqlite3.Connection, goal_id: int) -> dict | None:
+    """The newest order for a goal: its row with ``order`` parsed, or None."""
+    row = conn.execute(
+        "SELECT * FROM orders WHERE goal_id = ? ORDER BY version DESC LIMIT 1",
+        (goal_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["order"] = json.loads(d.pop("body"))
+    return d
+
+
+def add_diagnosis(
+    conn: sqlite3.Connection,
+    goal_id: int,
+    job_id: int | None,
+    cause: str,
+    note: str,
+    action: str,
+    lead_job_id: int | None = None,
+) -> int:
+    _check(action, ("retry", "escalate", "ask"), "action")
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO diagnoses (goal_id, job_id, cause, note, action, lead_job_id,"
+            " created) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (goal_id, job_id, cause, note, action, lead_job_id, _now()),
+        )
+    return cur.lastrowid
+
+
+def list_diagnoses(conn: sqlite3.Connection, goal_id: int) -> list[dict]:
+    return [
+        dict(r)
+        for r in conn.execute(
+            "SELECT * FROM diagnoses WHERE goal_id = ? ORDER BY id", (goal_id,)
+        )
+    ]
+
+
+def order_rates(
+    conn: sqlite3.Connection, target: str | None = None, role: str = "implement"
+) -> dict[str, tuple[int, int]]:
+    """(passes, finished) for a role's attempts with a lead's order and without."""
+    out = {}
+    for name, cond in (("with order", "order_id IS NOT NULL"), ("without", "order_id IS NULL")):
+        sql = (
+            "SELECT COALESCE(SUM(outcome = 'pass'), 0), COUNT(*) FROM jobs"
+            f" WHERE role = ? AND outcome IS NOT NULL AND {cond}"
+        )
+        args: list = [role]
+        if target is not None:
+            sql += " AND target = ?"
+            args.append(target)
+        p, n = conn.execute(sql, args).fetchone()
+        out[name] = (int(p), int(n))
+    return out
