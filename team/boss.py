@@ -430,8 +430,8 @@ def status(conn: sqlite3.Connection, target: str) -> str:
     out.append(f"proposals waiting for Eli: {len(waiting)}")
     out += [f"  proposal {p['id']}: {p['headline']}" for p in waiting[:5]]
     closed = [p for p in proposals(target) if p['status'] == 'closed']
-    out.append(f"closed proposals: {len(closed)}")
-    out += [f"  closed {p['closed']}: {_line(p['headline'], 70)}" for p in closed[:3]]
+    for p in closed[:5]:
+        out.append(f"closed: {_line(p['headline'], 80)}, {p['closed'][:10]}")
     open_d = [d for d in ledger.list_decisions(conn, target) if not d["source"].startswith("boss-plan")]
     out.append(f"other open decisions: {len(open_d)}")
     out += [f"  decision {d['id']}: {_line(d['question'])}" for d in open_d[:5]]

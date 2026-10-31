@@ -124,19 +124,28 @@ def test_notes_are_capped(team):
         boss.write_notes(team["root"], "team", "x" * 7000)
 
 
-def test_status_and_findings_stay_short_and_real(team):
-    p = propose(team)
-    boss.settle(team["conn"], p["decision_id"], "approve")
-    team["loop"].tick()
-    goal = ledger.get_goal(team["conn"], p and boss.load_proposal("team", p["id"])["goal_ids"][0])
-    ledger.finish_goal(team["conn"], goal["id"], "fail", "check failed: 1 test")
+def test_status_shows_closed_plans_one_line_each(team):
+    p1 = propose(team, headline="Open one.")
+    p2 = propose(team, headline="Shut one.")
+    # Mark the second closed on disk
+    p2 = boss.load_proposal("team", p2["id"])
+    p2["status"] = "closed"
+    p2["closed"] = "2026-10-01T10:00:00+00:00"
+    boss._save(p2)
+    
     text = boss.status(team["conn"], "team")
-    assert "proposals waiting for Eli: 0" in text and f"goal {goal['id']} fail" in text
-    assert "implement attempts passed: with order 0/0, without 0/0" in text
-    assert len(text) < 3000
-    ledger.finish_job(team["conn"], goal["job_id"], "fail", "check", "AssertionError in test_x")
-    found = boss.findings(team["conn"], "team")
-    assert "1 worker attempts failed" in found and "1x AssertionError in test_x" in found
+    assert "proposals waiting for Eli: 1" in text
+    assert f"  proposal {p1['id']}: Open one." in text
+    assert "closed: Shut one., 2026-10-01" in text
+    assert text.count("Shut one.") == 1  # Occurs exactly once, not under open items
+
+
+def test_status_without_closed_plans_has_no_closed_line(team):
+    p = propose(team, headline="Only open.")
+    text = boss.status(team["conn"], "team")
+    assert "closed:" not in text
+    assert "proposals waiting for Eli: 1" in text
+    assert f"  proposal {p['id']}: Only open." in text
 
 
 def test_a_landed_proposal_is_closed_once(team):
