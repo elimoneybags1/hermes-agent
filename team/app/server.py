@@ -52,17 +52,7 @@ class App:
             with _conn() as conn:
                 return board.board(conn, self.root)
         if path == "/api/inbox":
-            with _conn() as conn:
-                decisions = [d for d in ledger.list_decisions(conn) if not d["source"].startswith("boss-plan:")]
-                plans = []
-                for p in boss.proposals()[:30]:
-                    c = boss.card(p)
-                    if c["status"] == "waiting":
-                        d = ledger.get_decision(conn, c["decision_id"])
-                        if d and d["status"] == "answered":
-                            c["status"] = "accepted"  # team run releases it on its next tick
-                    plans.append(c)
-            return {"plans": plans, "decisions": decisions}
+            return self.inbox()
         if path == "/api/chat":
             return self.chat.view()
         if path == "/api/team":
@@ -78,25 +68,17 @@ class App:
     def post(self, path: str, d: dict) -> dict:
         parts = path.strip("/").split("/")
         if path == "/api/chat":
-            self.chat.send(str(d.get("text") or ""))
-            return {"ok": True}
+            lane = self.chat.send(str(d.get("text") or ""), to=str(d.get("to") or "auto"))
+            return {"ok": True, "to": lane}
         if path == "/api/chat/new":
             self.chat.new()
             return {"ok": True}
-        if len(parts) == 4 and parts[1] == "plans" and parts[3] == "sendback":
-            text = str(d.get("text") or "").strip()
-            if not text:
-                raise edit.EditError("say what should change")
-            if self.chat.view()["current"]:
-                raise chat_mod.Busy("the boss is still answering; send it back when it is done")
-            self._plan(int(parts[2]), None)
-            self.chat.send(f"I sent proposal {parts[2]} back without approving it. What should change: {text}\n"
-                           "Re-propose it with that changed.")
-            return {"ok": True}
+        if len(parts) == 6 and parts[1] == "plans" and parts[3] == "goals" and parts[5] in ("approve", "skip", "sendback"):
+            return self._goal(int(parts[2]), int(parts[4]), parts[5], str(d.get("text") or ""))
         if len(parts) == 4 and parts[1] == "plans" and parts[3] in ("approve", "dismiss"):
             return self._plan(int(parts[2]), "approve" if parts[3] == "approve" else None)
         if len(parts) == 4 and parts[1] == "decisions" and parts[3] in ("answer", "dismiss"):
-            return self._settle(int(parts[2]), str(d.get("answer")) if parts[3] == "answer" else None)
+            return self._decide(int(parts[2]), str(d.get("answer") or "") if parts[3] == "answer" else None)
         if path == "/api/team/settings":
             return {"path": edit.SETTINGS, "text": edit.settings_text(self.root, d.get("values") or {})}
         if path == "/api/team/review":
@@ -118,13 +100,68 @@ class App:
             return edit.undo(self.root, str(d.get("commit")), _cat())
         raise edit.EditError("not found", 404)
 
-    def _plan(self, plan_id: int, answer: str | None) -> dict:
+    def inbox(self) -> dict:
+        """Open projects first, then recent closed ones; the questions and other decisions beside them."""
+        with _conn() as conn:
+            decisions = []
+            for d in ledger.list_decisions(conn):
+                if d["source"].startswith(("boss-plan:", "boss-goal:")):
+                    continue
+                d["plan_id"] = boss.plan_of(d)
+                decisions.append(d)
+            plans = boss.flow(conn, limit=30)
+        plans.sort(key=lambda c: (c["status"] != "open", -c["id"]))
+        return {"plans": plans, "decisions": decisions, "waiting": boss.waiting()}
+
+    def _project(self, plan_id: int) -> dict:
         p = next((x for x in boss.proposals() if x["id"] == plan_id), None)
         if p is None:
-            raise edit.EditError(f"no plan {plan_id}", 404)
-        if p["status"] != "waiting":
-            raise edit.EditError(f"plan {plan_id} is {p['status']}", 409)
-        return self._settle(p["decision_id"], answer)
+            raise edit.EditError(f"no project {plan_id}", 404)
+        if p["status"] != "open":
+            raise edit.EditError(f"project {plan_id} is {p['status']}", 409)
+        return p
+
+    def _plan(self, plan_id: int, answer: str | None) -> dict:
+        """Approve or skip every goal of the project still waiting."""
+        p = self._project(plan_id)
+        with _conn() as conn:
+            try:
+                return {"ok": True, "goals": boss.settle_goals(conn, p, answer)}
+            except boss.BossError as e:
+                raise edit.EditError(str(e), 409) from None
+
+    def _goal(self, plan_id: int, n: int, verb: str, text: str) -> dict:
+        p = self._project(plan_id)
+        if verb == "sendback":
+            with _conn() as conn:
+                try:
+                    g = boss.send_back(conn, p["target"], plan_id, n, text)
+                except boss.BossError as e:
+                    raise edit.EditError(str(e), 409) from None
+            self.chat.note(
+                f"Eli sent goal {n} of project {plan_id} back without approving it ({g['goal'][:120]}). "
+                f"What should change: {g['note']}\nRe-propose it with team_propose(project={plan_id}) with that changed."
+            )
+            return {"ok": True}
+        try:
+            g = boss.goal_of(p, n)
+        except boss.BossError as e:
+            raise edit.EditError(str(e), 404) from None
+        return self._settle(g["decision_id"], "approve" if verb == "approve" else None)
+
+    def _decide(self, decision_id: int, answer: str | None) -> dict:
+        """Answer or dismiss a card; a question from the boss carries the answer back to it."""
+        if answer is not None and not answer.strip():
+            raise edit.EditError("pick an option or write an answer")
+        with _conn() as conn:
+            d = ledger.get_decision(conn, decision_id)
+        out = self._settle(decision_id, answer)
+        if d is not None and d["source"].startswith("boss-ask"):
+            if answer is None:
+                self.chat.note(f"Eli dismissed your question without answering it: {d['question']} Decide it yourself and go on.")
+            else:
+                self.chat.note(f"You asked: {d['question']} Eli answered: {answer.strip()}")
+        return out
 
     def _settle(self, decision_id: int, answer: str | None) -> dict:
         with _conn() as conn:

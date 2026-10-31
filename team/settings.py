@@ -58,6 +58,12 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
         6000,
         "Cap on the boss's project notes, so its standing context stays small.",
     ),
+    "aide.enabled": (
+        bool,
+        True,
+        "A free model (the aide role) answers questions in the chat; what it cannot answer "
+        "goes to the boss.",
+    ),
     "replay.size": (
         int,
         4,

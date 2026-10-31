@@ -50,7 +50,7 @@ def inbox() -> dict:
         decisions = [
             d
             for d in ledger.list_decisions(conn)
-            if not d["source"].startswith("boss-plan:")
+            if not d["source"].startswith(("boss-plan:", "boss-goal:"))
         ]
     return {"plans": [boss.card(p) for p in boss.proposals()[:30]], "decisions": decisions}
 
@@ -59,7 +59,7 @@ def _plan(plan_id: int) -> dict:
     p = next((x for x in boss.proposals() if x["id"] == plan_id), None)
     if p is None:
         raise HTTPException(404, f"no plan {plan_id}")
-    if p["status"] != "waiting":
+    if p["status"] != "open":
         raise HTTPException(409, f"plan {plan_id} is {p['status']}")
     return p
 
@@ -73,16 +73,34 @@ def _settle(decision_id: int, answer: str | None) -> dict:
     return {"ok": True}
 
 
+def _settle_goals(plan_id: int, answer: str | None) -> dict:
+    """Every goal of the plan still waiting for Eli; one goal with ``/goals/{n}``."""
+    p = _plan(plan_id)
+    with _conn() as conn:
+        try:
+            return {"ok": True, "goals": boss.settle_goals(conn, p, answer)}
+        except boss.BossError as e:
+            raise HTTPException(409, str(e)) from e
+
+
 @router.post("/plans/{plan_id}/approve")
 def approve(plan_id: int) -> dict:
-    p = _plan(plan_id)
-    return _settle(p["decision_id"], "approve")
+    return _settle_goals(plan_id, "approve")
 
 
 @router.post("/plans/{plan_id}/dismiss")
 def dismiss(plan_id: int) -> dict:
-    p = _plan(plan_id)
-    return _settle(p["decision_id"], None)
+    return _settle_goals(plan_id, None)
+
+
+@router.post("/plans/{plan_id}/goals/{n}/approve")
+def approve_goal(plan_id: int, n: int) -> dict:
+    return _settle(boss.goal_of(_plan(plan_id), n)["decision_id"], "approve")
+
+
+@router.post("/plans/{plan_id}/goals/{n}/skip")
+def skip_goal(plan_id: int, n: int) -> dict:
+    return _settle(boss.goal_of(_plan(plan_id), n)["decision_id"], None)
 
 
 @router.post("/decisions/{decision_id}/answer")

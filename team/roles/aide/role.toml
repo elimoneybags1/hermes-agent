@@ -1,0 +1,23 @@
+name = "aide"
+title = "Aide"
+does = "Answers Eli's questions about the project from the ledger and the notes, on a free model, so the boss is only called when something must be planned or decided."
+graded_by = "Code routes: a reply that starts with HANDOFF goes to the boss unchanged; the aide has no tool that proposes, approves or edits, so it can do nothing else wrong but be unhelpful, and Eli's 'Ask the boss' button is the recourse."
+status = "active"
+# Not a worker: the lead never assigns it a part.
+assignable = false
+# team-read is team_status, team_findings, team_notes_read, team_proposals.
+tools = ["team-read"]
+
+[runs_on]
+harness = "hermes"
+
+[budget]
+max_turns = 6
+run_budget_s = 180
+
+[models]
+candidates = ["tier-medium"]
+pinned = ""
+
+[hermes.compression]
+threshold = 0.25

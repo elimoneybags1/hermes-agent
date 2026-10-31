@@ -3,7 +3,7 @@
 Only a profile with ``team`` in its toolsets sees them (the boss). Each opens
 the ledger, does one thing, and returns short text: the boss pays for every
 character it reads, so nothing here dumps raw rows. There is deliberately no
-tool that approves or releases a proposal; that answer is Eli's.
+tool that approves or releases a goal; that answer is Eli's.
 """
 
 from __future__ import annotations
@@ -71,6 +71,7 @@ def notes_write(args: dict) -> str:
 
 def propose(args: dict) -> str:
     target = _target(args)
+    project = args.get("project")
     with _conn() as conn:
         p = boss.propose(
             _REPO,
@@ -80,26 +81,45 @@ def propose(args: dict) -> str:
             str(args.get("summary") or ""),
             list(args.get("goals") or []),
             notes=str(args.get("notes") or ""),
-            log=lambda _m: None,
+            project=int(project) if project not in (None, "", 0) else None,
         )
-    lines = [f"proposal {p['id']} is in Eli's inbox: {p['headline']}"]
-    for g in boss.card(p)["goals"]:
-        lines.append(f"goal {g['n']}: {g['plan']}")
-        for part in g["parts"]:
-            lines.append(
-                f"  - {part['title']} [{part['model']}; {', '.join(part['toolsets'])}; "
-                f"owns {', '.join(part['owned_paths'])}]"
-            )
-    for w in p.get("warnings") or []:
-        lines.append(f"warning: {w}")
-    return "\n".join(lines)
+    new = p["goals"][-len(args.get("goals") or []):]
+    nums = ", ".join(str(g["n"]) for g in new)
+    return (
+        f"project {p['id']}: goal{'s' if len(new) > 1 else ''} {nums} are cards in Eli's inbox now. "
+        "He approves, skips or sends each back; an approved goal is drafted by the lead and starts "
+        f"within minutes. Add more with project={p['id']}. Do not wait for him."
+    )
+
+
+def ask(args: dict) -> str:
+    target = _target(args)
+    project = args.get("project")
+    with _conn() as conn:
+        d = boss.ask(
+            conn,
+            target,
+            str(args.get("question") or ""),
+            list(args.get("options") or []),
+            str(args.get("recommendation") or ""),
+            context=str(args.get("context") or ""),
+            project=int(project) if project not in (None, "", 0) else None,
+        )
+    return f"question {d} is a card in Eli's inbox; his answer arrives as your next message. End your turn."
 
 
 def proposals(args: dict) -> str:
     rows = boss.proposals(_target(args))[:10]
     if not rows:
-        return "(no proposals)"
-    return "\n".join(f"proposal {p['id']} {p['status']}: {p['headline']}" for p in rows)
+        return "(no projects)"
+    out = []
+    for p in rows:
+        out.append(f"project {p['id']} {p['status']}: {p['headline']}")
+        out += [
+            f"  goal {g['n']} {g['status']}: {g['goal'][:70]}" + (f" (sent back: {g['note']})" if g.get("note") else "")
+            for g in p["goals"]
+        ]
+    return "\n".join(out)
 
 
 def suggest(args: dict) -> str:
@@ -169,28 +189,46 @@ TOOLS = [
     ),
     (
         "team_propose",
-        "Put a plan in Eli's inbox. The lead drafts each goal into worker orders first (takes minutes). "
-        "Eli approves or dismisses it; Team releases what he approves.",
+        "Open a project, or add goals to an open one (project=<id>). Each goal becomes a card in "
+        "Eli's inbox at once; he approves, skips or sends it back. The lead drafts an approved goal "
+        "into worker orders and Team builds it; goals with no `after` build at the same time.",
         {
             "target": _TARGET,
-            "headline": {"type": "string", "description": "One sentence: what this plan does."},
-            "summary": {"type": "string", "description": "The deeper idea in a short paragraph: why, what changes, what done looks like."},
+            "project": {"type": "integer", "description": "An open project's id, to add goals to it."},
+            "headline": {"type": "string", "description": "One sentence: what this project does. Required for a new project."},
+            "summary": {"type": "string", "description": "The deeper idea in a short paragraph: why, what changes, what done looks like. Required for a new project."},
             "goals": {
                 "type": "array",
-                "description": "In order. Each goal is one change a check can verify.",
+                "description": "1 to 5 at a time. Each goal is one change a check can verify, small enough for one worker.",
                 "items": {
                     "type": "object",
                     "properties": {
                         "goal": {"type": "string"},
-                        "after": {"type": "array", "items": {"type": "integer"}, "description": "Numbers (1-based) of earlier goals that must land first."},
+                        "after": {"type": "array", "items": {"type": "integer"}, "description": "Numbers of earlier goals in this project that must land first. Leave empty when it can build alongside them."},
                     },
                     "required": ["goal"],
                 },
             },
             "notes": {"type": "string", "description": "What the lead should know that the repo does not say."},
         },
-        ["headline", "summary", "goals"],
+        ["goals"],
         propose,
+    ),
+    (
+        "team_ask",
+        "Ask Eli one question as a card with option buttons and your recommendation. His answer "
+        "arrives as your next message, so end your turn after asking. Use it for what only he can "
+        "decide; decide small things yourself.",
+        {
+            "target": _TARGET,
+            "question": {"type": "string", "description": "One sentence."},
+            "options": {"type": "array", "items": {"type": "string"}, "description": "2 to 4 short options."},
+            "recommendation": {"type": "string", "description": "One of the options."},
+            "context": {"type": "string", "description": "Two or three lines: what hangs on it."},
+            "project": {"type": "integer", "description": "The open project it belongs to, if any."},
+        },
+        ["question", "options", "recommendation"],
+        ask,
     ),
     (
         "team_proposals",

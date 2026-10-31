@@ -1,9 +1,9 @@
 /* Team's app. Plain DOM, no build step.
  *
- * Work: the boss chat on the left (its questions and plans inline, a check
- * to accept a plan), the org chart on the right (Boss over Planner,
- * Implementer, Rescue; each goal with the tier it asked for, the model that
- * answered and that model's rank in its tier; every token).
+ * Work: the project board (each goal a card you approve, skip or send back;
+ * the boss's questions as cards with options; the chart of Boss, Planner,
+ * Implementer, Rescue with every attempt, model and token) and, beside it,
+ * the conversation: the aide (free model) answers, the boss plans.
  * Team, LiteLLM, Portkey: editors. Every change is reviewed as a diff with
  * Team's own checks first, then applied and committed; see team/app/edit.py.
  */
@@ -154,7 +154,7 @@
 
   // ---------- the sidebar: services, roles, tokens ----------
 
-  let gatewayCache = null, boardCache = null, chatBusy = false, chatTools = [];
+  let gatewayCache = null, boardCache = null, chatBusy = false, aideBusy = false, chatTools = [];
   async function services() {
     try {
       const o = await api("gateway");
@@ -176,7 +176,8 @@
     const cfg = b.configured, z = b.tokens.zones;
     const planning = chatTools.some(function (t) { return t.name === "team_propose" && !t.done; });
     const roles = [
-      { key: "boss", title: "Boss", sub: cfg.boss.model || "?", working: chatBusy, note: b.waiting.length ? b.waiting.length + " plan" + (b.waiting.length > 1 ? "s" : "") + " for you" : null },
+      { key: "boss", title: "Boss", sub: cfg.boss.model || "?", working: chatBusy, note: b.waiting.length ? b.waiting.length + " goal" + (b.waiting.length > 1 ? "s" : "") + " for you" : null },
+      { key: "aide", title: "Aide", sub: (cfg.aide && cfg.aide.tiers || []).join(" → ") || "off", working: aideBusy, note: aideBusy ? "answering" : null },
       { key: "lead", title: "Planner", sub: cfg.lead.model || "?", working: planning, note: planning ? "drafting" : null },
       { key: "implement", title: "Implementer", sub: (cfg.implement.tiers || []).join(" → "), working: b.columns.implement.length > 0, note: b.columns.implement.length ? b.columns.implement.length + " building" : null },
       { key: "rescue", title: "Rescue", sub: cfg.rescue.model || "?", working: b.columns.rescue.length > 0, note: b.columns.rescue.length ? b.columns.rescue.length + " rescuing" : null },
@@ -200,21 +201,44 @@
   async function pollSidebar() {
     try {
       const r = await Promise.all([api("board"), api("chat")]);
-      boardCache = r[0]; chatBusy = !!r[1].current; chatTools = r[1].current ? r[1].current.tools : [];
+      boardCache = r[0]; chatBusy = !!r[1].current; aideBusy = !!r[1].aide_current; chatTools = r[1].current ? r[1].current.tools : [];
       drawSidebar();
     } catch (e) { /* the pages show their own errors */ }
   }
   every(15000, pollSidebar);
 
-  // ---------- Work: chat + chart ----------
+  // ---------- Work: projects + chat ----------
+  //
+  // The page is the project board: each open project with its goals as cards
+  // (Approve / Send back / Skip while a goal waits for you; the planner's
+  // parts and the build state once it runs), the boss's questions as cards
+  // with option buttons, then the chart. The conversation sits beside it: the
+  // aide (a free model) answers questions, the boss plans; what it hands off
+  // shows where it went.
+
+  const GOAL_STATUS = {
+    proposed: ["For you", "badge--live"],
+    approved: ["Approved · planner next", "badge--ok"],
+    drafting: ["Planner drafting…", "badge--ok"],
+    released: ["Building", "badge--ok"],
+    landed: ["✓ Landed", "badge--ok"],
+    stopped: ["✗ Stopped", "badge--bad"],
+    failed: ["Could not start", "badge--bad"],
+    skipped: ["Skipped", "badge--outline"],
+    sent_back: ["Sent back", "badge--outline"],
+  };
+  const FOLDED = { landed: 1, stopped: 1, skipped: 1, sent_back: 1, failed: 1 };
 
   function Work(main) {
+    const projectsBox = h("div", { class: "projects" }, h("div", { class: "muted" }, "Loading…"));
+    const chart = h("div", { class: "chart-wrap" });
     const chatList = h("div", { class: "chat-list" });
-    const inboxBox = h("div", { class: "chat-inbox" });
-    const input = h("textarea", { class: "chat-input", rows: "3", placeholder: "Talk to the boss… (Enter sends, Shift+Enter for a new line)" });
+    const toBoss = h("input", { type: "checkbox", id: "to-boss" });
+    const input = h("textarea", { class: "chat-input", rows: "3", placeholder: "Ask or tell… (Enter sends, Shift+Enter for a new line)" });
     const sendBtn = h("button", { class: "btn btn--primary", onclick: send }, "Send");
-    const chart = h("div", { class: "chart-wrap" }, h("div", { class: "muted" }, "Loading…"));
-    let busy = false;
+    const lanes = h("div", { class: "lanes muted" });
+    let chatData = null, inbox = null, chatSig = "", inboxSig = "";
+    const goalEls = {}, questionEls = {}, openProjects = {};
 
     input.addEventListener("keydown", function (e) {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
@@ -222,107 +246,212 @@
 
     async function send() {
       const text = input.value.trim();
-      if (!text || busy) return;
+      if (!text) return;
       try {
-        await api("chat", { text: text });
+        await api("chat", { text: text, to: toBoss.checked ? "boss" : "auto" });
         input.value = "";
-        busy = true;
         await loadChat();
       } catch (e) { fail(e); }
     }
 
     async function newChat() {
-      if (!confirm("Start a new conversation with the boss? The old one is kept on disk.")) return;
-      try { await api("chat/new", {}); lastSig = ""; await loadChat(); } catch (e) { fail(e); }
+      if (!confirm("Start a new conversation? The old one is kept on disk.")) return;
+      try { await api("chat/new", {}); chatSig = ""; await loadChat(); } catch (e) { fail(e); }
     }
+
+    // --- the conversation ---
 
     function toolChip(t) {
       const label = t.name.replace(/^team_/, "");
       return h("span", { class: "tool" + (t.done ? "" : " tool--live"), title: t.input ? JSON.stringify(t.input).slice(0, 400) : "" },
-        t.done ? "✓ " : "… ", label, t.done && t.seconds ? " " + Math.round(t.seconds) + "s" : "",
-        !t.done && t.name === "team_propose" ? " (the planner is drafting; this takes minutes)" : "");
+        t.done ? "✓ " : "… ", label, t.done && t.seconds ? " " + Math.round(t.seconds) + "s" : "");
     }
 
-    function message(m, live) {
-      if (m.role === "you") return h("div", { class: "msg msg--you" }, h("div", { class: "bubble" }, prose(m.text)), h("div", { class: "meta" }, when(m.at)));
+    function message(m, live, prevYou) {
+      if (m.role === "you") {
+        return h("div", { class: "msg msg--you" + (m.kind === "note" ? " msg--note" : "") },
+          h("div", { class: "bubble" }, prose(m.text)),
+          h("div", { class: "meta" }, m.kind === "note" ? "from a card · " : "", m.to === "boss" ? "to the boss · " : "", when(m.at)));
+      }
       const t = m.tokens;
-      return h("div", { class: "msg msg--boss" + (live ? " msg--live" : "") },
-        h("div", { class: "who" }, "Boss"),
+      if (m.role === "aide" && m.handoff) {
+        return h("div", { class: "msg msg--aide msg--handoff" },
+          h("div", { class: "meta" }, "aide → boss", m.text ? h("span", { class: "muted" }, " · " + m.text.replace(/^\**HANDOFF\**:?\s*/i, "").slice(0, 120)) : null));
+      }
+      return h("div", { class: "msg msg--" + m.role + (live ? " msg--live" : "") },
+        h("div", { class: "who" }, m.role === "aide" ? "Aide" + (m.model ? " · " + m.model : "") : "Boss"),
         m.tools && m.tools.length ? h("div", { class: "tools" }, m.tools.map(toolChip)) : null,
         h("div", { class: "bubble" }, m.text ? prose(m.text) : (live ? h("span", { class: "typing" }, h("i"), h("i"), h("i")) : null),
-          m.error ? h("div", { class: "error" }, m.error) : null),
+          m.error ? h("div", { class: "error" }, m.error, m.role === "aide" ? " · sent to the boss" : "") : null),
         h("div", { class: "meta" }, when(m.done || m.at),
           t ? h("span", { title: "this message: input, output, cache read, cache write" }, " · in ", num(t.input), " out ", num(t.output),
-            " · cache ", num(t.cache_read), " / ", num(t.cache_write)) : null));
+            " · cache ", num(t.cache_read), " / ", num(t.cache_write)) : null,
+          m.role === "aide" && !live && !m.error && prevYou ? h("button", { class: "linkish ask-boss", onclick: async function () {
+            try { await api("chat", { text: prevYou.text, to: "boss" }); await loadChat(); } catch (e) { fail(e); }
+          } }, "Ask the boss instead") : null));
     }
 
-    let chatData = null, plans = [], lastSig = "";
-    const planEls = {};
-
-    function stamp(ts) { return ts ? Date.parse(ts.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")) : NaN; }
-
-    // The conversation with each plan placed right after the boss message that proposed it.
     function drawChat() {
       if (!chatData) return;
       const c = chatData;
-      const sig = JSON.stringify([c.messages.length, c.current && c.current.text, c.current && c.current.tools,
-        plans.map(function (p) { return [p.id, p.status]; })]);
-      if (sig === lastSig) return;
-      lastSig = sig;
+      const sig = JSON.stringify([c.messages.length, c.current, c.aide_current, c.queued]);
+      if (sig === chatSig) return;
+      chatSig = sig;
       const atBottom = chatList.scrollHeight - chatList.scrollTop - chatList.clientHeight < 80;
-      const first = c.messages.length ? stamp(c.messages[0].at) : Infinity;
-      const live = function (p) { return p.status === "waiting" || p.status === "accepted"; };
-      const shown = plans.filter(function (p) { return live(p) || stamp(p.created) >= first; })
-        .sort(function (a, b) { return stamp(a.created) - stamp(b.created); });
-      const after = {}, tail = [];
-      shown.forEach(function (p) {
-        const t = stamp(p.created);
-        let k = -1;
-        c.messages.forEach(function (m, i) {
-          if (m.role === "boss" && stamp(m.at) <= t && t <= stamp(m.done || m.at) + 1000) k = i;
-        });
-        if (k < 0) c.messages.forEach(function (m, i) { if (stamp(m.at) <= t) k = i; });
-        if (k < 0 || (c.current && t >= stamp(c.current.at))) tail.push(p);  // proposed in the turn still running
-        else (after[k] = after[k] || []).push(p);
-      });
       fill(chatList);
-      if (!c.messages.length && !c.current && !shown.length) {
+      if (!c.messages.length && !c.current && !c.aide_current) {
         chatList.appendChild(h("div", { class: "empty" },
-          h("p", null, "Tell the boss what you want built. It asks what it needs, writes the goals, and has the planner split them into parts."),
-          h("p", { class: "muted" }, "Each plan shows up here, goal by goal and part by part, with Accept, Send back and Dismiss.")));
+          h("p", null, "Tell the boss what you want built. Its goals and questions arrive as cards on the left; approve them one by one and they build."),
+          h("p", { class: "muted" }, c.aide ? "Questions about the project are answered here by the aide, a free model." : "The aide is off: every message goes to the boss.")));
       }
-      c.messages.forEach(function (m, i) {
-        chatList.appendChild(message(m));
-        (after[i] || []).forEach(function (p) { chatList.appendChild(planEl(p)); });
+      let lastYou = null;
+      c.messages.forEach(function (m) {
+        chatList.appendChild(message(m, false, lastYou));
+        if (m.role === "you") lastYou = m;
       });
+      if (c.aide_current) chatList.appendChild(message(c.aide_current, true));
       if (c.current) chatList.appendChild(message(c.current, true));
-      tail.forEach(function (p) { chatList.appendChild(planEl(p)); });
+      const busy = !!(c.current || c.aide_current);
+      fill(lanes,
+        c.aide_current ? h("span", null, "aide answering") : null,
+        c.current ? h("span", null, "boss working") : null,
+        c.queued.boss ? h("span", null, c.queued.boss + " queued for the boss") : null);
       if (atBottom || busy) chatList.scrollTop = chatList.scrollHeight;
-    }
-
-    // Reused while a plan's status is unchanged, so an open section or a half-typed note survives a refresh.
-    function planEl(p) {
-      const key = p.status + JSON.stringify(p.goal_ids);
-      if (!planEls[p.id] || planEls[p.id].key !== key) planEls[p.id] = { key: key, el: planCard(p, reload) };
-      return planEls[p.id].el;
     }
 
     async function loadChat() {
       chatData = await api("chat");
-      busy = !!chatData.current;
-      if (chatBusy !== busy) { chatBusy = busy; chatTools = chatData.current ? chatData.current.tools : []; drawSidebar(); }
-      sendBtn.disabled = busy;
-      sendBtn.textContent = busy ? "Answering…" : "Send";
+      const busy = !!chatData.current;
+      if (chatBusy !== busy || aideBusy !== !!chatData.aide_current) {
+        chatBusy = busy; aideBusy = !!chatData.aide_current;
+        chatTools = chatData.current ? chatData.current.tools : [];
+        drawSidebar();
+      }
       drawChat();
     }
 
+    // --- the projects ---
+
+    function cached(store, key, sig, make) {
+      if (!store[key] || store[key].sig !== sig) store[key] = { sig: sig, el: make() };
+      return store[key].el;
+    }
+
+    function goalCard(p, g) {
+      const st = GOAL_STATUS[g.status] || [g.status, "badge--outline"];
+      const waiting = g.status === "proposed";
+      let open = !FOLDED[g.status];
+      const note = h("textarea", { class: "chat-input", rows: "2", placeholder: "What should change? The boss re-proposes it." });
+      const sendBack = h("div", { class: "sendback", hidden: true }, note,
+        h("div", { class: "actions" },
+          h("button", { class: "btn btn--primary", onclick: async function () {
+            try { await api("plans/" + p.id + "/goals/" + g.n + "/sendback", { text: note.value }); toast("Sent back to the boss."); reload(); } catch (e) { fail(e); }
+          } }, "Send back to the boss"),
+          h("button", { class: "btn btn--ghost", onclick: function () { sendBack.hidden = true; } }, "Cancel")));
+      const body = h("div", { class: "gc-body", hidden: !open },
+        g.plan ? h("div", { class: "muted plan-why" }, "Planner: " + g.plan) : null,
+        g.parts.length ? h("div", { class: "plan-parts" }, g.parts.map(partView)) : null,
+        g.status === "approved" ? h("div", { class: "muted" }, "The planner drafts it on the next tick, then its parts start.") : null,
+        g.status === "drafting" ? h("div", { class: "muted" }, "The planner is splitting it into parts and writing the work orders. Minutes.") : null,
+        g.error ? h("div", { class: "problems" }, g.error) : null,
+        g.note ? h("div", { class: "muted" }, "You said: " + g.note) : null,
+        waiting ? h("div", { class: "plan-actions" },
+          h("button", { class: "btn btn--primary", onclick: async function (e) {
+            e.target.disabled = true;
+            try { await api("plans/" + p.id + "/goals/" + g.n + "/approve", {}); toast("Approved. The planner drafts it within a minute."); reload(); }
+            catch (err) { fail(err); e.target.disabled = false; }
+          } }, "✓ Approve"),
+          h("button", { class: "btn", onclick: function () { sendBack.hidden = false; note.focus(); } }, "Send back"),
+          h("button", { class: "btn btn--ghost", onclick: async function () {
+            try { await api("plans/" + p.id + "/goals/" + g.n + "/skip", {}); reload(); } catch (e) { fail(e); }
+          } }, "Skip")) : null,
+        sendBack);
+      const head = h("button", { class: "gc-head", onclick: function () { open = !open; body.hidden = !open; } },
+        h("span", { class: "goal-n" }, "Goal " + g.n),
+        h("span", { class: "gc-text" }, g.goal),
+        g.after && g.after.length ? badge("after " + g.after.join(", "), "badge--outline", "waits for those goals to land") : null,
+        badge(st[0], st[1]));
+      return h("div", { class: "gc gc--" + g.status + (g.station ? " gc--at-" + g.station : "") }, head, body);
+    }
+
+    function questionCard(d) {
+      const own = h("input", { class: "q-own", type: "text", placeholder: "or answer in your words" });
+      async function answer(text) {
+        try { await api("decisions/" + d.id + "/answer", { answer: text }); toast("Answered; the boss continues."); reload(); } catch (e) { fail(e); }
+      }
+      own.addEventListener("keydown", function (e) { if (e.key === "Enter" && own.value.trim()) answer(own.value.trim()); });
+      return h("div", { class: "q" },
+        h("div", { class: "q-head" }, h("span", { class: "q-mark" }, "?"), h("span", { class: "q-text" }, d.question)),
+        d.context ? h("div", { class: "muted summary" }, prose(d.context)) : null,
+        h("div", { class: "q-options" }, d.options.map(function (o) {
+          return h("button", { class: "btn " + (o === d.recommendation ? "btn--primary" : ""), onclick: function () { answer(o); } },
+            o, o === d.recommendation ? h("span", { class: "rec" }, " · recommended") : null);
+        })),
+        h("div", { class: "q-own-row" }, own,
+          h("button", { class: "btn btn--ghost btn--small", onclick: async function () {
+            try { await api("decisions/" + d.id + "/dismiss", {}); reload(); } catch (e) { fail(e); }
+          } }, "Dismiss")));
+    }
+
+    function projectCard(c, asks) {
+      const counts = c.counts || {};
+      const waiting = counts.proposed || 0;
+      const building = (counts.approved || 0) + (counts.drafting || 0) + (counts.released || 0);
+      const parts = [];
+      if (waiting) parts.push(waiting + " for you");
+      if (building) parts.push(building + " building");
+      if (counts.landed) parts.push(counts.landed + " landed");
+      if (counts.stopped) parts.push(counts.stopped + " stopped");
+      if (counts.skipped) parts.push(counts.skipped + " skipped");
+      const closed = c.status !== "open";
+      if (openProjects[c.id] === undefined) openProjects[c.id] = !closed;
+      let summaryOpen = false;
+      const summary = h("div", { class: "summary", hidden: true }, prose(c.summary || ""));
+      const goals = h("div", { class: "gcs", hidden: !openProjects[c.id] },
+        asks.map(function (d) { return cached(questionEls, "q" + d.id, JSON.stringify(d), function () { return questionCard(d); }); }),
+        c.goals.map(function (g) {
+          return cached(goalEls, c.id + ":" + g.n, JSON.stringify(g), function () { return goalCard(c, g); });
+        }),
+        (c.warnings || []).length ? h("div", { class: "plan-warn" }, h("strong", null, "Check"), h("ul", null, c.warnings.map(function (w) { return h("li", null, w); }))) : null,
+        waiting > 1 ? h("div", { class: "actions" },
+          h("button", { class: "btn btn--small", onclick: async function () {
+            try { await api("plans/" + c.id + "/approve", {}); toast("All " + waiting + " approved."); reload(); } catch (e) { fail(e); }
+          } }, "Approve all " + waiting)) : null);
+      return h("div", { class: "project project--" + c.status },
+        h("div", { class: "project-head" },
+          h("button", { class: "project-toggle", onclick: function () { openProjects[c.id] = !openProjects[c.id]; goals.hidden = !openProjects[c.id]; } },
+            h("span", { class: "plan-kicker" }, "Project " + c.id + (closed ? " · " + c.status + (c.closed ? " " + c.closed : "") : "")),
+            h("span", { class: "plan-headline" }, c.headline)),
+          h("div", { class: "project-sub" },
+            h("span", { class: "muted" }, parts.join(" · ") || "no goals yet"),
+            h("button", { class: "linkish", onclick: function () { summaryOpen = !summaryOpen; summary.hidden = !summaryOpen; } }, "summary"))),
+        summary, goals);
+    }
+
+    function drawInbox() {
+      if (!inbox) return;
+      const sig = JSON.stringify(inbox);
+      if (sig === inboxSig) return;
+      inboxSig = sig;
+      const open = inbox.plans.filter(function (p) { return p.status === "open"; });
+      const closed = inbox.plans.filter(function (p) { return p.status !== "open"; });
+      const asks = inbox.decisions.filter(function (d) { return d.source.indexOf("boss-ask") === 0; });
+      const others = inbox.decisions.filter(function (d) { return d.source.indexOf("boss-ask") !== 0; });
+      const loose = asks.filter(function (d) { return !open.some(function (p) { return p.id === d.plan_id; }); });
+      const nWait = inbox.waiting.length + asks.length;
+      fill(projectsBox,
+        h("div", { class: "board-head" }, h("h1", null, "Work"),
+          h("div", { class: "muted" }, nWait ? nWait + " card" + (nWait > 1 ? "s" : "") + " waiting for you" : open.length ? "Nothing waits for you; the team is building." : "Quiet. Tell the boss what to build.")),
+        loose.map(questionCard),
+        open.length ? open.map(function (p) { return projectCard(p, asks.filter(function (d) { return d.plan_id === p.id; })); })
+          : h("div", { class: "empty-board muted" }, "No open project. When the boss writes goals they appear here as cards."),
+        others.length ? h("div", { class: "section" }, h("h3", null, "Also for you"), others.map(function (d) { return decisionCard(d, reload); })) : null,
+        closed.length ? h("div", { class: "section" }, h("h3", null, "Closed"), closed.map(function (p) { return projectCard(p, []); })) : null);
+    }
+
     async function loadInbox() {
-      const box = await api("inbox");
-      plans = box.plans;
-      drawChat();
-      fill(inboxBox);
-      if (box.decisions.length) inboxBox.appendChild(h("div", { class: "inbox-title" }, "Questions for you"));
-      box.decisions.forEach(function (d) { inboxBox.appendChild(decisionCard(d, reload)); });
+      inbox = await api("inbox");
+      drawInbox();
     }
 
     async function loadBoard() {
@@ -335,82 +464,26 @@
       await Promise.all([loadInbox().catch(fail), loadBoard().catch(fail), loadChat().catch(fail)]);
     }
 
+    main.appendChild(h("section", { class: "pane pane--board" }, h("div", { class: "board-wrap" }, projectsBox, chart)));
     main.appendChild(h("section", { class: "pane pane--chat" },
       h("div", { class: "pane-head" },
-        h("div", { class: "pane-title" }, h("span", { class: "avatar" }, "B"), h("div", null, h("h2", null, "Boss"), h("div", { class: "muted" }, "plans the work with you"))),
+        h("div", { class: "pane-title" }, h("span", { class: "avatar" }, "B"), h("div", null, h("h2", null, "Boss & aide"), lanes)),
         h("button", { class: "btn btn--ghost btn--small", onclick: newChat }, "New conversation")),
-      chatList, inboxBox,
-      h("div", { class: "composer" }, input, sendBtn)));
-    main.appendChild(h("section", { class: "pane pane--chart" }, chart));
+      chatList,
+      h("div", { class: "composer" }, h("div", { class: "composer-main" }, input,
+        h("label", { class: "muted to-boss", title: "Skip the aide; the boss (Claude) gets this message" }, toBoss, " straight to the boss")), sendBtn)));
 
     const stops = [
-      every(function () { return busy ? 1000 : 5000; }, function () { return loadChat().catch(fail); }),
-      every(function () { return busy ? 3000 : 6000; }, function () { return Promise.all([loadInbox(), loadBoard()]).catch(fail); }),
+      every(function () { return (chatData && (chatData.current || chatData.aide_current)) ? 1000 : 5000; }, function () { return loadChat().catch(fail); }),
+      every(6000, function () { return Promise.all([loadInbox(), loadBoard()]).catch(fail); }),
     ];
     input.focus();
     return function () { stops.forEach(function (s) { s(); }); };
   }
 
-  const PLAN_STATUS = {
-    waiting: ["Waiting for you", "badge--live"],
-    accepted: ["Accepted: starts within a minute", "badge--ok"],
-    releasing: ["Starting", "badge--ok"],
-    released: ["Building: see the chart", "badge--ok"],
-    dismissed: ["Dismissed", "badge--outline"],
-    failed: ["Could not start", "badge--bad"],
-  };
-
-  // A plan, goal by goal and part by part, with what you can do about it.
-  function planCard(c, after) {
-    const st = PLAN_STATUS[c.status] || [c.status, "badge--outline"];
-    const waiting = c.status === "waiting";
-    const nParts = c.goals.reduce(function (n, g) { return n + g.parts.length; }, 0);
-    let goalsOpen = waiting;
-    const goalsBox = h("div", { class: "plan-goals", hidden: !goalsOpen }, c.goals.map(function (g) {
-      return h("div", { class: "plan-goal" },
-        h("div", { class: "plan-goal-head" }, h("span", { class: "goal-n" }, "Goal " + g.n),
-          h("span", null, g.goal),
-          g.after && g.after.length ? badge("after goal " + g.after.join(", "), "badge--outline") : badge("starts right away", "badge--outline")),
-        g.plan ? h("div", { class: "muted plan-why" }, "Planner: " + g.plan) : null,
-        h("div", { class: "plan-parts" }, g.parts.map(partView)));
-    }));
-    const note = h("textarea", { class: "chat-input", rows: "2", placeholder: "What should change? The boss re-proposes it." });
-    const sendBack = h("div", { class: "sendback", hidden: true }, note,
-      h("div", { class: "actions" },
-        h("button", { class: "btn btn--primary", onclick: async function () {
-          try { await api("plans/" + c.id + "/sendback", { text: note.value }); toast("Sent back to the boss."); after(); } catch (e) { fail(e); }
-        } }, "Send back to the boss"),
-        h("button", { class: "btn btn--ghost", onclick: function () { sendBack.hidden = true; } }, "Cancel")));
-    const toggle = h("button", { class: "linkish plan-toggle", onclick: function () {
-      goalsOpen = !goalsOpen; goalsBox.hidden = !goalsOpen; toggle.textContent = (goalsOpen ? "▾ " : "▸ ") + label;
-    } });
-    const label = c.goals.length + " goal" + (c.goals.length > 1 ? "s" : "") + ", " + nParts + " part" + (nParts > 1 ? "s" : "") + " for free workers";
-    toggle.textContent = (goalsOpen ? "▾ " : "▸ ") + label;
-    return h("div", { class: "plan plan--" + c.status },
-      h("div", { class: "plan-top" }, h("span", { class: "plan-kicker" }, "Plan " + c.id), badge(st[0], st[1])),
-      h("div", { class: "plan-headline" }, c.headline),
-      h("div", { class: "summary" }, prose(c.summary || "")),
-      (c.warnings || []).length ? h("div", { class: "plan-warn" }, h("strong", null, "Check before accepting"),
-        h("ul", null, c.warnings.map(function (w) { return h("li", null, w); }))) : null,
-      c.error ? h("div", { class: "problems" }, c.error) : null,
-      toggle, goalsBox,
-      waiting ? h("div", { class: "plan-actions" },
-        h("button", { class: "btn btn--primary btn--big", onclick: async function (e) {
-          e.target.disabled = true;
-          try { await api("plans/" + c.id + "/approve", {}); toast("Accepted. Its goals start within a minute; watch the chart."); after(); }
-          catch (err) { fail(err); e.target.disabled = false; }
-        } }, "✓ Accept plan"),
-        h("button", { class: "btn", onclick: function () { sendBack.hidden = false; note.focus(); } }, "Send back with changes"),
-        h("button", { class: "btn btn--ghost", onclick: async function () {
-          if (!confirm("Dismiss plan " + c.id + "? Nothing in it will be built.")) return;
-          try { await api("plans/" + c.id + "/dismiss", {}); after(); } catch (e) { fail(e); }
-        } }, "Dismiss")) : null,
-      sendBack);
-  }
-
   function partView(p) {
     return h("div", { class: "part" },
-      h("div", null, h("strong", null, p.title)),
+      h("div", { class: "part-head" }, h("strong", null, p.title), p.state ? badge(p.state, p.state === "landed" ? "badge--ok" : /^(fail|error|timeout)/.test(p.state) ? "badge--bad" : "badge--outline") : null),
       h("div", { class: "muted" }, p.role + " on " + p.model + " · " + p.steps + " steps" + (p.depends_on && p.depends_on.length ? " · after " + p.depends_on.join(", ") : "")),
       h("div", { class: "tags" }, p.toolsets.map(function (t) { return badge(t); }), p.skills.map(function (s) { return badge(s, "badge--outline"); })),
       h("div", { class: "muted" }, "owns ", h("code", null, p.owned_paths.join(", "))),
@@ -528,7 +601,7 @@
       sub ? h("div", { class: "tile-sub muted" }, sub) : null);
   }
 
-  const ZONES = { boss: "Boss", lead: "Planner", implement: "Implementer", rescue: "Rescue", other: "Not attributed" };
+  const ZONES = { boss: "Boss", aide: "Aide", lead: "Planner", implement: "Implementer", rescue: "Rescue", other: "Not attributed" };
   let showTiers = false, showTokens = false;
 
   function Chart(b) {
@@ -556,10 +629,10 @@
     };
     return h("div", { class: "board" },
       h("div", { class: "board-head" },
-        h("h1", null, "Work"),
-        h("div", { class: "muted" }, b.waiting.length ? b.waiting.length + " plan" + (b.waiting.length > 1 ? "s" : "") + " waiting for you in the chat" : building ? building + " goal" + (building > 1 ? "s" : "") + " building" : "Quiet. Tell the boss what to build.")),
+        h("h2", null, "The team"),
+        h("div", { class: "muted" }, building ? building + " goal" + (building > 1 ? "s" : "") + " building" : "Nobody is building right now.")),
       h("div", { class: "tiles" },
-        tile("Waiting for you", String(b.waiting.length), "plans to accept", b.waiting.length ? "tile--accent" : ""),
+        tile("Waiting for you", String(b.waiting.length), "goals to approve", b.waiting.length ? "tile--accent" : ""),
         tile("Building", String(building), "goals with a worker on them"),
         tile("Landed", [String(landed.length), stopped.length ? h("span", { class: "tile-dim" }, " / " + stopped.length + " stopped") : null], "check passed, merged"),
         tile("Tokens in", fmt(t.tokens_in), fmt(t.tokens_out) + " out · " + (t.calls || 0) + " calls"),

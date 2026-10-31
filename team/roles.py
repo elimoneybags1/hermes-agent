@@ -34,6 +34,7 @@ TOOLSETS = (
     "memory",
     "kanban",
     "team",
+    "team-read",
 )
 # Claude Code tool groups a "claude" role may name (team.claude_roles.TOOL_MAP).
 CLAUDE_TOOLS = ("read-only", "file", "terminal", "todo", "skills")
@@ -99,6 +100,9 @@ def load(root: Path, name: str, cat: dict | None = None) -> dict:
                 catalog.resolve(spec, cat)
             except catalog.GateError as e:
                 raise RoleError(f"role {name}: candidate {spec!r} refused: {e}") from e
+    assignable = role.setdefault("assignable", True)
+    if not isinstance(assignable, bool):
+        raise RoleError(f"role {name}: assignable must be true or false")
     role["skills"] = skills(root, name)
     return role
 

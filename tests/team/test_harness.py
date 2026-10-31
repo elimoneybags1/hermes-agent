@@ -15,9 +15,9 @@ SOUL = "team/roles/implement/SOUL.md"
 def landed_order(w) -> int:
     """One goal planned by the lead, built by the worker, landed: the first replay item."""
     p = propose(w)
-    boss.settle(w["conn"], p["decision_id"], "approve")
-    w["loop"].tick()
-    gid = boss.load_proposal("team", p["id"])["goal_ids"][0]
+    boss.settle(w["conn"], p["goals"][0]["decision_id"], "approve")
+    w["loop"].tick()  # drafts and releases the goal
+    gid = boss.load_proposal("team", p["id"])["goals"][0]["goal_ids"][0]
     worker_commits(w, ledger.get_goal(w["conn"], gid))
     w["loop"].tick()
     assert ledger.get_goal(w["conn"], gid)["outcome"] == "pass"

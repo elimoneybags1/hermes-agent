@@ -54,6 +54,11 @@ def register(ctx) -> None:
     create_custom_toolset(
         "read-only", "Read and search without edits", ["read_file", "search_files"]
     )
+    create_custom_toolset(
+        "team-read",
+        "Read Team's ledger and notes without proposing anything (the aide)",
+        ["team_status", "team_findings", "team_notes_read", "team_proposals"],
+    )
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(

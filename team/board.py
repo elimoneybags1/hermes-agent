@@ -25,7 +25,7 @@ from pathlib import Path
 
 from team import boss, catalog, ledger, targets
 
-ZONES = ("boss", "lead", "implement", "rescue", "other")
+ZONES = ("boss", "aide", "lead", "implement", "rescue", "other")
 TOKENS = ("tokens_in", "tokens_out", "cache_read", "cache_write")
 LANDED_SHOWN = 8
 
@@ -92,6 +92,7 @@ def configured(root: Path) -> dict[str, dict]:
         "boss": {"model": role("boss").get("runs_on", {}).get("model")},
         "lead": {"model": role("lead").get("runs_on", {}).get("model")
                  or role("lead").get("runs_on", {}).get("harness")},
+        "aide": {"tiers": role("aide").get("models", {}).get("candidates", [])},
         "implement": {"tiers": implement.get("models", {}).get("candidates", [])},
         "rescue": {"model": rescue.get("model") or rescue.get("harness"),
                    "after_failures": rescue.get("after_failures")},
@@ -113,7 +114,7 @@ def _spec(job: dict) -> str:
 
 def zone(job: dict | None, profile: str | None) -> str:
     if job is None:
-        return "boss" if profile == "boss" else "other"
+        return profile if profile in ("boss", "aide") else "other"
     if job["role"] == "lead":
         return "lead"
     if job["role"] == "implement":
@@ -377,7 +378,7 @@ def board(conn: sqlite3.Connection, root: Path, cat: dict | None = None) -> dict
         goals = ledger.list_goals(conn, all_goals=True)
         at = ranks_at(root, cat)
         cards = [goal_card(conn, gw, g, at, cooldown_s) for g in goals]
-        waiting = [boss.card(p) for p in boss.proposals() if p["status"] == "waiting"]
+        waiting = boss.waiting()
         cols = {z: [c for c in cards if c["station"] == z] for z in ("lead", "implement", "rescue")}
         done = [c for c in cards if c["station"] in ("landed", "stopped")][:LANDED_SHOWN]
         return {

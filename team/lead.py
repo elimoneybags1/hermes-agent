@@ -131,6 +131,8 @@ def menu(root: Path, cat: dict | None = None) -> dict[str, dict]:
         role = roles.load(root, name, cat)
         if role["runs_on"]["harness"] != "hermes" or role["status"] != "active":
             continue
+        if not role.get("assignable", True):  # the aide answers Eli; it builds nothing
+            continue
         out[name] = {
             "does": role["does"],
             "toolsets": sorted(set(role.get("tools") or [])),

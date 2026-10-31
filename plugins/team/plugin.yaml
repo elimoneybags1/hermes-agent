@@ -15,3 +15,6 @@ provides_tools:
   - team_propose
   - team_proposals
   - team_suggest
+  - team_ask
+  - team_harness_read
+  - team_propose_harness

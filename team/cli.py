@@ -203,7 +203,7 @@ def cmd_plans(args) -> int:
         print(f"{c['headline']}\n\n{c['summary']}\n")
         for g in c["goals"]:
             after = f" (after {', '.join(map(str, g['after']))})" if g["after"] else ""
-            print(f"{g['n']}. {g['goal']}{after}\n   {g['plan']}")
+            print(f"{g['n']}. [{g['status']}] {g['goal']}{after}" + (f"\n   {g['plan']}" if g["plan"] else ""))
             for part in g["parts"]:
                 print(
                     f"   - {part['title']}: {part['role']} on {part['model']}, "
@@ -211,15 +211,16 @@ def cmd_plans(args) -> int:
                     f"{part['steps']} steps, reads {', '.join(part['context']) or 'nothing'}"
                 )
         return 0
-    if p["status"] != "waiting":
-        print(f"proposal {p['id']} is {p['status']}", file=sys.stderr)
+    if p["status"] != "open":
+        print(f"project {p['id']} is {p['status']}", file=sys.stderr)
         return 1
     try:
-        boss.settle(conn, p["decision_id"], "approve" if args.plans_cmd == "approve" else None)
+        done = boss.settle_goals(conn, p, "approve" if args.plans_cmd == "approve" else None)
     except boss.BossError as e:
         print(str(e), file=sys.stderr)
         return 1
-    print(f"proposal {p['id']} " + ("approved; `team run` releases it" if args.plans_cmd == "approve" else "dismissed"))
+    verb = "approved; `team run` drafts and releases them" if args.plans_cmd == "approve" else "skipped"
+    print(f"project {p['id']} goals {', '.join(map(str, done))} {verb}")
     return 0
 
 
