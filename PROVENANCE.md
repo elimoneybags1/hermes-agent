@@ -10,13 +10,37 @@ here with file and line.
 | Project | Where | How it came in | Pinned | Update |
 |---|---|---|---|---|
 | NousResearch/hermes-agent | repo root | `git merge --allow-unrelated-histories upstream/main` on 2026-10-27, merge commit `8ee29e6d` | `e5ea5fd9` (upstream main, 2026-10-26) | `git fetch upstream main && git merge upstream/main` |
-| NousResearch/hermes-agent-self-evolution | `self-evolution/` | `git subtree add --squash`, 2026-10-27 | `0a929e3a` (main) | `git subtree pull --prefix=self-evolution <url> main --squash` |
-| Portkey-AI/gateway | `portkey/` | `git subtree add` (full history) on 2026-10-27, commit `f2cfba42` | `v1.15.2` = `ca771294` (2026-01-12) | `git subtree pull --prefix=portkey https://github.com/Portkey-AI/gateway.git <tag>` (the two `[team]` patches below merge forward) |
-| BerriAI/litellm | `litellm/` | `git subtree add --squash` on 2026-10-27, commit `0c3f0dc4` (squash `68eb04f3`); fetched through a depth-1 clone because GitHub served the tag's full-history pack at ~50 KB/s, so `.git/shallow` lists `ea7ca16d` (the squash has no parent link to it; harmless). 13 files then renormalized to LF by the root `.gitattributes`, commit `51200db6` | `v1.106.4` = `ea7ca16d` (2026-10-25) | `git subtree pull --prefix=litellm https://github.com/BerriAI/litellm.git <tag> --squash` |
+| NousResearch/hermes-agent-self-evolution | `self-evolution/` | `git subtree add --squash`, 2026-10-27 | `0a929e3a` (main) | `git subtree pull --prefix=self-evolution self-evolution main --squash` |
+| Portkey-AI/gateway | `portkey/` | `git subtree add` (full history) on 2026-10-27, commit `f2cfba42` | `v1.15.2` = `ca771294` (2026-01-12) | `git subtree pull --prefix=portkey portkey <tag>` (the two `[team]` patches below merge forward) |
+| BerriAI/litellm | `litellm/` | `git subtree add --squash` on 2026-10-27, commit `0c3f0dc4` (squash `68eb04f3`); fetched through a depth-1 clone because GitHub served the tag's full-history pack at ~50 KB/s, so `.git/shallow` lists `ea7ca16d` (the squash has no parent link to it; harmless). 13 files then renormalized to LF by the root `.gitattributes`, commit `51200db6` | `v1.106.4` = `ea7ca16d` (2026-10-25) | `git subtree pull --prefix=litellm litellm <tag> --squash` |
 
-Remotes: `upstream` = `https://github.com/NousResearch/hermes-agent.git`. No
-`origin` is set; pushing is only ever on Eli's say-so, and the intended target
-is his GitHub fork `elimoneybags1/hermes-agent`.
+## Remotes and GitHub forks (set 2026-11-01)
+
+Every upstream has a fork under Eli's GitHub account, and each fork is a named
+remote here. Pushing to `origin` is only ever on Eli's say-so.
+
+| Remote | Points at | Fork of | Role |
+|---|---|---|---|
+| `origin` | `elimoneybags1/hermes-agent` | NousResearch/hermes-agent | this repository, Team included; `main` is pushed here |
+| `upstream` | `NousResearch/hermes-agent` | | Hermes itself; `git fetch upstream main && git merge upstream/main` |
+| `portkey` | `elimoneybags1/gateway` | Portkey-AI/gateway | source for `portkey/` |
+| `litellm` | `elimoneybags1/litellm` | BerriAI/litellm | source for `litellm/` |
+| `self-evolution` | `elimoneybags1/hermes-agent-self-evolution` | NousResearch/hermes-agent-self-evolution | source for `self-evolution/` |
+
+Taking an upstream change into a subtree goes through the fork, so the fork is
+always the record of what was taken:
+
+```
+gh repo sync elimoneybags1/litellm --source BerriAI/litellm       # fork main = upstream main
+git subtree pull --prefix=litellm litellm <tag-or-main> --squash  # into this repo
+```
+
+Same with `gateway`/`portkey` (no `--squash`, full history) and
+`hermes-agent-self-evolution`/`self-evolution` (`--squash`). Sending the
+`[team]` patches of a subtree back to its fork is
+`git subtree push --prefix=portkey portkey team`, which splits this repo's
+history for that prefix and pushes it as the fork's `team` branch. Then update
+the Pinned column above.
 
 The repository before the fresh start is tag `before-fresh-start`
 (`25b8aca`). `git checkout before-fresh-start` restores the whole old tree.
