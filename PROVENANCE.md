@@ -27,30 +27,36 @@ remote here. Pushing to `origin` is only ever on Eli's say-so.
 | `litellm` | `elimoneybags1/litellm` | BerriAI/litellm | source for `litellm/` |
 | `self-evolution` | `elimoneybags1/hermes-agent-self-evolution` | NousResearch/hermes-agent-self-evolution | source for `self-evolution/` |
 
-Taking an upstream change into a subtree goes through the fork, so the fork is
-always the record of what was taken:
+Each fork's `main` is what this repository's subtree directory holds: the
+pinned upstream plus the `[team]` patches, exactly as this repository's `main`
+is Hermes plus Team. Taking an upstream change into a subtree goes through the
+fork, so the fork is always the record of what was taken.
+
+Unpatched subtrees (`litellm/`, `self-evolution/`): the fork's `main` equals
+upstream `main`, and GitHub's "Sync fork" fast-forwards it.
 
 ```
 gh repo sync elimoneybags1/litellm --source BerriAI/litellm       # fork main = upstream main
 git subtree pull --prefix=litellm litellm <tag-or-main> --squash  # into this repo
 ```
 
-Same with `gateway`/`portkey` (no `--squash`, full history) and
-`hermes-agent-self-evolution`/`self-evolution` (`--squash`). Sending the
-`[team]` patches of a subtree back to its fork is
-`git subtree push --prefix=portkey portkey team`, which splits this repo's
-history for that prefix and pushes it as the fork's `team` branch. Then update
-the Pinned column above.
+Patched subtree (`portkey/`): the fork's `main` has diverged from upstream, so
+`gh repo sync` refuses it. Either GitHub's "Sync fork → Update branch" (a
+merge commit on the fork), then `git subtree pull --prefix=portkey portkey
+main`; or pull the upstream tag straight into this repository with
+`git subtree pull --prefix=portkey https://github.com/Portkey-AI/gateway.git <tag>`
+and send the result to the fork with `git subtree push --prefix=portkey
+portkey main`, which splits this repository's history for that prefix. Either
+way the patches merge forward, and the Pinned column above is updated.
 
-`elimoneybags1/gateway` branch `team` was first pushed 2026-11-01 at
-`0c6548e3`: the four `[team]` Portkey commits (12 files) on top of v1.15.2.
-A Portkey built from that branch has config-by-name, the request log and the
-tool round-trip fixes without this repository. LiteLLM carries no Team patch;
-its connection to Portkey is the `config.yaml` that `build.py` generates from
-the catalog, so `elimoneybags1/litellm` has no `team` branch. The Rust
-connection layer, `integrations/gateway-rs/`, needs the catalog, LiteLLM's
-`usage.db` and Portkey's `requests.jsonl`, so it lives here and not in either
-fork.
+`elimoneybags1/gateway` `main` was set on 2026-11-01 to `0c6548e3`: Portkey
+v1.15.2 plus the four `[team]` commits (12 files). A Portkey built from the
+fork's `main` has config-by-name, the request log and the tool round-trip
+fixes without this repository. LiteLLM carries no Team patch; its connection
+to Portkey is the `config.yaml` that `build.py` generates from the catalog, so
+`elimoneybags1/litellm` `main` is upstream's. The Rust connection layer,
+`integrations/gateway-rs/`, needs the catalog, LiteLLM's `usage.db` and
+Portkey's `requests.jsonl`, so it lives here and not in either fork.
 
 The repository before the fresh start is tag `before-fresh-start`
 (`25b8aca`). `git checkout before-fresh-start` restores the whole old tree.
