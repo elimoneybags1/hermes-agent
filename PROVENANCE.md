@@ -32,30 +32,39 @@ pinned upstream plus the `[team]` patches, exactly as this repository's `main`
 is Hermes plus Team. Taking an upstream change into a subtree goes through the
 fork, so the fork is always the record of what was taken.
 
-Unpatched subtrees (`litellm/`, `self-evolution/`): the fork's `main` equals
-upstream `main`, and GitHub's "Sync fork" fast-forwards it.
+**Team → fork:** `integrations/push-forks.sh [portkey|litellm]` after a commit.
+Portkey goes by `git subtree push --prefix=portkey portkey main` (the subtree
+has full history, so this repository's history for the prefix is split and
+pushed; minutes). LiteLLM's subtree is squashed, so the script instead builds
+one commit on top of the fork's current `main` whose tree is the fork's with
+`team/` and `TEAM.md` replaced by HEAD's, and pushes that.
+
+**Upstream → fork → here:** `self-evolution/` is untouched, so its fork's
+`main` equals upstream and "Sync fork" fast-forwards it. The other two forks
+have diverged from upstream (Team commits on top of the pinned release), so
+`gh repo sync` refuses them; GitHub's "Sync fork → Update branch" makes a merge
+commit on the fork instead. Upstream never touches `team/`, `TEAM.md` or
+`src/team/`, so that merge is clean except where a `[team]` hook line in a
+Portkey file moved. Then into this repository:
 
 ```
-gh repo sync elimoneybags1/litellm --source BerriAI/litellm       # fork main = upstream main
-git subtree pull --prefix=litellm litellm <tag-or-main> --squash  # into this repo
+git subtree pull --prefix=self-evolution self-evolution main --squash
+git subtree pull --prefix=litellm litellm main --squash
+git subtree pull --prefix=portkey portkey main
 ```
 
-Patched subtree (`portkey/`): the fork's `main` has diverged from upstream, so
-`gh repo sync` refuses it. Either GitHub's "Sync fork → Update branch" (a
-merge commit on the fork), then `git subtree pull --prefix=portkey portkey
-main`; or pull the upstream tag straight into this repository with
-`git subtree pull --prefix=portkey https://github.com/Portkey-AI/gateway.git <tag>`
-and send the result to the fork with `git subtree push --prefix=portkey
-portkey main`, which splits this repository's history for that prefix. Either
-way the patches merge forward, and the Pinned column above is updated.
+and the Pinned column above is updated.
 
-`elimoneybags1/gateway` `main` was set on 2026-11-01 to `0c6548e3`: Portkey
-v1.15.2 plus the four `[team]` commits (12 files). A Portkey built from the
-fork's `main` has config-by-name, the request log and the tool round-trip
-fixes without this repository. LiteLLM carries no Team patch; its connection
-to Portkey is the `config.yaml` that `build.py` generates from the catalog, so
-`elimoneybags1/litellm` `main` is upstream's. The Rust connection layer,
-`integrations/gateway-rs/`, needs the catalog, LiteLLM's `usage.db` and
+State on 2026-11-01: `elimoneybags1/gateway` `main` = Portkey v1.15.2 plus the
+four `[team]` commits (12 files) and `TEAM.md`; a Portkey built from it has
+config-by-name, the request log and the tool round-trip fixes without this
+repository. `elimoneybags1/litellm` `main` = LiteLLM v1.106.4 (`ea7ca16d`)
+plus one `[team]` commit adding `team/` (the eight files that were
+`integrations/litellm/`) and `TEAM.md`; GitHub shows it 149 ahead of
+BerriAI `main` because the v1.106.4 release line carries 148 commits of
+LiteLLM's own that are not on their `main`, plus Team's one. `TEAM.md` at the
+root of each fork says which files do the handshake. The Rust connection
+layer, `integrations/gateway-rs/`, needs the catalog, LiteLLM's `usage.db` and
 Portkey's `requests.jsonl`, so it lives here and not in either fork.
 
 The repository before the fresh start is tag `before-fresh-start`
