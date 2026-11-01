@@ -63,7 +63,10 @@ The repository before the fresh start is tag `before-fresh-start`
 
 ## What Team owns
 
-`team/`, `plugins/team/`, `integrations/`, `tests/team/`, `PROVENANCE.md`,
+`team/`, `plugins/team/`, `integrations/`, `tests/team/`, `litellm/team/` (LiteLLM's
+half of the gateway handshake, shipped inside the subtree so the litellm fork
+carries it), `TEAM.md` at the root of `portkey/` and `litellm/` (what does the
+handshake, for a reader of either fork), `PROVENANCE.md`,
 `CLAUDE.md`, `.work.json`, `IDEAS.md`, `FRESH-START.md`, `PLAN.md`,
 `HANDOFF-GATEWAY.md`, a `# Team` block appended to `.gitignore`, and three
 lines in `pyproject.toml` (the `team` script, the `team` package include, and

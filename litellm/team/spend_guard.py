@@ -20,7 +20,7 @@ from pathlib import Path
 from litellm.integrations.custom_logger import CustomLogger
 
 _spec = importlib.util.spec_from_file_location(
-    "team_spend", Path(__file__).resolve().parent.parent / "portkey" / "spend.py")
+    "team_spend", Path(__file__).resolve().parents[2] / "integrations" / "portkey" / "spend.py")
 spend = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(spend)
 log = logging.getLogger("team.spend_guard")

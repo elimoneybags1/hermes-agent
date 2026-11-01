@@ -21,7 +21,8 @@ it only when a replay set says it beat the base rate.
 ## Ownership rule
 
 Upstream files are never edited in place. Team lives in `team/`,
-`plugins/team/`, `integrations/`, `tests/team/`, and the Team-owned files at
+`plugins/team/`, `integrations/`, `tests/team/`, `litellm/team/` and `TEAM.md` in
+each subtree, and the Team-owned files at
 the root. A change to an upstream file is a marked `[team]` commit listed in
 `PROVENANCE.md` with file and line, and is kept minimal. Update Hermes with
 `git fetch upstream main && git merge upstream/main`; update a subtree with

@@ -43,7 +43,7 @@ It is not a thin forward and not a stopgap.
   no `cd` in shell commands (`git -C`, `npm --prefix`); commit as you go;
   never push without asking.
 - This repo is also being worked on by the Team session. You own:
-  `portkey/`, `litellm/`, `integrations/portkey/`, `integrations/litellm/`,
+  `portkey/`, `litellm/`, `integrations/portkey/`, `litellm/team/`,
   `tests/team/test_portkey_build.py`, `$HOME/state/team/{portkey,litellm}`.
   Do not touch anything else; `git add` only your paths; both sessions commit
   on `main` in this working tree.
@@ -81,7 +81,7 @@ It is not a thin forward and not a stopgap.
    `served_by` per model), `build.py` with its refusals and `--check`,
    `run.sh`, `install-launchd.sh`, `status.sh`, `README.md` with what you
    verified and when.
-4. `integrations/litellm/`: own venv from the subtree, generated
+4. `litellm/team/`: own venv from the subtree, generated
    `config.yaml` pointing every deployment at Portkey by config name,
    `session_pin.py`, `usage_log.py`, trace-id forwarding, `run.sh`,
    `install-launchd.sh`, `status.sh`.

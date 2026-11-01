@@ -12,7 +12,7 @@ import pytest
 def usage_log(monkeypatch, tmp_path):
     # Only the callback base class is a proxy dependency; exercise the real adapter and DB.
     monkeypatch.setitem(sys.modules, "litellm.integrations.custom_logger", SimpleNamespace(CustomLogger=object))
-    path = Path(__file__).resolve().parents[2] / "integrations/litellm/usage_log.py"
+    path = Path(__file__).resolve().parents[2] / "litellm/team/usage_log.py"
     spec = importlib.util.spec_from_file_location("usage_log_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
