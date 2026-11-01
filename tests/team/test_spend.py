@@ -147,7 +147,7 @@ def test_the_litellm_guard_withholds_only_metered_deployments_when_over(team_sta
     for name in ("litellm", "litellm.integrations"):
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
     monkeypatch.setitem(sys.modules, "litellm.integrations.custom_logger", stub)
-    guard_mod = _load("team_spend_guard", ROOT / "integrations" / "litellm" / "spend_guard.py")
+    guard_mod = _load("team_spend_guard", ROOT / "litellm" / "team" / "spend_guard.py")
     catalog["models"][-2]["tier"], catalog["models"][-2]["order"] = "reasoning", 99  # route claude-opus-5-5
     write_state(team_state, catalog, keys)
     deps = [{"litellm_params": {"extra_headers": {"x-portkey-config": c}}}

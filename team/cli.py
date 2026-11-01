@@ -26,6 +26,7 @@ from team import (
     boss,
     catalog,
     claude_roles,
+    gateway,
     grade,
     kanban,
     ledger,
@@ -177,6 +178,7 @@ def cmd_boss(args) -> int:
 
     home = ledger.state_dir() / "boss"
     home.mkdir(parents=True, exist_ok=True)
+    gateway.refresh(ROOT)  # the TUI attaches to the shared gateway, which loads code once
     return subprocess.call([str(kanban.wrapper()), "-p", "boss", *args.rest], cwd=home)
 
 

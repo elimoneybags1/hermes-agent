@@ -27,7 +27,7 @@ import threading
 import time
 from pathlib import Path
 
-from team import ledger, profiles, settings
+from team import gateway, ledger, profiles, settings
 
 LANES = ("aide", "boss")
 TOOLSETS = {"boss": "team,memory,session_search", "aide": "team-read"}
@@ -70,9 +70,13 @@ def _lane() -> dict:
 
 
 class Chat:
-    def __init__(self, root: Path, popen=subprocess.Popen, path: Path | None = None, aide: bool | None = None):
+    def __init__(
+        self, root: Path, popen=subprocess.Popen, path: Path | None = None, aide: bool | None = None,
+        refresh=gateway.refresh,
+    ):
         self.root = Path(root)
         self.popen = popen
+        self.refresh = refresh  # restarts a gateway running older code than the checkout
         self.path = path or state() / "chat.json"
         self.aide = aide  # None: from settings and whether the aide's profile exists
         self.lock = threading.Lock()
@@ -247,6 +251,9 @@ class Chat:
         result, err = None, ""
         started = ledger._now()  # the ledger's clock, for the model lookup
         try:
+            # The lane's turn runs inside the shared gateway, which loads code once:
+            # a gateway older than the checkout is restarted first (team.gateway).
+            self.refresh(self.root)
             proc = self.popen(
                 argv(self.root, text, session, lane), cwd=str(state()),
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
