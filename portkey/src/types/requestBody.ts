@@ -270,6 +270,7 @@ export interface ContentType extends PromptCache {
 }
 
 export interface ToolCall {
+  extra_content?: { google?: { thought_signature?: string } };
   id: string;
   type: string;
   function: {

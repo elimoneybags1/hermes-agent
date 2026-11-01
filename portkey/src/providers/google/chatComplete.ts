@@ -182,7 +182,7 @@ export const transformOpenAIRoleToGoogleRole = (
     case 'assistant':
       return 'model';
     case 'tool':
-      return 'function';
+      return 'user';
     case 'developer':
       return 'system';
     default:
@@ -245,15 +245,17 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
                   name: tool_call.function.name,
                   args: JSON.parse(tool_call.function.arguments),
                 },
-                ...(tool_call.function.thought_signature && {
-                  thoughtSignature: tool_call.function.thought_signature,
+                ...((tool_call.function.thought_signature || tool_call.extra_content?.google?.thought_signature) && {
+                  thoughtSignature: tool_call.function.thought_signature || tool_call.extra_content?.google?.thought_signature,
                 }),
               });
             });
           } else if (message.role === 'tool') {
             parts.push({
               functionResponse: {
-                name: message.name ?? 'gateway-tool-filler-name',
+                name: message.name ?? params.messages?.flatMap((m) => m.tool_calls ?? [])
+                  .find((call) => call.id === message.tool_call_id)?.function.name
+                  ?? 'gateway-tool-filler-name',
                 response: {
                   output: message.content ?? '',
                 },
@@ -658,6 +660,7 @@ export const GoogleChatCompleteResponseTransform: (
             if (part.functionCall) {
               toolCalls.push({
                 id: 'portkey-' + crypto.randomUUID(),
+                ...(!strictOpenAiCompliance && part.thoughtSignature && { extra_content: { google: { thought_signature: part.thoughtSignature } } }),
                 type: 'function',
                 function: {
                   name: part.functionCall.name,
@@ -715,7 +718,7 @@ export const GoogleChatCompleteResponseTransform: (
         }) ?? [],
       usage: {
         prompt_tokens: promptTokenCount,
-        completion_tokens: candidatesTokenCount,
+        completion_tokens: candidatesTokenCount + thoughtsTokenCount,
         total_tokens: totalTokenCount,
         completion_tokens_details: {
           reasoning_tokens: thoughtsTokenCount,
@@ -768,7 +771,8 @@ export const GoogleChatCompleteStreamChunkTransform: (
   if (parsedChunk.usageMetadata) {
     usageMetadata = {
       prompt_tokens: parsedChunk.usageMetadata.promptTokenCount,
-      completion_tokens: parsedChunk.usageMetadata.candidatesTokenCount,
+      completion_tokens: (parsedChunk.usageMetadata.candidatesTokenCount ?? 0) +
+        (parsedChunk.usageMetadata.thoughtsTokenCount ?? 0),
       total_tokens: parsedChunk.usageMetadata.totalTokenCount,
       completion_tokens_details: {
         reasoning_tokens: parsedChunk.usageMetadata.thoughtsTokenCount ?? 0,
@@ -844,6 +848,7 @@ export const GoogleChatCompleteStreamChunkTransform: (
                   return {
                     index: idx,
                     id: 'portkey-' + crypto.randomUUID(),
+                    ...(!strictOpenAiCompliance && part.thoughtSignature && { extra_content: { google: { thought_signature: part.thoughtSignature } } }),
                     type: 'function',
                     function: {
                       name: part.functionCall.name,

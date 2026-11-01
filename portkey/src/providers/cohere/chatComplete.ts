@@ -36,8 +36,8 @@ export const CohereChatCompleteConfig: ProviderConfig = {
       return params.messages?.map((message) => {
         const role = message.role === 'developer' ? 'system' : message.role;
         return {
+          ...message,
           role,
-          content: message.content,
         };
       });
     },

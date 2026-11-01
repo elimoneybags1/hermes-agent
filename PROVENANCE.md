@@ -68,9 +68,14 @@ lines with `git -C . log --oneline -- <file>` and `grep -n '\[team\]' <file>`.
 | 2026-10-29 | `portkey/` | `src/team/configByName.ts`, `src/team/configByName.test.ts` | Team file | fail closed: a `/v1` request with no config name, or an inline JSON config, is a 400; 9 jest tests | `[team] Portkey: refuse requests without a config name` |
 | 2026-10-27 | `portkey/` | `src/middlewares/log/index.ts` | 3, 97-98 | import and one call after `next()`: append a JSON line per `/v1` request to `$PORTKEY_REQUEST_LOG` | `02cd4031` |
 | 2026-10-27 | `portkey/` | `src/team/requestLog.ts`, `src/team/requestLog.test.ts` | new | the line builder and its 3 jest tests | `02cd4031` |
+| 2026-11-01 | `portkey/` | `src/providers/google/chatComplete.ts` | 185, 248-249, 256-258, 663, 721, 774-775, 851 | Gemini tool round trip: a `tool` message is a `user` turn, not the dead `function` role; the function response carries the tool's real name looked up from the assistant's `tool_calls` by id; `thoughtSignature` comes back out as `extra_content.google.thought_signature` on the tool call and is sent back in; `completion_tokens` includes `thoughtsTokenCount` (both transforms) so the ledger's output count is the billed one | `[team] Portkey: Gemini and Cohere tool round trip` |
+| 2026-11-01 | `portkey/` | `src/providers/google-vertex-ai/chatComplete.ts` | 565, 667-668 | `completion_tokens` includes `thoughtsTokenCount`, same as above | same |
+| 2026-11-01 | `portkey/` | `src/providers/cohere/chatComplete.ts` | 39-40 | pass the whole message through, so `tool_calls` and `tool_call_id` survive instead of only `content` | same |
+| 2026-11-01 | `portkey/` | `src/types/requestBody.ts` | 273 | `ToolCall.extra_content.google.thought_signature` | same |
+| 2026-11-01 | `portkey/` | `src/providers/toolRoundTrip.test.ts` | new | 4 jest tests for the three provider changes | same |
 
 Run the patch tests with
-`npx --prefix portkey jest --config portkey/jest.config.js --rootDir portkey src/team`
+`npx --prefix portkey jest --config portkey/jest.config.js --rootDir portkey src/team src/providers/toolRoundTrip`
 (`npm --prefix portkey run test:gateway` runs `jest src/`, where 8 upstream
 suites already fail at v1.15.2 for want of API keys and of ESM support in
 ts-jest; the two `src/team` suites pass).
