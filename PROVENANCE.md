@@ -42,6 +42,16 @@ Same with `gateway`/`portkey` (no `--squash`, full history) and
 history for that prefix and pushes it as the fork's `team` branch. Then update
 the Pinned column above.
 
+`elimoneybags1/gateway` branch `team` was first pushed 2026-11-01 at
+`0c6548e3`: the four `[team]` Portkey commits (12 files) on top of v1.15.2.
+A Portkey built from that branch has config-by-name, the request log and the
+tool round-trip fixes without this repository. LiteLLM carries no Team patch;
+its connection to Portkey is the `config.yaml` that `build.py` generates from
+the catalog, so `elimoneybags1/litellm` has no `team` branch. The Rust
+connection layer, `integrations/gateway-rs/`, needs the catalog, LiteLLM's
+`usage.db` and Portkey's `requests.jsonl`, so it lives here and not in either
+fork.
+
 The repository before the fresh start is tag `before-fresh-start`
 (`25b8aca`). `git checkout before-fresh-start` restores the whole old tree.
 
