@@ -154,8 +154,8 @@ pre { background: var(--code); padding: 0.6rem 0.75rem; border-radius: var(--rad
 .msg--handoff { align-self: center; }
 .ask-boss { margin-left: 0.5rem; font-size: 0.9em; }
 .composer-main { flex: 1; display: flex; flex-direction: column; gap: 0.3rem; }
-.to-boss { display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem; cursor: pointer; }
-.to-boss input { margin: 0; }
+.composer-actions { display: flex; flex-direction: column; gap: 0.4rem; }
+.composer-actions .btn { white-space: nowrap; }
 .bubble p { margin: 0.3rem 0; }
 .bubble p:first-child { margin-top: 0; }
 .bubble p:last-child { margin-bottom: 0; }

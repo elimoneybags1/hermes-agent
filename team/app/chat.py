@@ -1,17 +1,19 @@
-"""The conversation behind Team's app: the aide answers, the boss plans.
+"""The conversation behind Team's app: Eli talks to the boss; a question goes to the aide.
 
 Two lanes, each a Hermes profile resumed by its session id, so each keeps its
 context between messages exactly as in ``team boss``:
 
+- **boss** (Claude on the subscription): the one Eli talks to. Every message
+  goes here unless he sent it as a question, and so do Team's own notes to it
+  (a question he answered, a goal he sent back). Boss messages queue while it
+  is answering and are merged into one message when dispatched, with the
+  aide's answers since the boss's last turn as context, so one boss turn
+  costs one boss turn.
 - **aide** (``team/roles/aide``, a free model with read-only Team tools):
-  every message Eli types goes here first, unless he aimed it at the boss or
-  ``aide.enabled`` is off. A reply that starts with ``HANDOFF`` sends the
-  message on to the boss unchanged, and so does a failed aide run.
-- **boss** (Claude on the subscription): what the aide handed off, what Eli
-  aimed at it, and Team's own notes to it (a question he answered, a goal he
-  sent back). Boss messages queue while it is answering and are merged into
-  one message when dispatched, with the aide's answers since the boss's last
-  turn as context, so one boss turn costs one boss turn.
+  a message Eli sends with the app's question button goes here instead, while
+  ``aide.enabled`` is on, so a lookup in the ledger or the notes costs no
+  Claude turn. A reply that starts with ``HANDOFF`` sends the message on to
+  the boss unchanged, and so does a failed aide run.
 
 The transcript lives in ``$TEAM_STATE/boss/chat.json``. Hermes reports tokens
 as running totals per session; each message stores its own share (the
@@ -131,14 +133,14 @@ class Chat:
     # --- sending -------------------------------------------------------------
 
     def send(self, text: str, to: str = "auto", wait: bool = False) -> str:
-        """Eli's message. ``to`` is ``auto`` (the aide first, when on), ``boss`` or ``aide``.
-        Returns the lane it went to."""
+        """Eli's message. ``to`` is ``auto`` or ``boss`` (the boss), or ``aide`` (a question for
+        the aide; the boss when the aide is off). Returns the lane it went to."""
         text = text.strip()
         if not text:
             raise ValueError("say something")
         if to not in ("auto", *LANES):
             raise ValueError(f"to must be auto, boss or aide, not {to!r}")
-        lane = to if to in LANES else ("aide" if self.aide_on() else "boss")
+        lane = "aide" if to == "aide" and self.aide_on() else "boss"
         self._enqueue(lane, text, {"role": "you", "text": text, "at": _now(), "to": lane})
         if wait:
             self.drain()

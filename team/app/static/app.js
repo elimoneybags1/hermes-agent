@@ -233,22 +233,24 @@
     const projectsBox = h("div", { class: "projects" }, h("div", { class: "muted" }, "Loading…"));
     const chart = h("div", { class: "chart-wrap" });
     const chatList = h("div", { class: "chat-list" });
-    const toBoss = h("input", { type: "checkbox", id: "to-boss" });
-    const input = h("textarea", { class: "chat-input", rows: "3", placeholder: "Ask or tell… (Enter sends, Shift+Enter for a new line)" });
-    const sendBtn = h("button", { class: "btn btn--primary", onclick: send }, "Send");
+    const input = h("textarea", { class: "chat-input", rows: "3", placeholder: "Tell the boss… (Enter sends, Shift+Enter for a new line)" });
+    const sendBtn = h("button", { class: "btn btn--primary", onclick: function () { send("boss"); } }, "Send");
+    const askBtn = h("button", { class: "btn btn--ghost", title: "A question for the aide, a free model: status, findings, notes. It hands anything else to the boss.",
+      onclick: function () { send("aide"); } }, "Ask a question");
     const lanes = h("div", { class: "lanes muted" });
     let chatData = null, inbox = null, chatSig = "", inboxSig = "";
     const goalEls = {}, questionEls = {}, openProjects = {};
 
     input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send("boss"); }
     });
 
-    async function send() {
+    // Eli talks to the boss; "Ask a question" sends to the aide, a free model, instead.
+    async function send(to) {
       const text = input.value.trim();
       if (!text) return;
       try {
-        await api("chat", { text: text, to: toBoss.checked ? "boss" : "auto" });
+        await api("chat", { text: text, to: to });
         input.value = "";
         await loadChat();
       } catch (e) { fail(e); }
@@ -271,7 +273,7 @@
       if (m.role === "you") {
         return h("div", { class: "msg msg--you" + (m.kind === "note" ? " msg--note" : "") },
           h("div", { class: "bubble" }, prose(m.text)),
-          h("div", { class: "meta" }, m.kind === "note" ? "from a card · " : "", m.to === "boss" ? "to the boss · " : "", when(m.at)));
+          h("div", { class: "meta" }, m.kind === "note" ? "from a card · " : "", m.to === "aide" ? "question for the aide · " : "", when(m.at)));
       }
       const t = m.tokens;
       if (m.role === "aide" && m.handoff) {
@@ -302,7 +304,7 @@
       if (!c.messages.length && !c.current && !c.aide_current) {
         chatList.appendChild(h("div", { class: "empty" },
           h("p", null, "Tell the boss what you want built. Its goals and questions arrive as cards on the left; approve them one by one and they build."),
-          h("p", { class: "muted" }, c.aide ? "Questions about the project are answered here by the aide, a free model." : "The aide is off: every message goes to the boss.")));
+          h("p", { class: "muted" }, c.aide ? "\"Ask a question\" sends a lookup (status, findings, notes) to the aide, a free model, instead." : "The aide is off: every message goes to the boss.")));
       }
       let lastYou = null;
       c.messages.forEach(function (m) {
@@ -470,8 +472,8 @@
         h("div", { class: "pane-title" }, h("span", { class: "avatar" }, "B"), h("div", null, h("h2", null, "Boss & aide"), lanes)),
         h("button", { class: "btn btn--ghost btn--small", onclick: newChat }, "New conversation")),
       chatList,
-      h("div", { class: "composer" }, h("div", { class: "composer-main" }, input,
-        h("label", { class: "muted to-boss", title: "Skip the aide; the boss (Claude) gets this message" }, toBoss, " straight to the boss")), sendBtn)));
+      h("div", { class: "composer" }, h("div", { class: "composer-main" }, input),
+        h("div", { class: "composer-actions" }, sendBtn, askBtn))));
 
     const stops = [
       every(function () { return (chatData && (chatData.current || chatData.aide_current)) ? 1000 : 5000; }, function () { return loadChat().catch(fail); }),

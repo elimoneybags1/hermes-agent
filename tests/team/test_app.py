@@ -97,7 +97,7 @@ def test_the_aide_answers_questions_and_hands_the_rest_to_the_boss(team_state, t
         Proc([result("b1", "Added goal 4.", 4100, 10, 0, 0)]),
     )
     c = chat.Chat(tmp_path, popen=popen, aide=True)
-    assert c.send("Build a token cap", wait=True) == "aide"
+    assert c.send("Build a token cap", to="aide", wait=True) == "aide"
     aide_run, boss_run = popen.calls[:2]
     assert aide_run[1:3] == ["-p", "aide"] and aide_run[aide_run.index("-t") + 1] == "team-read"
     assert boss_run[1:3] == ["-p", "boss"] and boss_run[boss_run.index("-q") + 1] == "Build a token cap"
@@ -105,12 +105,12 @@ def test_the_aide_answers_questions_and_hands_the_rest_to_the_boss(team_state, t
     assert [m["role"] for m in msgs] == ["you", "aide", "boss"]
     assert msgs[0]["to"] == "boss" and msgs[1]["handoff"] is True and msgs[2]["text"] == "Project 1 is in your inbox."
 
-    c.send("How many landed this week?", wait=True)
+    c.send("How many landed this week?", to="aide", wait=True)
     msgs = c.view()["messages"]
     assert msgs[3]["to"] == "aide" and msgs[4]["role"] == "aide" and msgs[4]["handoff"] is False
     assert popen.calls[2][-2:] == ["--resume", "a1"]  # the aide keeps its own session
 
-    c.send("Add a goal for it", to="boss", wait=True)
+    c.send("Add a goal for it", wait=True)  # the default lane is the boss, even with the aide on
     text = popen.calls[3][popen.calls[3].index("-q") + 1]
     assert text.startswith("(Since your last turn, the aide answered Eli") and "3 goals landed since Monday" in text
     assert text.endswith("Add a goal for it") and "How many landed" in text
@@ -122,9 +122,16 @@ def test_the_aide_answers_questions_and_hands_the_rest_to_the_boss(team_state, t
 def test_a_failed_aide_run_still_reaches_the_boss(team_state, tmp_path):
     popen = popen_with(Proc([], err="Error: gateway refused\n"), Proc([result("b1", "Here.", 1, 1, 0, 0)]))
     c = chat.Chat(tmp_path, popen=popen, aide=True)
-    c.send("what now?", wait=True)
+    c.send("what now?", to="aide", wait=True)
     msgs = c.view()["messages"]
     assert [m["role"] for m in msgs] == ["you", "aide", "boss"] and msgs[1]["error"] and msgs[0]["to"] == "boss"
+
+
+def test_a_question_goes_to_the_boss_when_the_aide_is_off(team_state, tmp_path):
+    popen = popen_with(Proc([result("b1", "Two landed.", 1, 1, 0, 0)]))
+    c = chat.Chat(tmp_path, popen=popen, aide=False)
+    assert c.send("How many landed?", to="aide", wait=True) == "boss"
+    assert popen.calls[0][1:3] == ["-p", "boss"]
 
 
 @pytest.fixture
