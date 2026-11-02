@@ -1074,6 +1074,58 @@ def test_a_security_goal_carries_the_report_to_eli(world):
     assert "security report: nothing dangerous" in d["context"] and "app.py:1 [info] a constant" in d["context"]
 
 
+def test_onboarding_proves_the_check_it_proposes_and_eli_applies_it(world):
+    _add_role(world, "onboard", "onboard", tools='["terminal", "file"]')
+    goal = _goal(world, "Onboard this repo", kind="onboarding")
+    assert json.loads(goal["stages"]) == ["spec"] and goal["role"] == "onboard" and goal["needs_commits"] == 0
+    tid = goal["current_task"]
+    body = world["hermes"].tasks[tid]["body"]
+    assert "break_cmd" in body and "check: `./check.sh`" in body  # what Team already has, to confirm or replace
+    # a break the check does not catch is refused
+    world["hermes"].summaries[tid] = json.dumps(
+        {"check": "test -f app.py", "test_runner": "", "e2e": "", "setup": "", "break_cmd": "true", "notes": ""}
+    )
+    world["hermes"].tasks[tid]["status"] = "review"
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["attempt"] == 2 and "still passes after the break command" in world["hermes"].comments[tid][0]
+    # a check that passes, fails after the break, and passes again once it is undone
+    world["hermes"].summaries[tid] = json.dumps(
+        {"check": "grep -q VALUE app.py", "test_runner": "sh {path}", "e2e": "", "setup": "", "break_cmd": ": > app.py", "notes": "no tests yet"}
+    )
+    world["hermes"].tasks[tid]["status"] = "review"
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] is None and g["risk"] == "ask" and g["detail"].startswith("waiting for Eli to land")
+    [d] = [d for d in ledger.list_decisions(world["conn"], "team") if d["source"] == "land"]
+    assert "onboarding proposal:" in d["context"] and "grep -q VALUE app.py" in d["context"]
+    assert (Path(goal["worktree"]) / "app.py").read_text() == "VALUE = 1\n"  # the break was undone
+    assert targets.require("team")["check"] == "./check.sh"  # nothing applied before Eli answers
+    ledger.answer_decision(world["conn"], d["id"], "land it")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass"
+    t = targets.require("team")
+    assert t["check"] == "grep -q VALUE app.py" and t["test_runner"] == "sh {path}" and t["e2e"] is None
+
+
+def test_a_target_overlay_picks_the_profile_and_the_menu(world):
+    from team import lead, overlay
+
+    d = overlay.role_dir("team", "implement")
+    (d / "skills" / "repo-rules").mkdir(parents=True)
+    (d / "skills" / "repo-rules" / "SKILL.md").write_text("---\nname: repo-rules\ndescription: this repo's rules\n---\nFollow them.\n")
+    (d / "role.toml").write_text('tools = ["file"]\n')
+    profiles.profile_dir("implement--team").mkdir(parents=True)
+    menu = lead.menu(world["root"], CATALOG, "team")
+    assert menu["implement"]["toolsets"] == ["file"] and "repo-rules" in menu["implement"]["skills"]
+    assert lead.menu(world["root"], CATALOG)["implement"]["toolsets"] == ["file", "terminal"]
+    goal = _goal(world)
+    assert world["hermes"].tasks[goal["current_task"]]["assignee"] == "implement--team"
+    job = ledger.get_job(world["conn"], goal["job_id"])
+    assert job["role"] == "implement"  # the ledger counts the role, whichever profile ran it
+
+
 def test_one_team_run_per_target(team_state):
     held = run.acquire_lock("team")
     with pytest.raises(run.RunError, match="another team run holds"):

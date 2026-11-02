@@ -34,9 +34,10 @@ def run(
     allowed_files=None,
     check=None,
     decision_file=None,
+    target=None,
 ) -> dict[str, Any]:
     root = Path(root or Path(__file__).resolve().parents[1])
-    spec = roles.load(root, role)
+    spec = roles.load(root, role, target=target)
     selected = model or spec.get("runs_on" if role == "lead" else "escalation", {}).get(
         "model"
     )
@@ -55,6 +56,7 @@ def run(
         allowed_files=allowed_files,
         check=check,
         decision_file=str(decision_file or ""),
+        target=target,
     )
     env = claude_run.clean_env()
     # A nested planner must not inherit the boss's profile or kanban ownership.
@@ -142,7 +144,7 @@ def execute(request: dict, home: Path) -> dict:
     from integrations.subscription.setup import install_profile
 
     root = Path(request["root"])
-    spec = roles.load(root, request["role"])
+    spec = roles.load(root, request["role"], target=request.get("target"))
     spec["runs_on"] = {"harness": "hermes-subscription", "model": request["model"]}
     cfg = profiles.role_config(root, spec)
     cfg["memory"] = {"memory_enabled": False, "user_profile_enabled": False}
@@ -159,7 +161,7 @@ def execute(request: dict, home: Path) -> dict:
     names = _tool_names(spec)
     readonly = request["role"] == "lead" or not ({"write_file", "patch", "terminal"} & set(names))
     create_custom_toolset("team-worker", "Team's bounded worker tools", names)
-    soul = roles.soul(root, request["role"]) or ""
+    soul = spec.get("soul") or roles.soul(root, request["role"]) or ""
     if not readonly:
         soul += (
             "\n"
@@ -167,12 +169,8 @@ def execute(request: dict, home: Path) -> dict:
             + "\nReturn a summary when finished; Team performs the review handoff."
         )
     for skill in spec["skills"]:
-        soul += (
-            "\n"
-            + (
-                roles.roles_dir(root) / request["role"] / "skills" / skill / "SKILL.md"
-            ).read_text()
-        )
+        skill_dir = Path((spec.get("skill_dirs") or {}).get(skill) or roles.roles_dir(root) / request["role"] / "skills" / skill)
+        soul += "\n" + (skill_dir / "SKILL.md").read_text()
     if request.get("schema"):
         soul += "\nReturn only JSON matching this schema:\n" + json.dumps(
             request["schema"]

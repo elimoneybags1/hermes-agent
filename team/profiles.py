@@ -289,21 +289,23 @@ def sync(
     runner: Runner = subprocess.run,
     *,
     profile: str | None = None,
+    target: str | None = None,
 ) -> list[str]:
     """Make the role's profile match its files; returns what changed.
 
     ``profile`` names the profile to write when it is not the role's own: a
     harness review syncs the role's files from its branch worktree (``root``)
-    into ``candidate_profile(role, review)``.
+    into ``candidate_profile(role, review)``. ``target`` syncs the role with that
+    target's overlay applied into ``<role>--<target>``.
     """
     root = Path(root)
-    role = roles.load(root, role_name, cat)
+    role = roles.load(root, role_name, cat, target=target)
     if role["runs_on"]["harness"] == "claude":
         return []  # runs through Claude Code, not a Hermes profile
     changes: list[str] = []
     if write_root_config(root):
         changes.append("root config.yaml")
-    profile = profile or role_name
+    profile = profile or role.get("profile") or role_name
     pdir = profile_dir(profile)
     if not pdir.exists():
         result = runner(
@@ -335,11 +337,11 @@ def sync(
         changes.append("config.yaml")
     if write_env(pdir):
         changes.append(".env")
-    soul = roles.soul(root, role_name)
+    soul = role.get("soul")
     if soul is not None and _write(pdir / "SOUL.md", soul):
         changes.append("SOUL.md")
     for skill in role["skills"]:
-        src = root / "team" / "roles" / role_name / "skills" / skill
+        src = Path((role.get("skill_dirs") or {}).get(skill) or root / "team" / "roles" / role_name / "skills" / skill)
         dst = pdir / "skills" / skill
         if dst.exists() and _same_tree(src, dst):
             continue

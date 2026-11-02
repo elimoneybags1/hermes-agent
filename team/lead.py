@@ -136,11 +136,12 @@ class LeadError(RuntimeError):
 # --- what the lead may choose from ----------------------------------------------
 
 
-def menu(root: Path, cat: dict | None = None) -> dict[str, dict]:
-    """Per active hermes role: the toolsets, skills (with descriptions) and models an order may name."""
+def menu(root: Path, cat: dict | None = None, target: str | None = None) -> dict[str, dict]:
+    """Per active hermes builder role: the toolsets, skills (with descriptions) and models an
+    order may name, as narrowed or extended by ``target``'s overlay."""
     out = {}
     for name in roles.names(root):
-        role = roles.load(root, name, cat)
+        role = roles.load(root, name, cat, target=target)
         if role["runs_on"]["harness"] != "hermes" or role["status"] != "active":
             continue
         if not role.get("assignable", True):  # the aide answers Eli; it builds nothing
@@ -150,7 +151,7 @@ def menu(root: Path, cat: dict | None = None) -> dict[str, dict]:
         out[name] = {
             "does": role["does"],
             "toolsets": sorted(set(role.get("tools") or [])),
-            "skills": roles.skill_summaries(root, name),
+            "skills": roles.skill_summaries(root, name, role),
             "models": list(role["models"]["candidates"]),
         }
     return out

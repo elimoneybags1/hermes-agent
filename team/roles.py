@@ -59,8 +59,13 @@ def names(root: Path) -> list[str]:
     )
 
 
-def load(root: Path, name: str, cat: dict | None = None) -> dict:
-    """Parse and validate one role; ``cat`` is the catalog for candidate checks."""
+def load(root: Path, name: str, cat: dict | None = None, target: str | None = None) -> dict:
+    """Parse and validate one role; ``cat`` is the catalog for candidate checks.
+
+    With ``target``, the target's overlay (``team.overlay``) is applied: skills added,
+    instructions appended, tools, models and budget narrowed, never widened. The result
+    then names the profile it runs on (``<role>--<target>``).
+    """
     path = roles_dir(root) / name / "role.toml"
     if not path.exists():
         raise RoleError(f"unknown role: {name}")
@@ -110,14 +115,28 @@ def load(root: Path, name: str, cat: dict | None = None) -> dict:
     if gate not in gates.GATES:
         raise RoleError(f"role {name}: gate must be one of {sorted(gates.GATES)}, not {gate!r}")
     role["skills"] = skills(root, name)
+    role["skill_dirs"] = {s: roles_dir(root) / name / "skills" / s for s in role["skills"]}
+    role["soul"] = soul(root, name)
+    if target is not None:
+        from team import overlay
+
+        if overlay.exists(target, name):
+            try:
+                role = overlay.apply(role, target)
+            except overlay.OverlayError as e:
+                raise RoleError(str(e)) from e
     return role
 
 
-def skill_summaries(root: Path, name: str) -> dict[str, str]:
-    """Skill name -> the ``description`` line of its SKILL.md front matter (or "")."""
+def skill_summaries(root: Path, name: str, role: dict | None = None) -> dict[str, str]:
+    """Skill name -> the ``description`` line of its SKILL.md front matter (or "").
+
+    With ``role`` (a loaded role, overlay applied) the overlay's skills are included.
+    """
+    dirs = (role or {}).get("skill_dirs") or {s: roles_dir(root) / name / "skills" / s for s in skills(root, name)}
     out = {}
-    for skill in skills(root, name):
-        text = (roles_dir(root) / name / "skills" / skill / "SKILL.md").read_text()
+    for skill, d in dirs.items():
+        text = (Path(d) / "SKILL.md").read_text()
         desc = ""
         if text.startswith("---"):
             for line in text.split("---", 2)[1].splitlines():

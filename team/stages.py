@@ -270,6 +270,64 @@ def parse_report(text: str | None, diff: str) -> tuple[dict | None, list[str]]:
     return {"summary": summary, "findings": findings}, []
 
 
+def onboard_brief(goal: dict, target: dict, *, failure: str | None = None, attempt: int = 1, claude: bool = False) -> str:
+    """The onboarding stage: find how this repo is checked and prove the check can fail."""
+    known = {k: target.get(k) for k in ("check", "test_runner", "e2e", "setup") if target.get(k)}
+    out = [goal["goal"], f"## The repo\n{target['path']} (target `{target['name']}`), checked out in your worktree."]
+    if known:
+        out.append("## What Team already has for it (confirm, correct or replace)\n" + "\n".join(f"- {k}: `{v}`" for k, v in known.items()))
+    out.append(
+        "## What to find\n"
+        "- `check`: the one command that decides done: build, lint and tests as the repo's own instructions "
+        "run them. It must pass in the worktree as it stands.\n"
+        "- `test_runner`: how to run one test file, with `{path}` where the file goes; empty if there is no way.\n"
+        "- `e2e`: a command that exercises the real thing (a browser test, a smoke run), or empty.\n"
+        "- `setup`: what a fresh worktree needs before the check can run (install, generate), or empty.\n"
+        "- `break_cmd`: one shell command that corrupts something the check covers, undoable by "
+        "`git checkout -- .`. Team runs the check, then this, then the check again: the second run must fail.\n"
+        "- `notes`: what you could not settle."
+    )
+    out.append(
+        "## How to answer\n"
+        f"{_answer_how(claude)} is only this JSON object:\n"
+        '{"check": "<command>", "test_runner": "<command with {path}>" | "", "e2e": "<command>" | "", '
+        '"setup": "<command>" | "", "break_cmd": "<command>", "notes": "<text>"}\n'
+        "Commit any file you added (a smoke script) before you answer. No prose outside the JSON."
+    )
+    if not claude:
+        out.append("## Done means\n" + _done_text(goal, claude))
+    if failure:
+        out.append(f"## Attempt {attempt - 1} was refused\n{failure[-3000:]}")
+    return "\n\n".join(out)
+
+
+ONBOARDING_KEYS = ("check", "test_runner", "e2e", "setup", "break_cmd", "notes")
+
+
+def parse_onboarding(text: str | None) -> tuple[dict | None, list[str]]:
+    """An onboarding answer: ({check, test_runner, e2e, setup, break_cmd, notes}, []) or (None, reasons)."""
+    data = structured(text)
+    if data is None:
+        return None, ["the summary is not a JSON object"]
+    out: dict[str, str] = {}
+    errors: list[str] = []
+    for key in ONBOARDING_KEYS:
+        value = data.get(key)
+        value = "" if value is None else str(value).strip()
+        if "\n" in value and key != "notes":
+            errors.append(f"{key} must be one line")
+        out[key] = value
+    if not out["check"]:
+        errors.append("check is empty")
+    if not out["break_cmd"]:
+        errors.append("break_cmd is empty: a check that cannot be shown to fail proves nothing")
+    if out["test_runner"] and "{path}" not in out["test_runner"]:
+        errors.append("test_runner must contain {path} where the test file goes")
+    if errors:
+        return None, errors
+    return out, []
+
+
 def findings_text(findings: list[dict]) -> str:
     return "\n".join(
         f"- {f['path']}:{f['line']}" + (f" [{f['severity']}]" if f.get("severity") else "") + f" {f['says']}"

@@ -537,8 +537,8 @@ class Loop:
 
     # -- attempts --------------------------------------------------------------
 
-    def _role(self, name: str) -> dict:
-        role = roles.load(self.root, name, self.cat)
+    def _role(self, name: str, target: str | None = None) -> dict:
+        role = roles.load(self.root, name, self.cat, target=target)
         if role["runs_on"]["harness"] not in ("hermes", "hermes-subscription"):
             raise RunError(f"role {name} does not run on hermes workers")
         if role["status"] != "active":
@@ -596,13 +596,15 @@ class Loop:
         stage = self._stage(goal)
         order = ledger.latest_order(self.conn, goal["id"])
         o = order["order"] if order else None
-        if stage.gate in ("check", "onboard"):
+        if stage.gate == "check":
             if order is not None:
                 return lead.render(
                     o, goal, Path(goal["worktree"]), self.cfg["lead.context_bytes"],
                     failure=failure, attempt=attempt, claude=claude, answer=answer,
                 )
             return brief(goal, attempt, failure, self._owned(goal), claude=claude, answer=answer)
+        if stage.gate == "onboard":
+            return stages.onboard_brief(goal, targets.require(goal["target"]), failure=failure, attempt=attempt, claude=claude)
         if stage.gate == "tests_only":
             return stages.tests_brief(goal, o, self._owned(goal), failure=failure, attempt=attempt, claude=claude)
         diff = self._diff(goal)
@@ -648,7 +650,69 @@ class Loop:
             return self.grade_review(goal, text)
         if name == "security":
             return self.grade_security(goal, text)
+        if name == "onboard":
+            return self.grade_onboard(goal, text)
         raise RunError(f"gate {name!r} has no code yet; a role may not use it")
+
+    ONBOARDING = "onboarding proposal: "
+
+    def grade_onboard(self, goal: dict, text: str | None = None) -> tuple[bool, str]:
+        """The onboarding gate: the proposed check passes as the worktree stands, fails after the
+        proposed break, and passes again once the break is undone. The proposal then waits for Eli."""
+        repo, wt, base = self._repo(goal), Path(goal["worktree"]), goal.get("base") or "main"
+        grade.ensure_worktree(repo, wt, goal["branch"], runner=self.runner)
+        grade.commit_leftovers(
+            wt, f"team: attempt {goal.get('attempt', 1)} left these changes uncommitted; "
+            "Team committed them before grading", None, runner=self.runner,
+        )
+        if not grade.is_clean(wt, runner=self.runner):
+            return False, "uncommitted changes in the worktree"
+        merged, conflicts = grade.merge_base_into(wt, base, runner=self.runner)
+        if not merged:
+            return False, f"merge conflict with {base}:\n" + "\n".join(conflicts)
+        proposal, errors = stages.parse_onboarding(self._answer(goal, text))
+        if proposal is None:
+            return False, "onboarding answer refused: " + "; ".join(errors)
+        if proposal["setup"]:
+            ok, out = self._run_check(wt, proposal["setup"])
+            if not ok:
+                return False, f"the setup command failed (`{proposal['setup']}`):\n{out}"
+        ok, out = self._run_check(wt, proposal["check"])
+        if not ok:
+            return False, f"the proposed check fails on the worktree as it stands (`{proposal['check']}`):\n{out}"
+        try:
+            self._run_check(wt, proposal["break_cmd"])
+            broken_ok, _ = self._run_check(wt, proposal["check"])
+        finally:
+            grade._git(wt, "checkout", "--", ".", runner=self.runner)
+            grade._git(wt, "clean", "-fdq", runner=self.runner)
+        if broken_ok:
+            return False, (
+                f"the check still passes after the break command (`{proposal['break_cmd']}`), so it "
+                f"proves nothing about `{proposal['check']}`; propose a break the check catches, or a "
+                "check that catches a break"
+            )
+        ok, out = self._run_check(wt, proposal["check"])
+        if not ok:
+            return False, f"the check does not pass again after undoing the break; the break was not undoable:\n{out}"
+        detail = self.ONBOARDING + json.dumps(proposal)
+        ledger.update_goal(self.conn, goal["id"], detail=detail)
+        return True, detail + f"\ncheck passed, failed after `{proposal['break_cmd']}`, passed again"
+
+    def _apply_onboarding(self, goal: dict) -> list[str]:
+        """Eli landed an onboarding goal: its proposal becomes the target's settings."""
+        detail = goal.get("detail") or ""
+        at = detail.find(self.ONBOARDING)
+        if at < 0:
+            return []
+        proposal = json.loads(detail[at + len(self.ONBOARDING):].split("\n", 1)[0])
+        applied = []
+        for key in ("check", "test_runner", "e2e", "setup"):
+            value = proposal.get(key) or None
+            if value or targets.require(goal["target"]).get(key):
+                targets.set_field(goal["target"], key, value)
+                applied.append(f"{key} = {value!r}")
+        return applied
 
     def _unchanged_since_stage(self, goal: dict) -> str | None:
         """Why a read-only stage's branch is not as it was when the stage began, or None."""
@@ -857,7 +921,7 @@ class Loop:
                 return
             first = goal["goal"].splitlines()[0][:70]
             report = goal.get("detail") or ""
-            report = ("\n\n" + report) if report.startswith("security report:") else ""
+            report = ("\n\n" + report) if report.startswith(("security report:", self.ONBOARDING)) else ""
             did = ledger.create_decision(
                 self.conn,
                 goal["target"],
@@ -870,7 +934,8 @@ class Loop:
                 source="land",
             )
             ledger.update_goal(
-                self.conn, goal["id"], risk="ask", detail=f"waiting for Eli to land: decision {did}; {why}",
+                self.conn, goal["id"], risk="ask",
+                detail=f"waiting for Eli to land: decision {did}; {why}" + report,  # the report stays readable
             )
             self.log(f"goal {goal['id']}: {why}; asked Eli (decision {did})")
             return
@@ -881,6 +946,9 @@ class Loop:
             self.log(f"goal {goal['id']}: {reason}")
             ledger.finish_goal(self.conn, goal["id"], "fail", reason)
             return
+        applied = self._apply_onboarding(goal) if goal.get("type") == "onboarding" else []
+        if applied:
+            self.log(f"goal {goal['id']}: target {goal['target']} now has " + ", ".join(applied))
         self._land(goal)
 
     def free_attempt(
@@ -892,8 +960,8 @@ class Loop:
         parents: tuple[str, ...] = (),
     ) -> str:
         """A kanban task for attempt ``attempt`` on the goal's branch; returns its id."""
-        role = self._role(goal["role"])
-        profile = goal["role"]
+        role = self._role(goal["role"], goal["target"])
+        profile = role.get("profile") or goal["role"]  # <role>--<target> when the target overlays it
         if goal.get("harness_id") and goal.get("arm") == "branch":
             profile = profiles.candidate_profile(goal["role"], goal["harness_id"])
         if not profiles.profile_dir(profile).exists():
@@ -958,7 +1026,7 @@ class Loop:
             return False
         run = runs[-1]
         pid, started = run.get("worker_pid"), run.get("started_at")
-        budget = self._role(goal["role"])["budget"]["run_budget_s"]
+        budget = self._role(goal["role"], goal["target"])["budget"]["run_budget_s"]
         alive = pid is not None and self.pid_alive(int(pid))
         reason = None
         if pid is not None and not alive:
@@ -1024,7 +1092,7 @@ class Loop:
             goal["target"], task_id, f"FAILED: {_tail(detail)}", runner=self.runner
         )
         goal = ledger.get_goal(self.conn, goal["id"])
-        role = self._role(goal["role"])
+        role = self._role(goal["role"], goal["target"])
         nxt = goal["attempt"] + 1
         diagnosis = (
             self._diagnose(goal, job, detail)
@@ -1090,7 +1158,7 @@ class Loop:
         if goal.get("harness_id"):
             self._finish_replay(goal, ledger.get_job(self.conn, goal["job_id"]))
             return
-        role = self._role(goal["role"])
+        role = self._role(goal["role"], goal["target"])
         nxt = goal["attempt"] + 1
         if nxt <= role["escalation"]["after_failures"]:
             self.free_attempt(goal, nxt, failure)
@@ -1115,7 +1183,7 @@ class Loop:
             self._repo(goal), goal["worktree"], goal["branch"], runner=self.runner
         )
         model = (
-            roles.load(self.root, goal["role"]).get("escalation", {}).get("model")
+            roles.load(self.root, goal["role"], target=goal["target"]).get("escalation", {}).get("model")
             or hermes_run.RESCUE_MODEL
         )
         choice = catalog.ModelChoice(
@@ -1140,10 +1208,11 @@ class Loop:
             runner=self.runner,
             role=goal["role"],
             root=self.root,
-            check=goal["check_cmd"] if stage.gate in ("check", "onboard") else None,
+            check=goal["check_cmd"] if stage.gate == "check" else None,
             model=model,
             allowed_files=owned,
             decision_file=decision_file,
+            target=goal["target"],
         )
         ledger.set_task_ref(
             self.conn, job, f"claude:{result.get('session_id') or 'unknown'}"
@@ -1603,6 +1672,7 @@ def start_goal(
         kind=kind,
         acceptance_cmd=acceptance,
         stages=[s.name for s in pipeline],
+        needs_commits=kind != "onboarding",  # a repo that already has its check gets settings, not commits
     )
     try:
         loop.free_attempt(ledger.get_goal(conn, goal_id), 1, parents=parents)

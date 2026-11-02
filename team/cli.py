@@ -106,6 +106,15 @@ def cmd_roles(args) -> int:
     for name in names:
         changes = profiles.sync(ROOT, name, cat)
         print(f"{name}: " + (", ".join(changes) if changes else "up to date"))
+    # A target that overlays a role gets its own profile for it: <role>--<target>.
+    from team import overlay
+
+    for t in targets.list_targets():
+        for name in overlay.roles(t["name"]):
+            if name not in names:
+                continue
+            changes = profiles.sync(ROOT, name, cat, target=t["name"])
+            print(f"{name}--{t['name']}: " + (", ".join(changes) if changes else "up to date"))
     return 0
 
 
