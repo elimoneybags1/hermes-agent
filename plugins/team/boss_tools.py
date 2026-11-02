@@ -122,6 +122,18 @@ def proposals(args: dict) -> str:
     return "\n".join(out)
 
 
+def reopen(args: dict) -> str:
+    target = _target(args)
+    with _conn() as conn:
+        r = boss.reopen(conn, target, int(args["project"]))
+    back = ", ".join(map(str, r["approved"])) or "none"
+    resumed = ", ".join(map(str, r["revived"])) or "none"
+    return (
+        f"project {args['project']} is open again: goals {back} go back to the lead for a fresh "
+        f"draft; ledger goals {resumed} resume where they stopped. Team picks them up on its next tick."
+    )
+
+
 def suggest(args: dict) -> str:
     target = _target(args)
     with _conn() as conn:
@@ -236,6 +248,14 @@ TOOLS = [
         {"target": _TARGET},
         [],
         proposals,
+    ),
+    (
+        "team_reopen",
+        "Another go at a closed project, when Eli asks: goals the lead could not plan go back to it, "
+        "stopped goals resume from their last attempt. Use it instead of proposing the same goals again.",
+        {"target": _TARGET, "project": {"type": "integer"}},
+        ["project"],
+        reopen,
     ),
     (
         "team_suggest",

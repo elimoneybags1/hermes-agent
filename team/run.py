@@ -69,6 +69,7 @@ QUOTA_RESET_RE = re.compile(r"'X-RateLimit-Reset': '(\d+)'")
 LOG_TAIL_BYTES = 8000
 # A Claude 429 (subscription limit) pauses the target this long, then retries the same attempt.
 CLAUDE_LIMIT = "claude usage limit"
+ASKED = "asked Eli: decision "  # a Claude attempt's job detail while the goal waits for Eli's answer
 CLAUDE_LIMIT_PAUSE_S = 3600
 QUOTA_END_CHARS = 2000
 
@@ -127,6 +128,7 @@ def brief(
     failure: str | None,
     owned: list[str] | None,
     claude: bool = False,
+    answer: str | None = None,
 ) -> str:
     text = (
         f"{goal['goal']}\n\n"
@@ -142,6 +144,8 @@ def brief(
             "\n\nWhen you are done, call `kanban_request_review` with a summary of what "
             "you did and the check's last line. Never call `kanban_complete`: Team grades."
         )
+    if answer:
+        text += f"\n\nEli answered the question this goal stopped on:\n{answer}"
     if failure:
         text += f"\n\nAttempt {attempt - 1} failed. What it left:\n{_tail(failure)}"
         if "merge conflict with" in failure:
@@ -379,6 +383,8 @@ class Loop:
                 self._finish_replay(goal, job)
             elif job["outcome"] == "pass":
                 self._land(goal)
+            elif claude and (job["grader_detail"] or "").startswith(ASKED):
+                return self._after_decision(goal, job)
             elif claude and (job["grader_detail"] or "").startswith(CLAUDE_LIMIT):
                 if (
                     ledger.active_pause(self.conn, goal["target"], self.now())
@@ -411,6 +417,12 @@ class Loop:
             if gave_up is not None:
                 trigger = gave_up.get("trigger_outcome") or "error"
                 reason = f"kanban gave up after {trigger}: {gave_up.get('error') or _blocked_reason(full)}"
+                if trigger == "timed_out" and self._left_work(goal):
+                    # Out of turns with work on the branch: grade what is there
+                    # (grade() commits leftovers) before spending another attempt.
+                    self.log(f"goal {goal['id']}: {reason}; grading the work it left")
+                    self._grade_task(goal, job, "timed_out")
+                    return True
                 ledger.finish_job(
                     self.conn,
                     job["id"],
@@ -701,7 +713,14 @@ class Loop:
         else:
             self._give_up(goal, f"all {goal['attempt']} attempts failed", failure)
 
-    def _claude_attempt(self, goal: dict, attempt: int, failure: str | None) -> None:
+    def _claude_attempt(
+        self,
+        goal: dict,
+        attempt: int,
+        failure: str | None,
+        *,
+        answer: str | None = None,
+    ) -> None:
         grade.ensure_worktree(
             self._repo(goal), goal["worktree"], goal["branch"], runner=self.runner
         )
@@ -733,9 +752,10 @@ class Loop:
                 failure=failure,
                 attempt=attempt,
                 claude=True,
+                answer=answer,
             )
             if order is not None
-            else brief(goal, attempt, failure, owned, claude=True),
+            else brief(goal, attempt, failure, owned, claude=True, answer=answer),
             max_turns=self.cfg["escalation.claude_max_turns"],
             timeout_s=self.cfg["escalation.claude_timeout_s"],
             runner=self.runner,
@@ -752,12 +772,13 @@ class Loop:
         model_tracking.record_result(self.conn, job, result, goal["role"])
         asked = self._claude_decision(goal, decision_file)
         if asked:
-            ledger.finish_job(
-                self.conn, job, "fail", "claude", f"asked Eli: decision {asked}"
-            )
-            self._give_up(
-                goal, f"Claude needs a decision from Eli (decision {asked})", None
-            )
+            # Not a failed attempt: the goal waits for Eli's answer. step() sees
+            # the job's detail and comes back here when the decision is settled.
+            reason = f"waiting for Eli: decision {asked}"
+            ledger.finish_job(self.conn, job, "error", "claude", f"{ASKED}{asked}")
+            ledger.update_goal(self.conn, goal["id"], detail=reason)
+            self._block(goal, reason)
+            self.log(f"goal {goal['id']}: Claude asked Eli (decision {asked}); waiting")
             return
         if not result["ok"] and claude_run.usage_limited(result):
             # Not a failed attempt: the subscription is out of quota. Pause the
@@ -790,6 +811,36 @@ class Loop:
             self._land(goal)
         else:
             self._give_up(goal, "the Claude attempt failed too", detail)
+
+    def _after_decision(self, goal: dict, job: dict) -> bool:
+        """The goal stopped on a question to Eli. Nothing until he answers; then
+        the branch is graded as it stands (grade() merges main into it, so a
+        fix that landed meanwhile counts) and Claude runs again only if that
+        fails, with Eli's answer in its brief. A dismissed question stops the goal."""
+        did = int(job["grader_detail"][len(ASKED):].split()[0])
+        d = ledger.get_decision(self.conn, did)
+        if d is None or d["status"] == "open":
+            return False
+        if d["status"] == "dismissed":
+            self._give_up(goal, f"Eli dismissed its question (decision {did})", d["question"])
+            return True
+        answer = f"Question: {d['question']}\nAnswer: {d['answer']}"
+        ok, detail = self.grade(goal)
+        if ok:
+            regrade = self._start_job(
+                goal,
+                goal["attempt"],
+                "team-run:regrade",
+                catalog.ModelChoice("none", "team-run", "none", f"re-graded after decision {did}"),
+            )
+            ledger.finish_job(self.conn, regrade, "pass", "check", detail)
+            ledger.update_goal(self.conn, goal["id"], job_id=regrade)
+            self.log(f"goal {goal['id']}: passes as it stands after decision {did}; landing")
+            self._land(goal)
+            return True
+        self.log(f"goal {goal['id']}: decision {did} answered; Claude continues with the answer")
+        self._claude_attempt(goal, goal["attempt"], detail, answer=answer)
+        return True
 
     def _claude_decision(self, goal: dict, path: Path) -> int | None:
         """A decision Claude wrote to $TEAM_DECISION_FILE goes to Eli's inbox."""
@@ -860,6 +911,23 @@ class Loop:
     def _repo(self, goal: dict) -> Path:
         return targets.repo_path(goal["target"])
 
+    def _left_work(self, goal: dict) -> bool:
+        """True when the attempt left commits on its branch or edits in its worktree."""
+        repo, wt, base = self._repo(goal), Path(goal["worktree"]), goal.get("base") or "main"
+        if grade.has_commits(repo, goal["branch"], base, runner=self.runner):
+            return True
+        if not wt.exists():
+            return False
+        try:
+            return not grade.is_clean(wt, runner=self.runner) or bool(
+                grade._must(
+                    grade._git(wt, "ls-files", "--others", "--exclude-standard", runner=self.runner),
+                    "git ls-files failed",
+                )
+            )
+        except grade.GradeError:
+            return False
+
     def grade(self, goal: dict) -> tuple[bool, str]:
         """Merge base into the branch, enforce ownership, run the check. (passed, output)."""
         repo, branch, wt, base = (
@@ -869,6 +937,16 @@ class Loop:
             goal.get("base") or "main",
         )
         grade.ensure_worktree(repo, wt, branch, runner=self.runner)
+        # Code rescues a near-miss: work left uncommitted (a forgotten commit, a
+        # worker out of turns) is committed and graded, not failed on ceremony.
+        rescued = grade.commit_leftovers(
+            wt,
+            f"team: attempt {goal.get('attempt', 1)} left these changes uncommitted; "
+            "Team committed them before grading",
+            self._owned(goal),
+            runner=self.runner,
+        )
+        note = "Team committed the worker's uncommitted changes before grading. " if rescued else ""
         if goal.get("needs_commits", 1) and not grade.has_commits(
             repo, branch, base, runner=self.runner
         ):
@@ -884,7 +962,7 @@ class Loop:
                 grade.changed_files(repo, branch, base, runner=self.runner), owned
             )
             if outside:
-                return False, "changes outside owned files: " + ", ".join(outside)
+                return False, note + "changes outside owned files: " + ", ".join(outside)
         ok, output = grade.run_check(
             wt,
             goal["check_cmd"],
@@ -893,7 +971,7 @@ class Loop:
         )
         if not ok and not output:
             output = f"`{goal['check_cmd']}` failed with no output"
-        return ok, output
+        return ok, note + output
 
     def _land(self, goal: dict) -> None:
         repo = self._repo(goal)
@@ -1197,6 +1275,8 @@ def draft_goal(
         with lead.workspace(
             repo, target, f"plan-{lead_job}", base, runner
         ) as tree:
+            # Read once, in code, what the lead used to spend a dozen turns reading.
+            briefing = lead.briefing(tree, goal, loop.cfg["lead.briefing_bytes"], runner=runner)
             summary, parts = lead.ask(
                 root,
                 tree,
@@ -1209,6 +1289,7 @@ def draft_goal(
                     refused=refused,
                     previous=previous,
                     plan_context=plan_context,
+                    briefing=briefing,
                 ),
                 lead.PLAN_SCHEMA,
                 lambda data: _with_summary(data, tree, menu, loop),
@@ -1332,11 +1413,35 @@ def run_loop(
     interval: int | None = None,
     runner: Runner = subprocess.run,
     sleep: Callable[[float], None] = time.sleep,
+    loop: Loop | None = None,
+    restart: Callable[[], None] | None = None,
 ) -> None:
-    """Tick until stopped; the interval is re-read from settings every tick."""
-    loop = Loop(root, conn, runner=runner)
+    """Tick until stopped; the interval is re-read from settings every tick.
+
+    Between ticks nothing of this process is in flight (workers run under
+    Hermes's kanban, the lead's draft is synchronous inside a tick), so when
+    Team's code has changed since this process started it replaces itself with
+    the same command, and the next tick runs the checkout's code. Without this
+    a loop started before a commit kept the old ``team`` modules for days.
+    """
+    from team import gateway  # team.gateway imports only the ledger
+
+    loop = loop or Loop(root, conn, runner=runner)
+    born, sha = time.time(), gateway.checkout_sha(root)
     while True:
         loop.tick()
         if once:
             return
+        why = gateway.changed_since(root, born, sha)
+        if why:
+            loop.log(f"team run {why}; restarting with the checkout's code")
+            (restart or _reexec)()
+            born, sha = time.time(), gateway.checkout_sha(root)  # a restart that returned (tests)
         sleep(interval if interval is not None else loop.cfg["loop.interval_s"])
+
+
+def _reexec() -> None:
+    """Replace this process with the same command line, keeping pid, stdio and environment."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, list(sys.orig_argv))

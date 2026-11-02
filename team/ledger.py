@@ -561,6 +561,18 @@ def finish_goal(
         raise LookupError(f"no unfinished goal with id {goal_id}")
 
 
+def revive_goal(conn: sqlite3.Connection, goal_id: int) -> None:
+    """Reopen a finished goal that did not pass; the loop steps it again from its last job."""
+    with conn:
+        cur = conn.execute(
+            "UPDATE goals SET finished = NULL, outcome = NULL, detail = NULL"
+            " WHERE id = ? AND finished IS NOT NULL AND outcome != 'pass'",
+            (goal_id,),
+        )
+    if cur.rowcount != 1:
+        raise LookupError(f"goal {goal_id} is not a finished goal that failed")
+
+
 def active_goals(conn: sqlite3.Connection, target: str | None = None) -> list[dict]:
     """Goals not yet finished, oldest first."""
     sql = "SELECT * FROM goals WHERE finished IS NULL"

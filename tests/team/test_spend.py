@@ -119,11 +119,11 @@ def test_ledger_totals_this_cycle_only_reads_new_lines_and_trips_the_stop(team_s
     led = spend.Ledger(team_state)
     s = led.status(now)["anthropic"]
     assert s["spent_usd"] == pytest.approx(6.0) and s["requests"] == 1 and not s["over"]
-    assert led.blocked_configs() == set()
+    assert led.blocked_configs(now) == set()
     log(team_state, row("claude-fable-5-1", 1_000_000, 1_700_000))  # 10 + 85 = $95 more
     s = led.status(now)["anthropic"]
     assert s["spent_usd"] == pytest.approx(101.0) and s["over"]
-    assert "team-pair-claude-opus-5-5--anthropic" in led.blocked_configs()
+    assert "team-pair-claude-opus-5-5--anthropic" in led.blocked_configs(now)
     log(team_state, row("claude-mystery", 1_000_000, 0))  # unpriced: counted at the highest price
     s = led.status(now)["anthropic"]
     assert s["unpriced"] == {"claude-mystery": 1} and s["spent_usd"] == pytest.approx(111.0)

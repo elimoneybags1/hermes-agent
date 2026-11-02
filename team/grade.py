@@ -331,3 +331,28 @@ def commit_paths(
         "git commit failed",
     )
     return head(repo, runner)
+
+
+def commit_leftovers(
+    worktree: str | Path, message: str, owned: list[str] | None = None, runner: Runner = subprocess.run
+) -> str | None:
+    """Commit what a worker changed but did not commit; the new sha, or None when there was nothing.
+
+    Tracked edits are staged whole. Untracked files are staged only under
+    ``owned`` paths, so a stray scratch file outside the part cannot be swept
+    into the branch (ownership is graded right after). A free model that did
+    the work and forgot the commit, or ran out of turns before it, is then
+    graded on its work instead of failing on the ceremony.
+    """
+    wt = Path(worktree)
+    _must(_git(wt, "add", "-u", runner=runner), "git add failed")
+    untracked = _must(
+        _git(wt, "ls-files", "--others", "--exclude-standard", runner=runner), "git ls-files failed"
+    ).splitlines()
+    mine = [u for u in untracked if any(u == o or u.startswith(o.rstrip("/") + "/") for o in owned or [])]
+    if mine:
+        _must(_git(wt, "add", "--", *mine, runner=runner), "git add failed")
+    if _git(wt, "diff", "--cached", "--quiet", runner=runner).returncode == 0:
+        return None
+    _must(_git(wt, "commit", "-q", "-m", message, runner=runner), "git commit failed")
+    return head(wt, runner)

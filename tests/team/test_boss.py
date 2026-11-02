@@ -217,6 +217,35 @@ def test_a_stopped_goal_closes_the_project_with_its_state_kept(team):
     assert boss.flow(team["conn"])[0]["goals"][0]["station"] == "stopped"
 
 
+def test_reopen_gives_a_closed_project_another_go(team):
+    p = propose(team, draft=False, goals=[{"goal": "a"}, {"goal": "b"}])
+    team["answers"].queue += [RuntimeError("You've hit your usage limit"), plan_answer()]
+    boss.settle_goals(team["conn"], p, "approve")
+    team["loop"].tick()
+    team["loop"].tick()
+    gid = saved(team, p)["goals"][1]["goal_ids"][0]
+    ledger.finish_goal(team["conn"], gid, "fail", "all attempts failed")
+    stopped = ledger.create_decision(
+        team["conn"], "team", f"Goal {gid} stopped", "", ["retry"], "", goal_id=gid, source="run"
+    )
+    [closed] = boss.record_closed(team["conn"], "team")
+    assert [g["status"] for g in closed["goals"]] == ["failed", "stopped"]
+
+    assert boss.reopen(team["conn"], "team", p["id"]) == {"approved": [1], "revived": [gid]}
+    s = saved(team, p)
+    assert s["status"] == "open" and "closed" not in s
+    assert [g["status"] for g in s["goals"]] == ["approved", "released"]
+    assert s["goals"][0]["error"] is None
+    assert ledger.get_goal(team["conn"], gid)["outcome"] is None
+    assert ledger.get_decision(team["conn"], stopped)["status"] == "dismissed"
+    assert next(x for x in ledger.list_plans(team["conn"], "team") if x["id"] == p["id"])["status"] == "active"
+    team["answers"].queue.append(plan_answer())
+    team["loop"].tick()  # the lead drafts goal 1 again; goal 2's row is stepped like any other
+    assert saved(team, p)["goals"][0]["status"] == "released"
+    with pytest.raises(boss.BossError, match="no failed or stopped goal"):
+        boss.reopen(team["conn"], "team", p["id"])
+
+
 def test_a_goal_the_lead_cannot_plan_is_marked_and_the_rest_go_on(team):
     p = propose(team, draft=False, goals=[{"goal": "a"}, {"goal": "b"}])
     team["answers"].queue += [RuntimeError("You've hit your usage limit"), plan_answer()]
@@ -311,7 +340,7 @@ def test_the_tools_register_and_refuse_politely(team, monkeypatch):
     tools.register(Ctx())
     assert set(registered) == {
         "team_status", "team_findings", "team_notes_read", "team_notes_write",
-        "team_propose", "team_ask", "team_proposals", "team_suggest",
+        "team_propose", "team_ask", "team_proposals", "team_reopen", "team_suggest",
         "team_harness_read", "team_propose_harness",
     }
     assert all(r["toolset"] == "team" for r in registered.values())
@@ -329,7 +358,7 @@ def test_the_tools_register_and_refuse_politely(team, monkeypatch):
     assert out.startswith("question 4 is a card") and "End your turn" in out
     listing = registered["team_proposals"]["handler"]({})
     assert "project 1 open: H." in listing and "  goal 3 proposed: g3" in listing
-    assert len(tools.schemas()) < 5000  # what the tools add to every boss call
+    assert len(tools.schemas()) < 5500  # what the tools add to every boss call (11 tools)
 
 
 def test_boss_profile_is_lean_and_locked(team):

@@ -111,5 +111,7 @@ class Ledger:
                 }
             return out
 
-    def blocked_configs(self) -> set[str]:
-        return {c for s in self.status().values() if s["over"] for c in s["configs"]}
+    def blocked_configs(self, now: dt.datetime | None = None) -> set[str]:
+        """The LiteLLM configs whose provider is over its allowance in the cycle containing ``now``
+        (the real clock when unset, as the guard calls it)."""
+        return {c for s in self.status(now).values() if s["over"] for c in s["configs"]}

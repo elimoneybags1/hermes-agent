@@ -44,8 +44,15 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
         True,
         "After a failed check, the lead reads the failure and steers the retry.",
     ),
-    "lead.max_turns": (int, 30, "Turn limit for one lead call (plan or diagnosis)."),
+    "lead.max_turns": (int, 12, "Turn limit for one lead call (plan or diagnosis)."),
     "lead.timeout_s": (int, 900, "Time limit for one lead call."),
+    "lead.briefing_bytes": (
+        int,
+        48000,
+        "Most bytes of repo briefing (instructions, file map, outlines of the files the goal names) "
+        "put into the lead's plan prompt, so it plans from the prompt instead of reading the repo "
+        "turn by turn.",
+    ),
     "lead.max_parts": (int, 6, "Most parts the lead may split one goal into."),
     "lead.context_bytes": (
         int,

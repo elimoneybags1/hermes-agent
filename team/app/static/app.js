@@ -561,6 +561,17 @@
 
   const openGoals = {};
   function goalCard(g) {
+    if (g.pending) {  // a project goal Eli approved; the planner has not drafted it into ledger goals yet
+      const why = g.pending === "drafting" ? "Planner drafting now: splitting it into parts and writing the work orders."
+        : g.after.length ? "Waiting for the planner; it drafts after goal " + g.after.join(", ") + " of this project is planned."
+        : "Waiting for the planner's next tick (within a minute).";
+      return h("div", { class: "card goal goal--lead goal--pending" },
+        h("div", { class: "goal-head" },
+          h("div", { class: "goal-top" }, h("span", { class: "goal-id" }, "project " + g.project + " · goal " + g.n),
+            badge(g.pending === "drafting" ? "drafting" : "approved", g.pending === "drafting" ? "badge--live" : "badge--outline")),
+          h("div", { class: "goal-text", title: g.goal }, g.goal)),
+        h("div", { class: "goal-meta" }, h("div", { class: "muted" }, why)));
+    }
     const last = g.attempts[g.attempts.length - 1];
     const body = h("div", { class: "card-body", hidden: !openGoals[g.id] },
       h("div", { class: "kv-line" }, h("span", { class: "muted" }, "check "), h("code", null, g.check)),

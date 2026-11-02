@@ -261,3 +261,27 @@ def test_an_attempt_is_ranked_by_the_tier_order_it_ran_under(tmp_path):
     at = board.ranks_at(r, later)
     assert at("2026-10-30T10:00:00+00:00")["medium"][0] == "m-first"  # committed order then
     assert at("2099-01-01T00:00:00+00:00")["medium"][0] == "m-second"  # the edit, dated by mtime
+
+
+def test_approved_goals_wait_in_the_planner_column_until_drafted(team_state, root):
+    from team import boss
+
+    conn = ledger.connect(team_state / "team.db")
+    ledger.init(conn)
+    tdir = team_state / "targets" / "team"
+    tdir.mkdir(parents=True)
+    (tdir / "target.json").write_text(json.dumps({"name": "team", "path": str(root), "enabled": True}))
+    goals = [
+        {"n": 1, "goal": "record usage rows", "after": [], "status": "failed", "goal_ids": [], "created": "c"},
+        {"n": 2, "goal": "usage_breakdown()", "after": [1], "status": "drafting", "goal_ids": [], "created": "c"},
+        {"n": 3, "goal": "a Usage view", "after": [2], "status": "approved", "goal_ids": [], "created": "c"},
+        {"n": 4, "goal": "status lines", "after": [2], "status": "proposed", "goal_ids": [], "created": "c"},
+    ]
+    boss._save({"id": 9, "target": "team", "headline": "h", "summary": "s", "status": "open", "goals": goals, "created": "c"})
+    drafted = ledger.create_goal(conn, "team", "already a ledger goal", "implement", "team/x", "/w", "./c")
+    b = board.board(conn, root, CATALOG)
+    lead_col = b["columns"]["lead"]
+    assert [c["id"] for c in lead_col] == ["9.2", "9.3", drafted]
+    assert [c["pending"] for c in lead_col[:2]] == ["drafting", "approved"]
+    assert lead_col[1]["after"] == [2] and lead_col[0]["attempts"] == [] and lead_col[0]["station"] == "lead"
+    assert "pending" not in lead_col[2]

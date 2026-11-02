@@ -493,7 +493,13 @@ def test_claude_usage_limit_pauses_instead_of_giving_up(world):
     assert [j["attempt"] for j in ledger.list_jobs(world["conn"])][:2] == [3, 3]
 
 
-def test_claude_writes_a_decision_for_eli(world):
+def _last_brief(world) -> str:
+    """The brief of the Claude attempt FakeHermes is running right now."""
+    return json.loads(world["hermes"].calls[-1][4])["brief"]
+
+
+def ask_eli(world):
+    """Two free attempts fail, then the Claude attempt asks Eli; returns (goal, decision, briefs)."""
     goal = run.start_goal(
         world["root"],
         world["conn"],
@@ -502,8 +508,10 @@ def test_claude_writes_a_decision_for_eli(world):
         runner=world["hermes"],
         cat=CATALOG,
     )
+    briefs = []
 
     def claude_asks(worktree, env):
+        briefs.append(_last_brief(world))
         Path(env["TEAM_DECISION_FILE"]).write_text(
             json.dumps(
                 {
@@ -525,9 +533,58 @@ def test_claude_writes_a_decision_for_eli(world):
         for d in ledger.list_decisions(world["conn"], "team")
         if d["source"] == "claude"
     ]
+    return goal, decision, briefs
+
+
+def test_claude_writes_a_decision_for_eli_and_the_goal_waits_for_the_answer(world):
+    goal, decision, briefs = ask_eli(world)
     assert decision["question"] == "Which value?" and decision["options"] == ["2", "3"]
+    # the question is the only card: no "goal stopped" card on top of it
+    assert ledger.list_decisions(world["conn"], "team") == [decision]
     g = ledger.get_goal(world["conn"], goal["id"])
-    assert "needs a decision" in g["detail"]
+    assert g["outcome"] is None and g["detail"] == f"waiting for Eli: decision {decision['id']}"
+    job = ledger.get_job(world["conn"], g["job_id"])
+    assert job["outcome"] == "error" and job["grader_detail"] == f"asked Eli: decision {decision['id']}"
+    world["loop"].tick()  # still waiting: nothing runs
+    assert ledger.get_goal(world["conn"], goal["id"])["job_id"] == job["id"] and len(briefs) == 1
+
+    def claude_fixes(worktree, env):
+        briefs.append(_last_brief(world))
+        (worktree / "app.py").write_text("VALUE = 2\n")
+        git(worktree, "commit", "-q", "-am", "claude fixed it")
+
+    world["hermes"].claude_behaviour = claude_fixes
+    ledger.answer_decision(world["conn"], decision["id"], "2")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["attempt"] == 3
+    assert len(briefs) == 2
+    assert "Eli answered" in briefs[-1] and "Which value?" in briefs[-1] and "Answer: 2" in briefs[-1]
+
+
+def test_an_answered_question_lands_the_branch_when_it_already_passes(world):
+    goal, decision, briefs = ask_eli(world)
+    wt = Path(goal["worktree"])
+    (wt / "app.py").write_text("VALUE = 2\n")
+    git(wt, "commit", "-q", "-am", "Eli fixed it by hand")
+    ledger.answer_decision(world["conn"], decision["id"], "2, and I did it")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["detail"].startswith("landed")
+    assert len(briefs) == 1  # Claude was not run again
+    job = ledger.get_job(world["conn"], g["job_id"])
+    assert job["task_ref"] == "team-run:regrade" and job["outcome"] == "pass"
+    assert job["model_choice"]["why"] == f"re-graded after decision {decision['id']}"
+
+
+def test_a_dismissed_question_stops_the_goal(world):
+    goal, decision, _ = ask_eli(world)
+    ledger.dismiss_decision(world["conn"], decision["id"])
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "fail" and f"dismissed its question (decision {decision['id']})" in g["detail"]
+    [stopped] = [d for d in ledger.list_decisions(world["conn"], "team") if d["source"] == "run"]
+    assert stopped["question"].startswith(f"Goal {goal['id']} stopped")
 
 
 def test_violation_blocks_the_goal(world):
@@ -693,3 +750,86 @@ def test_subscription_role_dispatches_through_proxy_profile(world):
         profiles.profile_dir("implement")
         / "plugins/model-providers/team-subscription/__init__.py"
     ).is_file()
+
+
+def test_the_loop_restarts_itself_between_ticks_when_team_code_changed(tmp_path, monkeypatch):
+    from team import gateway
+
+    class FakeLoop:
+        cfg = {"loop.interval_s": 0}
+        ticks, logged = 0, []
+
+        def tick(self):
+            self.ticks += 1
+
+        def log(self, msg):
+            self.logged.append(msg)
+
+    changes = iter([None, "a Team source file changed after it started", None])
+    monkeypatch.setattr(gateway, "changed_since", lambda root, born, sha: next(changes))
+    monkeypatch.setattr(gateway, "checkout_sha", lambda root: "abc")
+    restarts, loop = [], FakeLoop()
+
+    def sleep(_s):
+        if loop.ticks == 3:
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run.run_loop(tmp_path, None, interval=0, sleep=sleep, loop=loop, restart=lambda: restarts.append(1))
+    assert loop.ticks == 3 and restarts == [1]
+    assert loop.logged == ["team run a Team source file changed after it started; restarting with the checkout's code"]
+
+
+def test_uncommitted_work_is_committed_and_graded_instead_of_failed(world):
+    goal = run.start_goal(
+        world["root"], world["conn"], "team", "Set VALUE to 2", runner=world["hermes"], cat=CATALOG
+    )
+    wt = Path(goal["worktree"])
+    grade.ensure_worktree(world["repo"], wt, goal["branch"])
+    (wt / "app.py").write_text("VALUE = 2\n")  # the worker edited but never committed
+    world["hermes"].tasks[goal["current_task"]]["status"] = "review"
+    world["loop"].tick()
+    job = ledger.get_job(world["conn"], goal["job_id"])
+    assert job["outcome"] == "pass"
+    assert job["grader_detail"].startswith("Team committed the worker's uncommitted changes before grading.")
+    assert ledger.get_goal(world["conn"], goal["id"])["outcome"] == "pass"  # landed on main
+    assert (world["repo"] / "app.py").read_text() == "VALUE = 2\n"
+
+
+def test_commit_leftovers_takes_tracked_edits_and_owned_new_files_only(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.name", "T")
+    git(repo, "config", "user.email", "t@t")
+    (repo / "app.py").write_text("1\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "base")
+    assert grade.commit_leftovers(repo, "nothing", ["team/"]) is None
+    (repo / "app.py").write_text("2\n")
+    (repo / "team").mkdir()
+    (repo / "team" / "new.py").write_text("x\n")
+    (repo / "scratch.txt").write_text("junk\n")
+    sha = grade.commit_leftovers(repo, "leftovers", ["team/"])
+    assert sha == grade.head(repo)
+    assert grade.changed_files(repo, "HEAD", "HEAD~1") == ["app.py", "team/new.py"]
+    assert (repo / "scratch.txt").exists() and "scratch.txt" in subprocess.check_output(
+        ["git", "-C", str(repo), "ls-files", "--others"], text=True
+    )
+
+
+def test_left_work_sees_commits_edits_and_new_files(world):
+    goal = run.start_goal(
+        world["root"], world["conn"], "team", "Set VALUE to 2", runner=world["hermes"], cat=CATALOG
+    )
+    wt = Path(goal["worktree"])
+    grade.ensure_worktree(world["repo"], wt, goal["branch"])
+    assert world["loop"]._left_work(goal) is False
+    (wt / "note.txt").write_text("new\n")
+    assert world["loop"]._left_work(goal) is True
+    (wt / "note.txt").unlink()
+    (wt / "app.py").write_text("VALUE = 2\n")
+    assert world["loop"]._left_work(goal) is True
+    git(wt, "add", "-A")
+    git(wt, "commit", "-q", "-m", "done")
+    assert world["loop"]._left_work(goal) is True
