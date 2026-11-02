@@ -415,6 +415,154 @@ def _tail(text: str | None, limit: int = FAILURE_CHARS) -> str:
     return text if len(text) <= limit else "…" + text[-limit:]
 
 
+# --- briefing -------------------------------------------------------------------------
+#
+# Four drafts on 2026-11-01 cost about 425,000 input tokens each: the lead spent
+# 12 to 14 turns reading the repo from scratch every time. The briefing does
+# that reading in code, once, and puts the result in the prompt. Budget order:
+# instructions, then outlines of the files the goal touches, then the file map
+# with what is left; in a monorepo the map is the touched directories, not
+# every file.
+
+INSTRUCTION_FILES = (("CLAUDE.md", 8000), ("AGENTS.md", 3000), ("README.md", 1500))
+SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", "dist", "build", ".mypy_cache", ".ruff_cache"}
+SOURCE_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".mjs", ".go", ".rs", ".rb", ".sh", ".toml", ".yaml", ".yml", ".md", ".sql", ".html", ".css"}
+MAP_FILES = 150
+OUTLINE_FILES = 8
+OUTLINE_LINES = 80
+_DEF = re.compile(r"^(class |def |async def |[A-Z_][A-Z0-9_]* *=|[a-zA-Z_][\w.]* *= *(?:\{|\[|\(|lambda)|@|export |function |pub fn |fn |struct |impl )")
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]{3,}")
+_PATHISH = re.compile(r"[\w./-]+\.[a-z]{1,5}\b")
+
+
+def _is_identifier(word: str) -> bool:
+    """snake_case, CamelCase, dotted or digit-bearing: a name from the code, not an English word."""
+    return "_" in word or any(c.isdigit() for c in word) or (word[:1].isupper() and not word.isupper() and any(c.isupper() for c in word[1:]))
+
+
+def _files(tree: Path, runner: Runner = subprocess.run) -> list[str]:
+    """Tracked files of ``tree`` (git), or every file under it when it is not a checkout."""
+    result = grade._git(tree, "ls-files", "-z", runner=runner)
+    if result.returncode == 0 and result.stdout.strip("\0"):
+        return [f for f in result.stdout.split("\0") if f]
+    out = []
+    for p in sorted(tree.rglob("*")):
+        if p.is_file() and not SKIP_DIRS & set(p.relative_to(tree).parts):
+            out.append(p.relative_to(tree).as_posix())
+    return out
+
+
+def _terms(goal: str, files: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """Paths the goal names that exist, the words to search the code for, and the fallback words.
+
+    Identifiers win (``usage_breakdown``, ``LeadError``); plain English words
+    (``model``, ``target``) match half a monorepo, so the three longest are the
+    search words only when the goal names no identifier, and otherwise the
+    fallback when the identifiers (a function that does not exist yet) find
+    almost nothing.
+    """
+    names = {Path(f).name for f in files}
+    paths = [p for p in dict.fromkeys(_PATHISH.findall(goal)) if p in files or p.split("/")[-1] in names]
+    words = list(dict.fromkeys(_WORD.findall(goal)))
+    idents = [w for w in words if _is_identifier(w)]
+    plain = sorted((w for w in words if not _is_identifier(w) and len(w) >= 5), key=len, reverse=True)[:3]
+    return paths, idents[:6] if idents else plain, plain
+
+
+def _mentions(tree: Path, words: list[str], files: list[str], runner: Runner = subprocess.run) -> list[str]:
+    """Source files whose text contains one of ``words`` as a whole word: most matches first,
+    then the shortest path."""
+    hits: dict[str, int] = {}
+    source = {f for f in files if Path(f).suffix in SOURCE_SUFFIXES}
+    for w in words:
+        result = grade._git(tree, "grep", "-l", "-z", "-w", "-I", "--", w, runner=runner)
+        if result.returncode in (0, 1) and (tree / ".git").exists():
+            found = [f for f in result.stdout.split("\0") if f]
+        else:
+            found = [f for f in source if re.search(rf"\b{re.escape(w)}\b", _read(tree / f))]
+        for f in found:
+            if f in source:
+                hits[f] = hits.get(f, 0) + 1
+    return [f for f, _ in sorted(hits.items(), key=lambda kv: (-kv[1], len(kv[0]), kv[0]))]
+
+
+def _read(path: Path, limit: int = 400000) -> str:
+    try:
+        return path.read_text(errors="replace")[:limit]
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def outline(tree: Path, rel: str) -> str:
+    """Definitions, constants and decorators of a file with their line numbers, plus its size."""
+    lines = _read(tree / rel).splitlines()
+    picked = [f"{n}: {line.rstrip()[:120]}" for n, line in enumerate(lines, 1) if _DEF.match(line)]
+    if not picked:  # not code: show the top
+        picked = [f"{n}: {line.rstrip()[:120]}" for n, line in enumerate(lines[:20], 1)]
+    more = len(picked) - OUTLINE_LINES
+    picked = picked[:OUTLINE_LINES]
+    if more > 0:
+        picked.append(f"… {more} more")
+    return f"### {rel} ({len(lines)} lines)\n" + "\n".join(picked)
+
+
+def _file_map(files: list[str], wanted: list[str], words: list[str]) -> str:
+    """Every file when the tree is small; in a monorepo, the directories with counts plus the
+    files the goal touches."""
+    if len(files) <= MAP_FILES:
+        return "\n".join(files)
+    dirs: dict[str, int] = {}
+    for f in files:
+        top = f.split("/")[0] if "/" in f else "."
+        dirs[top] = dirs.get(top, 0) + 1
+    lines = [f"{len(files)} files. Top-level directories (file counts):"]
+    lines += [f"  {d}/ {n}" if d != "." else f"  (root) {n}" for d, n in sorted(dirs.items(), key=lambda kv: -kv[1])[:40]]
+    touched = sorted(set(wanted) | {f for f in files if any(w.lower() in f.lower() for w in words) and Path(f).suffix in SOURCE_SUFFIXES})
+    if touched:
+        lines.append("Files the goal touches or names:")
+        lines += [f"  {f}" for f in touched[:MAP_FILES]]
+    return "\n".join(lines)
+
+
+def briefing(tree: Path, goal: str, budget: int, runner: Runner = subprocess.run) -> str:
+    """What the lead would otherwise spend its first turns reading, within ``budget`` bytes."""
+    if budget <= 0:
+        return ""
+    parts: list[str] = []
+    used = 0
+
+    def add(block: str, cap: int | None = None) -> bool:
+        nonlocal used
+        size = len(block.encode())
+        if used + size > (cap if cap is not None else budget):
+            return False
+        parts.append(block)
+        used += size
+        return True
+
+    for name, cap in INSTRUCTION_FILES:
+        text = _read(tree / name)
+        if text.strip():
+            add(f"## {name}\n" + (text if len(text) <= cap else text[:cap] + "\n…"))
+    files = _files(tree, runner)
+    paths, words, plain = _terms(goal, files)
+    mentions = _mentions(tree, words, files, runner)
+    if len(mentions) < 2 and plain and plain != words:
+        mentions += [f for f in _mentions(tree, plain, files, runner) if f not in mentions]
+        words = words + plain
+    wanted = list(dict.fromkeys(paths + mentions))[:OUTLINE_FILES]
+    outlines = [outline(tree, rel) for rel in wanted]
+    if outlines:
+        reserve = used + int((budget - used) * 0.7)  # the map gets what the outlines leave
+        head, *rest = outlines
+        if add("## Outlines\n" + head, reserve):
+            for block in rest:
+                if not add(block, reserve):
+                    break
+    add("## File map\n" + _file_map(files, wanted, words))
+    return "\n\n".join(parts)
+
+
 # --- prompts --------------------------------------------------------------------------
 
 
@@ -428,10 +576,19 @@ def plan_prompt(
     refused: list[str] | None = None,
     previous: Any = None,
     plan_context: dict | None = None,
+    briefing: str = "",
 ) -> str:
     lines = [f"Goal from Eli:\n{goal}"]
     if notes:
         lines.append(f"What the boss knows that the repo does not say:\n{notes}")
+    if briefing:
+        lines += [
+            "Briefing on the checkout, gathered by Team so you need not read the repo turn by "
+            "turn: the target's instructions, its file map, and outlines (definitions with line "
+            "numbers) of the files the goal names or that mention its terms. Cite context ranges "
+            "from these outlines; open a file only when an outline is not enough to write the order.",
+            briefing,
+        ]
     before = (plan_context or {}).get("before") or []
     alongside = (plan_context or {}).get("alongside") or []
     if before:

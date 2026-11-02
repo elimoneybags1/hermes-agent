@@ -411,6 +411,12 @@ class Loop:
             if gave_up is not None:
                 trigger = gave_up.get("trigger_outcome") or "error"
                 reason = f"kanban gave up after {trigger}: {gave_up.get('error') or _blocked_reason(full)}"
+                if trigger == "timed_out" and self._left_work(goal):
+                    # Out of turns with work on the branch: grade what is there
+                    # (grade() commits leftovers) before spending another attempt.
+                    self.log(f"goal {goal['id']}: {reason}; grading the work it left")
+                    self._grade_task(goal, job, "timed_out")
+                    return True
                 ledger.finish_job(
                     self.conn,
                     job["id"],
@@ -860,6 +866,23 @@ class Loop:
     def _repo(self, goal: dict) -> Path:
         return targets.repo_path(goal["target"])
 
+    def _left_work(self, goal: dict) -> bool:
+        """True when the attempt left commits on its branch or edits in its worktree."""
+        repo, wt, base = self._repo(goal), Path(goal["worktree"]), goal.get("base") or "main"
+        if grade.has_commits(repo, goal["branch"], base, runner=self.runner):
+            return True
+        if not wt.exists():
+            return False
+        try:
+            return not grade.is_clean(wt, runner=self.runner) or bool(
+                grade._must(
+                    grade._git(wt, "ls-files", "--others", "--exclude-standard", runner=self.runner),
+                    "git ls-files failed",
+                )
+            )
+        except grade.GradeError:
+            return False
+
     def grade(self, goal: dict) -> tuple[bool, str]:
         """Merge base into the branch, enforce ownership, run the check. (passed, output)."""
         repo, branch, wt, base = (
@@ -869,6 +892,16 @@ class Loop:
             goal.get("base") or "main",
         )
         grade.ensure_worktree(repo, wt, branch, runner=self.runner)
+        # Code rescues a near-miss: work left uncommitted (a forgotten commit, a
+        # worker out of turns) is committed and graded, not failed on ceremony.
+        rescued = grade.commit_leftovers(
+            wt,
+            f"team: attempt {goal.get('attempt', 1)} left these changes uncommitted; "
+            "Team committed them before grading",
+            self._owned(goal),
+            runner=self.runner,
+        )
+        note = "Team committed the worker's uncommitted changes before grading. " if rescued else ""
         if goal.get("needs_commits", 1) and not grade.has_commits(
             repo, branch, base, runner=self.runner
         ):
@@ -884,7 +917,7 @@ class Loop:
                 grade.changed_files(repo, branch, base, runner=self.runner), owned
             )
             if outside:
-                return False, "changes outside owned files: " + ", ".join(outside)
+                return False, note + "changes outside owned files: " + ", ".join(outside)
         ok, output = grade.run_check(
             wt,
             goal["check_cmd"],
@@ -893,7 +926,7 @@ class Loop:
         )
         if not ok and not output:
             output = f"`{goal['check_cmd']}` failed with no output"
-        return ok, output
+        return ok, note + output
 
     def _land(self, goal: dict) -> None:
         repo = self._repo(goal)
@@ -1197,6 +1230,8 @@ def draft_goal(
         with lead.workspace(
             repo, target, f"plan-{lead_job}", base, runner
         ) as tree:
+            # Read once, in code, what the lead used to spend a dozen turns reading.
+            briefing = lead.briefing(tree, goal, loop.cfg["lead.briefing_bytes"], runner=runner)
             summary, parts = lead.ask(
                 root,
                 tree,
@@ -1209,6 +1244,7 @@ def draft_goal(
                     refused=refused,
                     previous=previous,
                     plan_context=plan_context,
+                    briefing=briefing,
                 ),
                 lead.PLAN_SCHEMA,
                 lambda data: _with_summary(data, tree, menu, loop),

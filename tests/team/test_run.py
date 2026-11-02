@@ -721,3 +721,58 @@ def test_the_loop_restarts_itself_between_ticks_when_team_code_changed(tmp_path,
         run.run_loop(tmp_path, None, interval=0, sleep=sleep, loop=loop, restart=lambda: restarts.append(1))
     assert loop.ticks == 3 and restarts == [1]
     assert loop.logged == ["team run a Team source file changed after it started; restarting with the checkout's code"]
+
+
+def test_uncommitted_work_is_committed_and_graded_instead_of_failed(world):
+    goal = run.start_goal(
+        world["root"], world["conn"], "team", "Set VALUE to 2", runner=world["hermes"], cat=CATALOG
+    )
+    wt = Path(goal["worktree"])
+    grade.ensure_worktree(world["repo"], wt, goal["branch"])
+    (wt / "app.py").write_text("VALUE = 2\n")  # the worker edited but never committed
+    world["hermes"].tasks[goal["current_task"]]["status"] = "review"
+    world["loop"].tick()
+    job = ledger.get_job(world["conn"], goal["job_id"])
+    assert job["outcome"] == "pass"
+    assert job["grader_detail"].startswith("Team committed the worker's uncommitted changes before grading.")
+    assert ledger.get_goal(world["conn"], goal["id"])["outcome"] == "pass"  # landed on main
+    assert (world["repo"] / "app.py").read_text() == "VALUE = 2\n"
+
+
+def test_commit_leftovers_takes_tracked_edits_and_owned_new_files_only(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.name", "T")
+    git(repo, "config", "user.email", "t@t")
+    (repo / "app.py").write_text("1\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "base")
+    assert grade.commit_leftovers(repo, "nothing", ["team/"]) is None
+    (repo / "app.py").write_text("2\n")
+    (repo / "team").mkdir()
+    (repo / "team" / "new.py").write_text("x\n")
+    (repo / "scratch.txt").write_text("junk\n")
+    sha = grade.commit_leftovers(repo, "leftovers", ["team/"])
+    assert sha == grade.head(repo)
+    assert grade.changed_files(repo, "HEAD", "HEAD~1") == ["app.py", "team/new.py"]
+    assert (repo / "scratch.txt").exists() and "scratch.txt" in subprocess.check_output(
+        ["git", "-C", str(repo), "ls-files", "--others"], text=True
+    )
+
+
+def test_left_work_sees_commits_edits_and_new_files(world):
+    goal = run.start_goal(
+        world["root"], world["conn"], "team", "Set VALUE to 2", runner=world["hermes"], cat=CATALOG
+    )
+    wt = Path(goal["worktree"])
+    grade.ensure_worktree(world["repo"], wt, goal["branch"])
+    assert world["loop"]._left_work(goal) is False
+    (wt / "note.txt").write_text("new\n")
+    assert world["loop"]._left_work(goal) is True
+    (wt / "note.txt").unlink()
+    (wt / "app.py").write_text("VALUE = 2\n")
+    assert world["loop"]._left_work(goal) is True
+    git(wt, "add", "-A")
+    git(wt, "commit", "-q", "-m", "done")
+    assert world["loop"]._left_work(goal) is True

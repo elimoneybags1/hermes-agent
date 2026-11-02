@@ -386,3 +386,35 @@ def test_structured_reads_json_out_of_fences_and_prose():
     assert lead.structured("no plan here") is None
     assert lead.structured("") is None and lead.structured(None) is None
     assert lead.structured("42") is None  # a bare number is not an answer
+
+
+# --- briefing -------------------------------------------------------------------
+
+
+def test_briefing_carries_instructions_the_file_map_and_outlines_of_named_files(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text("# Rules\nNo cd in commands.\n")
+    (tmp_path / "app.py").write_text("import os\n\nVALUE = 1\n\n\ndef usage_breakdown(conn, target):\n    return {}\n\n\nclass Thing:\n    pass\n")
+    (tmp_path / "other.py").write_text("x = 1\n")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "app.pyc").write_bytes(b"\x00")
+    text = lead.briefing(tmp_path, "Add a test for usage_breakdown in app.py", 20000)
+    assert "## CLAUDE.md" in text and "No cd in commands." in text
+    assert "## File map" in text and "other.py" in text and "app.pyc" not in text
+    assert "### app.py (11 lines)" in text
+    assert "3: VALUE = 1" in text and "6: def usage_breakdown(conn, target):" in text and "10: class Thing:" in text
+    assert "    return {}" not in text  # outlines, not bodies
+
+
+def test_briefing_stays_inside_its_budget_and_is_empty_at_zero(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text("rule\n" * 2000)
+    for n in range(30):
+        (tmp_path / f"m{n}.py").write_text(f"def f{n}():\n    pass\n" * 50)
+    assert lead.briefing(tmp_path, "do something to m3.py", 0) == ""
+    text = lead.briefing(tmp_path, "do something to m3.py", 3000)
+    assert 0 < len(text.encode()) <= 3000
+
+
+def test_plan_prompt_puts_the_briefing_before_the_menu():
+    prompt = lead.plan_prompt("Set VALUE to 2", "./check.sh", MENU, 3, briefing="## File map\napp.py")
+    assert prompt.index("Briefing on the checkout") < prompt.index("## File map\napp.py") < prompt.index("Workers you can assign")
+    assert "Briefing" not in lead.plan_prompt("Set VALUE to 2", "./check.sh", MENU, 3)
