@@ -34,6 +34,8 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
     ),
     "escalation.claude_max_turns": (int, 60, "Turn limit for a Claude gateway attempt."),
     "escalation.claude_timeout_s": (int, 1800, "Time limit for a Claude gateway attempt."),
+    "worker.max_calls_per_goal": (int, 15, "Most worker model calls one goal may use across all its attempts; past this the goal stops and goes back to the lead. Trial limit."),
+    "worker.max_input_tokens_per_goal": (int, 400000, "Most worker input tokens one goal may use across all its attempts; past this the goal stops and goes back to the lead. Trial limit."),
     "lead.enabled": (
         bool,
         True,
