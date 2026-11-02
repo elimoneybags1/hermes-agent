@@ -3,12 +3,30 @@ import pytest
 from pathlib import Path
 
 from team import ledger, settings
+
+
+@pytest.fixture
+def conn(tmp_path):
+    c = ledger.connect(tmp_path / "team.db")
+    ledger.init(c)
+    yield c
+    c.close()
+
+
+def _insert_goal(conn, goal_id: int) -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO goals (id, target, goal, role, branch, worktree, check_cmd, created) "
+            "VALUES (?, 't', 'g', 'worker', 'b', 'w', 'pytest -q', '2024-01-01T00:00:00+00:00')",
+            (goal_id,),
+        )
+
+
 def test_goal_usage_counts_worker_calls_and_tokens(conn, tmp_path):
     """Test that goal_usage only counts worker calls and tokens, excluding Claude and lead calls."""
-    # Create a connection and initialize the ledger
-    conn = ledger.connect(tmp_path / "team.db")
-    ledger.init(conn)
-    
+    # A call's goal_id references goals(id), so the goals must exist first.
+    _insert_goal(conn, 7)
+    _insert_goal(conn, 8)
     # Insert test rows
     # 1. Worker call with api_calls=3, tokens_in=100
     ledger.record_call(conn, None, "litellm", "m", "work", 100, 50, 10, True, task_ref='t_1', goal_id=7, api_calls=3)
@@ -59,7 +77,8 @@ def test_goal_usage_with_none_values(conn):
     """Test that None api_calls and tokens_in are handled correctly."""
     conn = ledger.connect(":memory:")
     ledger.init(conn)
-    
+
+    _insert_goal(conn, 1)
     # Record a call with None api_calls and tokens_in
     ledger.record_call(conn, None, "litellm", "m", "work", None, None, 10, True, task_ref='t_test', goal_id=1)
     
