@@ -73,6 +73,17 @@ def cmd_ideas(args) -> int:
     return 0
 
 
+def cmd_review_eval(args) -> int:
+    from team import review_eval
+
+    conn = _conn()
+    models_ = [m.strip() for m in args.models.split(",") if m.strip()]
+    path = review_eval.evaluate(ROOT, conn, args.target, models_, good=args.good, bad=args.bad,
+                                log=lambda m: print(m, flush=True))
+    print(f"written to {path}")
+    return 0
+
+
 def cmd_scout(args) -> int:
     from team import scout
 
@@ -382,6 +393,13 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("target")
     i.add_argument("--model", default="tier-reasoning")
     i.set_defaults(func=cmd_ideas)
+
+    re_ = sub.add_parser("review-eval", help="calibrate the reviewer: landed diffs and seeded bugs, judged per model")
+    re_.add_argument("target")
+    re_.add_argument("--models", default="tier-complex", help="comma-separated: tier-complex, tier-medium, claude-sonnet-5-5")
+    re_.add_argument("--good", type=int, default=10)
+    re_.add_argument("--bad", type=int, default=20)
+    re_.set_defaults(func=cmd_review_eval)
 
     t = sub.add_parser("targets", help="list targets, or set one's field")
     t.add_argument("--json", action="store_true")
