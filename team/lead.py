@@ -108,11 +108,24 @@ PLAN_SCHEMA = {
     },
 }
 
+# What a failed attempt died of, as one word the retrospective can count across projects.
+CAUSE_TAGS = {
+    "order": "the work order was wrong or incomplete (steps, files, interfaces)",
+    "context": "the worker lacked code or facts the order should have carried",
+    "skill": "the worker did not follow a rule a skill or its instructions state",
+    "model": "the model could not do the part (reasoning, tool use, size)",
+    "env": "the environment: a missing tool, a command not on PATH, the gateway",
+    "test": "the tests or the acceptance command were wrong, flaky or missing",
+    "scope": "the part was too large or crossed into files it did not own",
+    "other": "none of the above",
+}
+
 DIAGNOSIS_SCHEMA = {
     "type": "object",
-    "required": ["cause", "note", "action"],
+    "required": ["cause", "cause_tag", "note", "action"],
     "properties": {
         "cause": {"type": "string"},
+        "cause_tag": {"type": "string", "enum": list(CAUSE_TAGS)},
         "note": {"type": "string"},
         "action": {"type": "string", "enum": ["retry", "escalate", "ask"]},
         "steps": _STRS,
@@ -142,14 +155,14 @@ def menu(root: Path, cat: dict | None = None, target: str | None = None) -> dict
     out = {}
     for name in roles.names(root):
         role = roles.load(root, name, cat, target=target)
-        if role["runs_on"]["harness"] != "hermes" or role["status"] != "active":
+        if role["runs_on"]["harness"] != "hermes" or role["status"] not in roles.WORKING:
             continue
         if not role.get("assignable", True):  # the aide answers Eli; it builds nothing
             continue
         if role.get("gate", "check") != "check":  # test-write, review, security: pipeline stages, not the lead's to assign
             continue
         out[name] = {
-            "does": role["does"],
+            "does": role["does"] + (" (on trial: new, prefer it for the work it names)" if role["status"] == "trial" else ""),
             "toolsets": sorted(set(role.get("tools") or [])),
             "skills": roles.skill_summaries(root, name, role),
             "models": list(role["models"]["candidates"]),
@@ -367,10 +380,14 @@ def validate_diagnosis(data: Any, tree: Path) -> tuple[dict | None, list[str]]:
     refs, errors = check_refs(list(data.get("context") or []), tree, "diagnosis")
     if action == "ask" and not str(data.get("question") or "").strip():
         errors.append("action ask needs a question for Eli")
+    tag = str(data.get("cause_tag") or "other").strip().lower()
+    if tag not in CAUSE_TAGS:
+        errors.append(f"cause_tag {tag!r} must be one of {list(CAUSE_TAGS)}")
     if errors:
         return None, errors
     return {
         "cause": str(data.get("cause") or "").strip(),
+        "cause_tag": tag,
         "note": str(data.get("note") or "").strip(),
         "action": action,
         "steps": [str(s) for s in data.get("steps") or [] if str(s).strip()],
@@ -717,6 +734,8 @@ def diagnose_prompt(
         "Answer retry (a free model tries again with your note, and your steps and "
         "context if you give them), escalate (Claude takes the part over), or ask "
         "(only Eli can decide; give the question).",
+        "Tag the cause with one word (`cause_tag`), so Team can count what recurs across "
+        "projects: " + "; ".join(f"`{k}`: {v}" for k, v in CAUSE_TAGS.items()) + ".",
     ]
     if refused:
         lines += ["Team refused your previous answer:", _bullets(refused)]

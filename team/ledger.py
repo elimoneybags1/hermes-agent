@@ -299,6 +299,10 @@ def init(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE goals ADD COLUMN stage_idx INTEGER NOT NULL DEFAULT 0")
             conn.execute("ALTER TABLE goals ADD COLUMN risk TEXT NOT NULL DEFAULT 'auto'")
             conn.execute("ALTER TABLE goals ADD COLUMN acceptance_cmd TEXT")
+        diag_columns = {r["name"] for r in conn.execute("PRAGMA table_info(diagnoses)")}
+        if "cause_tag" not in diag_columns:
+            # One word per failure (team.lead.CAUSE_TAGS) the retrospective counts across projects.
+            conn.execute("ALTER TABLE diagnoses ADD COLUMN cause_tag TEXT")
         if "stages" not in goal_columns:
             # The stage names fixed at creation (JSON list); the branch head when the current
             # stage began (a review must not change it); attempts spent per stage (JSON).
@@ -399,7 +403,7 @@ FAILURE_KINDS = ("infra", "work")
 # rather than of its own work. Matched against the grader's detail and the attempt's call errors.
 _INFRA = re.compile(
     r"Error code: 5\d\d|InternalServerError|ServiceUnavailable|APIConnectionError|Connection error"
-    r"|Error code: 429|RateLimit|rate limit|usage_limit|quota"
+    r"|Error code: 429|RateLimit|rate limit|usage_limit|quota|didn't answer|did not answer|no response"
     r"|__aiter__|duplicate field|extra_forbidden|thought_signature|Invalid response received from"
     r"|no dependency environment|not the loopback gateway|max_retries_exhausted|timed out at|Timeout",
     re.IGNORECASE,
@@ -1225,15 +1229,40 @@ def add_diagnosis(
     note: str,
     action: str,
     lead_job_id: int | None = None,
+    cause_tag: str | None = None,
 ) -> int:
     _check(action, ("retry", "escalate", "ask"), "action")
     with conn:
         cur = conn.execute(
             "INSERT INTO diagnoses (goal_id, job_id, cause, note, action, lead_job_id,"
-            " created) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (goal_id, job_id, cause, note, action, lead_job_id, _now()),
+            " created, cause_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (goal_id, job_id, cause, note, action, lead_job_id, _now(), cause_tag),
         )
     return cur.lastrowid
+
+
+def cause_counts(conn: sqlite3.Connection, target: str, since: str | None = None) -> dict[str, dict[str, int]]:
+    """Per cause tag: how many goals and how many distinct plans (projects) it was diagnosed in.
+
+    A goal without a plan counts as its own project. ``since`` is an ISO timestamp floor on
+    the diagnosis.
+    """
+    sql = (
+        "SELECT COALESCE(d.cause_tag, 'other') AS tag, d.goal_id,"
+        " COALESCE(p.plan_id, -g.id) AS plan FROM diagnoses d"
+        " JOIN goals g ON g.id = d.goal_id LEFT JOIN parts p ON p.id = g.part_id"
+        " WHERE g.target = ?"
+    )
+    args: list = [target]
+    if since:
+        sql += " AND d.created >= ?"
+        args.append(since)
+    goals: dict[str, set] = {}
+    plans: dict[str, set] = {}
+    for tag, goal_id, plan in conn.execute(sql, args):
+        goals.setdefault(tag, set()).add(goal_id)
+        plans.setdefault(tag, set()).add(plan)
+    return {tag: {"goals": len(goals[tag]), "plans": len(plans[tag])} for tag in goals}
 
 
 def list_diagnoses(conn: sqlite3.Connection, goal_id: int) -> list[dict]:

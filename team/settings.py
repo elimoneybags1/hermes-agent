@@ -81,8 +81,16 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
     ),
     "replay.size": (
         int,
-        4,
-        "Finished worker orders frozen into the replay set that grades a harness change.",
+        8,
+        "Finished worker orders of one role frozen into the replay set that grades a change to "
+        "that role's files; attempts that died of infrastructure are left out. Eight paired items "
+        "is a regression guard and a signal, not proof: 5/5 discordant wins is p≈0.03.",
+    ),
+    "replay.watch_attempts": (
+        int,
+        10,
+        "After a harness change is adopted, this many work attempts of the role are watched; a "
+        "pass rate below the replay's base rate proposes a revert.",
     ),
     "ask.block_after_claude_fails": (
         bool,

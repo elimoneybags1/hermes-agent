@@ -62,10 +62,12 @@ def test_a_harness_change_needs_a_worker_role_file_and_finished_orders(team):
         harness(team, edits=edit("x", "team/roles/boss/SOUL.md"))
     with pytest.raises(boss.BossError, match="Hermes worker"):
         harness(team, edits=edit("x", "team/roles/lead/SOUL.md"))
-    with pytest.raises(boss.BossError, match="no finished worker orders"):
+    with pytest.raises(boss.BossError, match="no finished implement orders"):
         harness(team)
+    with pytest.raises(boss.BossError, match="one role's files"):
+        harness(team, edits=edit() + edit("# lead\n", "team/roles/lead/SOUL.md"))
     assert ledger.list_harness(team["conn"]) == []
-    assert replay.load_set("team") is None
+    assert replay.load_set("team", "implement") is None
 
 
 def test_a_harness_change_replays_the_set_on_both_arms(team):
@@ -89,8 +91,10 @@ def test_a_harness_change_replays_the_set_on_both_arms(team):
         "base": "implement",
     }
     # every replay goal is the frozen order again, from the commit it was written against
-    s = replay.load_set("team")
-    assert [i["goal_id"] for i in s["items"]] == [gid]
+    s = replay.load_set("team", "implement")
+    assert s["role"] == "implement" and [i["goal_id"] for i in s["items"]] == [gid]
+    assert s["items"][0]["acceptance"] == "./check.sh" and s["items"][0]["type"] == "bugfix"
+    assert all(g["stages"] == '["implement"]' for g in goals)  # one attempt of the role's stage
     assert all(g["base"] == s["items"][0]["commit"] for g in goals)
     assert all("Change VALUE to 2" in tasks[g["current_task"]]["body"] for g in goals)
     assert "harness changes: 1 being replayed, 0 waiting for Eli" in boss.status(team["conn"], "team")
@@ -110,7 +114,7 @@ def test_replay_results_go_to_eli_and_adopt_merges_the_branch(team):
     assert d["options"] == ["adopt", "dismiss"]
     assert "passed 1/1 (base 1/1)" in d["context"] and "tokens are the lever" in d["context"]
     assert d["recommendation"] == "dismiss"  # a tie is not a win
-    assert replay.load_set("team")["base"]["pass"] == 1
+    assert replay.load_set("team", "implement")["base"]["pass"] == 1
     assert "1 waiting for Eli" in boss.status(team["conn"], "team")
 
     boss.settle(team["conn"], d["id"], "adopt")
@@ -126,6 +130,55 @@ def test_replay_results_go_to_eli_and_adopt_merges_the_branch(team):
     # the adopted version is the new base: a second change replays the branch arm only
     r2 = harness(team, edits=edit("# implement\n\nRead ranges only. Commit.\n"))
     assert r2["arms"] == ["branch"]
+
+
+def test_a_tie_is_dismissed_even_for_fewer_tokens_and_infra_deaths_are_not_replayed(team):
+    assert replay.verdict({"pass": 1, "n": 1, "tokens": 100}, {"pass": 1, "n": 1, "tokens": 10}) == "dismiss"
+    assert replay.verdict({"pass": 0, "n": 1, "tokens": 100}, {"pass": 1, "n": 1, "tokens": 900}) == "adopt"
+    gid = landed_order(team)
+    # a second order whose attempt died of infrastructure never enters the set
+    goal = ledger.get_goal(team["conn"], gid)
+    dead = ledger.start_job(team["conn"], "team", goal["base"], "implement", "v", task_ref="t_dead", order_id=ledger.latest_order(team["conn"], gid)["id"])
+    ledger.finish_job(team["conn"], dead, "error", "kanban", "kanban gave up after crashed: Error code: 502")
+    s = replay.build_set(team["conn"], "team", 8, "implement")
+    assert [i["job_id"] for i in s["items"]] != [dead] and len(s["items"]) == 1
+
+
+def test_after_adoption_the_role_is_watched_and_a_worse_rate_asks_to_revert(team):
+    landed_order(team)
+    r = harness(team)
+    replay_passes(team, r["id"])
+    review = ledger.get_harness(team["conn"], r["id"])
+    boss.settle(team["conn"], review["decision_id"], "adopt")
+    team["loop"].tick()
+    review = ledger.get_harness(team["conn"], r["id"])
+    assert review["status"] == "adopted"
+    # everything above happened within one second; date the adoption and the attempts apart so
+    # only the attempts below count as "since adoption"
+    ledger.update_harness(team["conn"], r["id"], ended="2050-01-01T00:00:00+00:00")
+
+    def attempt(ref, outcome):
+        j = ledger.start_job(team["conn"], "team", "c", "implement", "v", task_ref=ref)
+        ledger.finish_job(team["conn"], j, outcome, "check", "graded")
+        team["conn"].execute("UPDATE jobs SET started = '2050-06-01T00:00:00+00:00' WHERE id = ?", (j,))
+        team["conn"].commit()
+
+    for i in range(9):  # nine attempts: not yet
+        attempt(f"t_w{i}", "fail")
+    assert boss.watch_adopted(team["root"], team["conn"], runner=team["hermes"], cat=CATALOG, log=lambda m: None) == []
+    attempt("t_w9", "pass")
+    [line] = boss.watch_adopted(team["root"], team["conn"], runner=team["hermes"], cat=CATALOG, log=lambda m: None)
+    assert "implement 1/10 since adoption, base 1/1; asked Eli to revert" in line
+    review = ledger.get_harness(team["conn"], r["id"])
+    did = review["result"]["watch"]["decision_id"]
+    d = ledger.get_decision(team["conn"], did)
+    assert d["options"] == ["revert", "keep"] and "1/10" in d["context"]
+    ledger.answer_decision(team["conn"], did, "revert")
+    [line] = boss.watch_adopted(team["root"], team["conn"], runner=team["hermes"], cat=CATALOG, log=lambda m: None)
+    assert line.startswith(f"harness change {r['id']} reverted as")
+    assert "Read ranges only" not in (team["root"] / SOUL).read_text()
+    assert "Read ranges only" not in (profiles.profile_dir("implement") / "SOUL.md").read_text()
+    assert boss.watch_adopted(team["root"], team["conn"], runner=team["hermes"], cat=CATALOG, log=lambda m: None) == []
 
 
 def test_a_dismissed_harness_change_keeps_its_branch(team):

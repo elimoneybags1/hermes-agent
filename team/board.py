@@ -115,8 +115,13 @@ def stations(root: Path) -> list[str]:
     active = []
     for name in _STATION_ORDER:
         path = root / "team" / "roles" / name / "role.toml"
-        if path.exists() and tomllib.loads(path.read_text()).get("status") == "active":
+        if path.exists() and tomllib.loads(path.read_text()).get("status") in ("active", "trial"):
             active.append(name)
+    # roles the boss proposed and Eli approved are stations too, beside the builder they extend
+    for p in sorted((root / "team" / "roles").glob("*/role.toml")) if (root / "team" / "roles").is_dir() else []:
+        r = tomllib.loads(p.read_text())
+        if r.get("status") in ("active", "trial") and r.get("gate", "check") == "check" and r["name"] not in active and r["name"] not in ("boss", "lead", "aide"):
+            active.append(r["name"])
     return ["lead", *(active or ["implement"]), "rescue"]
 
 
@@ -138,7 +143,7 @@ def zone(job: dict | None, profile: str | None) -> str:
         return profile if profile in ("boss", "aide") else "other"
     if job["role"] == "lead":
         return "lead"
-    if job["role"] in _STATION_ORDER:
+    if job["role"] not in ("boss", "aide", "team"):
         escalated = _spec(job) == "claude" or (job.get("model_choice") or {}).get("why", "").startswith("escalation")
         return "rescue" if escalated else job["role"]
     return "other"

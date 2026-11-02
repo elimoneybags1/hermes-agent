@@ -411,7 +411,7 @@ def test_the_tools_register_and_refuse_politely(team, monkeypatch):
     assert set(registered) == {
         "team_status", "team_findings", "team_notes_read", "team_notes_write",
         "team_propose", "team_ask", "team_proposals", "team_reopen", "team_suggest",
-        "team_harness_read", "team_propose_harness",
+        "team_harness_read", "team_propose_harness", "team_propose_agent",
     }
     assert all(r["toolset"] == "team" for r in registered.values())
     assert not any("approve" in n or "release" in n for n in registered)
@@ -428,7 +428,7 @@ def test_the_tools_register_and_refuse_politely(team, monkeypatch):
     assert out.startswith("question 4 is a card") and "End your turn" in out
     listing = registered["team_proposals"]["handler"]({})
     assert "project 1 open: H." in listing and "  goal 3 proposed: g3" in listing
-    assert len(tools.schemas()) < 5500  # what the tools add to every boss call (11 tools)
+    assert len(tools.schemas()) < 7000  # what the tools add to every boss call (12 tools)
 
 
 def test_boss_profile_is_lean_and_locked(team):

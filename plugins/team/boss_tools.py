@@ -17,7 +17,7 @@ _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from team import boss, ledger, run, targets
+from team import boss, gates, ledger, run, targets
 
 _TARGET = {"type": "string", "description": "The target's name, e.g. team."}
 
@@ -149,6 +149,32 @@ def suggest(args: dict) -> str:
 
 def harness_read(args: dict) -> str:
     return boss.harness_read(_REPO, str(args.get("role") or ""))
+
+
+def propose_agent(args: dict) -> str:
+    target = _target(args)
+    with _conn() as conn:
+        r = boss.propose_agent(
+            _REPO,
+            conn,
+            target,
+            str(args.get("name") or ""),
+            str(args.get("title") or ""),
+            str(args.get("does") or ""),
+            str(args.get("graded_by") or ""),
+            str(args.get("gate") or ""),
+            list(args.get("tools") or []),
+            list(args.get("candidates") or []),
+            str(args.get("soul") or ""),
+            str(args.get("why") or ""),
+            skills=list(args.get("skills") or []),
+            extends=str(args.get("extends") or "") or None,
+            log=lambda _m: None,
+        )
+    return (
+        f"agent {r['name']} is on {r['branch']} and in Eli's inbox (decision {r['decision_id']}). "
+        "Approved, it joins the roster on trial and the lead can assign it."
+    )
 
 
 def propose_harness(args: dict) -> str:
@@ -297,6 +323,32 @@ TOOLS = [
         },
         ["headline", "why", "edits"],
         propose_harness,
+    ),
+    (
+        "team_propose_agent",
+        "Propose a new worker role the roster lacks. Team writes its files on a branch, validates them like any "
+        "role, and puts it in Eli's inbox; approved, it joins the roster on trial. The gate is the code that grades "
+        "its work and must already exist.",
+        {
+            "target": _TARGET,
+            "name": {"type": "string", "description": "2 to 24 lowercase letters, digits or dashes, e.g. ui-build."},
+            "title": {"type": "string"},
+            "does": {"type": "string", "description": "One sentence: what work it takes."},
+            "graded_by": {"type": "string", "description": "How the gate decides its work is done, in a sentence."},
+            "gate": {"type": "string", "enum": list(gates.GATES), "description": "check for a builder; tests_only, review, security, onboard otherwise."},
+            "tools": {"type": "array", "items": {"type": "string"}, "description": "Toolsets, e.g. [terminal, file, todo, skills, kanban]."},
+            "candidates": {"type": "array", "items": {"type": "string"}, "description": "Catalog model specs, fastest first, e.g. [tier-medium, tier-complex]."},
+            "soul": {"type": "string", "description": "The whole SOUL.md: who it is and how it works."},
+            "why": {"type": "string", "description": "The evidence: what recurred, counts next to the base rate."},
+            "skills": {
+                "type": "array",
+                "items": {"type": "object", "properties": {"name": {"type": "string"}, "content": {"type": "string"}}, "required": ["name", "content"]},
+                "description": "Skills to create with it, each the whole SKILL.md.",
+            },
+            "extends": {"type": "string", "description": "A builder whose skills it starts from, e.g. implement."},
+        },
+        ["name", "title", "does", "graded_by", "gate", "tools", "candidates", "soul", "why"],
+        propose_agent,
     ),
 ]
 

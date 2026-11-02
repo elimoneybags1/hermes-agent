@@ -533,7 +533,8 @@
     {
      "provider": "cohere",
      "provider_model_id": "north-mini-code-1-0",
-     "free": "allowance"
+     "free": "allowance",
+     "unavailable": "as the fallback behind OpenRouter it answered 422 'messages with non-empty tool_calls' (6) and 429 trial-key limits (19) in 3 hours on 2026-11-02; off until the Cohere tool-message transform is fixed"
     }
    ]
   },

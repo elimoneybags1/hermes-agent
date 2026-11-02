@@ -32,10 +32,11 @@ import sqlite3
 import subprocess
 from collections import Counter
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from team import grade, ledger, profiles, replay, roles, run, settings, targets, usage
+from team import catalog, gates, grade, ledger, profiles, replay, roles, run, settings, targets, usage
 from team.goals_landed import all_goals_landed
 
 HEADLINE_CHARS = 160
@@ -43,6 +44,8 @@ SUMMARY_CHARS = 1500
 PLAN_OPTIONS = ["approve", "dismiss"]
 SUGGESTION_OPTIONS = ["apply", "dismiss"]
 HARNESS_OPTIONS = ["adopt", "dismiss"]
+AGENT_OPTIONS = ["approve", "dismiss"]
+AGENT_NAME = re.compile(r"^[a-z][a-z0-9-]{1,23}$")
 HARNESS_FILE_CHARS = 20000
 HARNESS_EDITS = 6
 HARNESS_PATH = re.compile(
@@ -627,8 +630,29 @@ def record_closed(conn: sqlite3.Connection, target: str) -> list[dict]:
         ledger.update_plan(conn, p["id"], status="done")
         _save(p)
         if built:
-            queue_note(review_note(p))
+            queue_note(review_note(p, retrospective(conn, target)))
         out.append(p)
+    return out
+
+
+RETRO_DAYS = 30
+RETRO_GOALS, RETRO_PLANS = 3, 2
+
+
+def retrospective(conn: sqlite3.Connection, target: str) -> list[str]:
+    """What recurred: cause tags diagnosed in at least RETRO_GOALS goals across RETRO_PLANS
+    projects in the last RETRO_DAYS days. Below that, nothing is worth a change yet."""
+    since = (datetime.now(UTC) - timedelta(days=RETRO_DAYS)).isoformat(timespec="seconds")
+    counts = ledger.cause_counts(conn, target, since)
+    recurring = {
+        t: c for t, c in counts.items() if c["goals"] >= RETRO_GOALS and c["plans"] >= RETRO_PLANS
+    }
+    if not recurring:
+        seen = ", ".join(f"{t} {c['goals']}" for t, c in sorted(counts.items())) or "none"
+        return [f"no cause recurred across projects in {RETRO_DAYS} days (diagnosed goals by cause: {seen})"]
+    out = [f"recurring causes, at least {RETRO_GOALS} goals in {RETRO_PLANS} projects over {RETRO_DAYS} days:"]
+    for t, c in sorted(recurring.items(), key=lambda kv: -kv[1]["goals"]):
+        out.append(f"  {t}: {c['goals']} goals in {c['plans']} projects")
     return out
 
 
@@ -669,16 +693,22 @@ def take_notes() -> list[str]:
     return out
 
 
-def review_note(p: dict) -> str:
+def review_note(p: dict, retro: list[str] | None = None) -> str:
     counts = Counter(g["status"] for g in p["goals"])
-    return (
+    text = (
         f"Project {p['id']} closed: {p['headline']} Goals: "
         + ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
-        + f". Read team_findings for target {p['target']} and compare the numbers with their base "
-        "rates. If a pattern cost attempts or tokens, propose one fix: team_suggest, or "
-        "team_propose_harness when the fix is a worker role's own files. If nothing stands out, "
-        "say so in one line."
+        + f". Read team_findings for target {p['target']} and compare the numbers with their base rates."
     )
+    if retro:
+        text += " Retrospective: " + " ".join(retro) + "."
+    text += (
+        " Propose at most one change, and only for a cause that recurs: team_propose_harness when "
+        "the fix is a worker role's own files; team_propose_agent when the recurring work needs a "
+        "worker the roster lacks (a gate from the registry, its tools, skills, models and why); "
+        "team_suggest for anything else. If nothing recurs, say so in one line."
+    )
+    return text
 
 def _usage_lines(conn: sqlite3.Connection, target: str) -> list[str]:
     """Return usage lines for boss status/findings: overall, by model, by role."""
@@ -740,6 +770,9 @@ def status(conn: sqlite3.Connection, target: str) -> str:
     asks = [d for d in ledger.list_decisions(conn, target) if d["source"].startswith("boss-ask")]
     out.append(f"your questions waiting for Eli: {len(asks)}")
     out += [f"  decision {d['id']}: {_line(d['question'])}" for d in asks[:5]]
+    waiting_agents = [a for a in agents() if a["status"] == "waiting"]
+    if waiting_agents:
+        out.append("agents waiting for Eli: " + ", ".join(a["name"] for a in waiting_agents))
     replaying = ledger.list_harness(conn, target, status="evaluating")
     judged = ledger.list_harness(conn, target, status="waiting")
     if replaying or judged:
@@ -796,6 +829,7 @@ def findings(conn: sqlite3.Connection, target: str, limit: int = 40) -> str:
     ).fetchall()
     out.append(f"lead diagnoses: {len(rows)}")
     out += [f"  {r['action']}: {_line(r['cause'])}" for r in rows]
+    out += retrospective(conn, target)
     cost = conn.execute(
         "SELECT g.id, SUM(c.tokens_in) AS tin, COUNT(c.id) AS n FROM goals g"
         " JOIN jobs j ON j.part_id = g.part_id OR (g.part_id IS NULL AND j.id = g.job_id)"
@@ -958,16 +992,19 @@ def propose_harness(
         if current.exists() and current.read_text() == content:
             raise BossError(f"{path}: that is what the file already says")
         touched.setdefault(role, []).append((path, content))
+    if len(touched) != 1:
+        raise BossError("a harness change edits one role's files; the replay set is that role's")
     for role in touched:
         if roles.load(root, role, cat)["runs_on"]["harness"] != "hermes":
             raise BossError(
                 f"{role} does not run as a Hermes worker; the replay set re-runs worker orders, "
                 "so only worker roles can be graded this way. Use team_suggest for it."
             )
-    s = replay.load_set(target)
+    role = next(iter(touched))
+    s = replay.load_set(target, role)
     if s is None:
         try:
-            s = replay.build_set(conn, target, cfg["replay.size"], runner=runner)
+            s = replay.build_set(conn, target, cfg["replay.size"], role, runner=runner)
         except replay.ReplayError as e:
             raise BossError(str(e)) from e
         replay.save_set(s)
@@ -1048,7 +1085,9 @@ def settle_reviews(
         res = replay.results(conn, r["id"])
         if res is None:
             continue
-        s = replay.load_set(r["target"]) or {"target": r["target"], "items": [], "base": None}
+        s = replay.load_set(r["target"], r["roles"][0]) or {
+            "target": r["target"], "role": r["roles"][0], "items": [], "base": None,
+        }
         if "base" in res:
             s["base"] = {**res["base"], "versions": replay.versions(root, r["roles"]), "review": r["id"]}
             replay.save_set(s)
@@ -1107,7 +1146,7 @@ def settle_reviews(
                 profiles.sync(root, role, cat, runner=runner)
             except profiles.ProfileError as e:
                 log(f"harness change {r['id']}: landed as {sha[:10]}, but profile {role} did not sync: {e}")
-        s = replay.load_set(r["target"])
+        s = replay.load_set(r["target"], r["roles"][0])
         if s is not None and (r["result"] or {}).get("branch"):
             s["base"] = {**r["result"]["branch"], "versions": replay.versions(root, r["roles"]), "review": r["id"]}
             replay.save_set(s)
@@ -1122,6 +1161,313 @@ def settle_reviews(
         )
         _drop_candidates(r)
         done.append(f"harness change {r['id']} adopted as {sha[:10]}")
+    done += watch_adopted(root, conn, runner=runner, cat=cat, log=lambda _m: None)
+    done += settle_agents(root, conn, runner=runner, cat=cat, log=lambda _m: None)
+    for m in done:
+        log(m)
+    return done
+
+
+# --- new agents --------------------------------------------------------------------
+#
+# The boss (or, through it, the retrospective) proposes a worker the roster lacks. The
+# role's files go on a branch, validated by roles.load like any role; Eli approves from
+# the inbox; the merge puts it in the roster on trial, measured like every other role.
+
+
+def agents_path() -> Path:
+    return ledger.state_dir() / "boss" / "agents.jsonl"
+
+
+def agents() -> list[dict]:
+    path = agents_path()
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _save_agents(rows: list[dict]) -> None:
+    path = agents_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def _toml_str(value: str) -> str:
+    return json.dumps(str(value))
+
+
+def render_role_toml(
+    name: str, title: str, does: str, graded_by: str, gate: str, tools: list[str], candidates: list[str],
+    *, extends: str | None = None, escalation_model: str = "claude-sonnet-5-5",
+) -> str:
+    lines = [
+        f"name = {_toml_str(name)}",
+        f"title = {_toml_str(title)}",
+        f"does = {_toml_str(does)}",
+        f"graded_by = {_toml_str(graded_by)}",
+        'status = "trial"',
+        f"gate = {_toml_str(gate)}",
+    ]
+    if extends:
+        lines.append(f"extends = {_toml_str(extends)}")
+    lines += [
+        "tools = [" + ", ".join(_toml_str(t) for t in tools) + "]",
+        "",
+        "[runs_on]",
+        'harness = "hermes"',
+        "",
+        "[escalation]",
+        'harness = "hermes-subscription"',
+        f"model = {_toml_str(escalation_model)}",
+        "after_failures = 2",
+        "",
+        "[budget]",
+        "max_turns = 40",
+        "run_budget_s = 900",
+        "",
+        "[models]",
+        "candidates = [" + ", ".join(_toml_str(c) for c in candidates) + "]",
+        'pinned = ""',
+        "",
+        "[hermes.compression]",
+        "threshold = 0.25",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def propose_agent(
+    root: Path,
+    conn: sqlite3.Connection,
+    target: str,
+    name: str,
+    title: str,
+    does: str,
+    graded_by: str,
+    gate: str,
+    tools: list[str],
+    candidates: list[str],
+    soul: str,
+    why: str,
+    *,
+    skills: list[dict] | None = None,
+    extends: str | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
+    cat: dict | None = None,
+    log: Callable[[str], None] = run._log,
+) -> dict:
+    """Put a new worker role on a branch and in Eli's inbox.
+
+    The role may only name a registered gate (the code that grades it), toolsets the roster
+    knows, and catalog models. ``extends`` copies a builder's skills as a starting point.
+    Approved, it joins the roster with status ``trial``.
+    """
+    targets.require(target)
+    root = Path(root)
+    name = (name or "").strip().lower()
+    if not AGENT_NAME.match(name):
+        raise BossError("an agent name is 2 to 24 lowercase letters, digits or dashes, starting with a letter")
+    if name in roles.names(root):
+        raise BossError(f"a role named {name!r} exists; change it with team_propose_harness")
+    if any(a["name"] == name and a["status"] == "waiting" for a in agents()):
+        raise BossError(f"agent {name!r} is already waiting for Eli")
+    if gate not in gates.GATES:
+        raise BossError(f"gate must be one of {sorted(gates.GATES)}: the code that grades the role's work")
+    tools = [str(t).strip() for t in tools or [] if str(t).strip()]
+    bad = [t for t in tools if t not in roles.TOOLSETS]
+    if not tools or bad:
+        raise BossError(f"tools {bad or '[]'} are not toolsets a worker may have; choose from {list(roles.TOOLSETS)}")
+    cands = [str(c).strip() for c in candidates or [] if str(c).strip()]
+    if not cands:
+        raise BossError("candidates: at least one catalog model spec (tier-<t> or <provider>:<id>), fastest first")
+    if cat is not None:
+        for c in cands:
+            try:
+                catalog.resolve(c, cat)
+            except catalog.GateError as e:
+                raise BossError(f"candidate {c!r} refused by the catalog: {e}") from e
+    for field, value in (("title", title), ("does", does), ("graded_by", graded_by), ("why", why)):
+        if not str(value or "").strip():
+            raise BossError(f"{field} cannot be empty")
+    soul = (soul or "").strip()
+    if not soul or len(soul) > HARNESS_FILE_CHARS:
+        raise BossError(f"soul is the role's whole SOUL.md, 1 to {HARNESS_FILE_CHARS} characters")
+    skill_files = []
+    for s in skills or []:
+        sname = str((s or {}).get("name") or "").strip()
+        content = (s or {}).get("content")
+        if not AGENT_NAME.match(sname) or not isinstance(content, str) or not content.strip() or len(content) > HARNESS_FILE_CHARS:
+            raise BossError("each skill is {name: lowercase-dashes, content: the whole SKILL.md}")
+        skill_files.append((sname, content))
+    if extends and extends not in roles.names(root):
+        raise BossError(f"extends names no existing role: {extends!r}")
+    path, branch = grade.create_worktree(root, "harness", f"agent-{name}", base="main", runner=runner)
+    try:
+        d = path / "team" / "roles" / name
+        d.mkdir(parents=True)
+        files = []
+        (d / "role.toml").write_text(render_role_toml(name, title, does, graded_by, gate, tools, cands, extends=extends))
+        (d / "SOUL.md").write_text(soul + "\n")
+        files += [f"team/roles/{name}/role.toml", f"team/roles/{name}/SOUL.md"]
+        if extends:
+            for src in sorted((path / "team" / "roles" / extends / "skills").glob("*/SKILL.md")):
+                dst = d / "skills" / src.parent.name / "SKILL.md"
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_text(src.read_text())
+                files.append(str(dst.relative_to(path)))
+        for sname, content in skill_files:
+            dst = d / "skills" / sname / "SKILL.md"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(content.strip() + "\n")
+            files.append(str(dst.relative_to(path)))
+        roles.load(path, name, cat)  # the branch must describe a loadable role
+        sha = grade.commit_paths(path, f"agent {name}: {title}", *files, runner=runner)
+    except Exception as e:
+        try:
+            grade.remove_worktree(root, path, branch, runner=runner)
+        except grade.GradeError:
+            pass
+        raise BossError(f"agent {name} could not be written: {e}") from e
+    context = (
+        f"{does}\n\nGraded by: {graded_by} (gate `{gate}`: {gates.GATES[gate]}).\n"
+        f"Tools: {', '.join(tools)}. Models: {', '.join(cands)}. Skills: "
+        + (", ".join(n for n, _ in skill_files) or "none")
+        + (f" (plus {extends}'s)" if extends else "")
+        + f".\n\nWhy: {why.strip()}\n\nBranch {branch}; `git diff main...{branch}` shows the files. "
+        "Approve merges it into the roster on trial, measured like any role; dismiss keeps the branch."
+    )
+    decision = ledger.create_decision(
+        conn, target, f"Add agent {name}? {title.strip()}", context, AGENT_OPTIONS, "approve",
+        source=f"boss-agent:{name}",
+    )
+    rows = agents()
+    rows.append({
+        "name": name, "title": title.strip(), "target": target, "branch": branch, "sha": sha,
+        "decision_id": decision, "status": "waiting", "created": ledger._now(),
+    })
+    _save_agents(rows)
+    log(f"agent {name} proposed on {branch}; decision {decision}")
+    return {"name": name, "branch": branch, "decision_id": decision, "sha": sha}
+
+
+def settle_agents(
+    root: Path,
+    conn: sqlite3.Connection,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
+    cat: dict | None = None,
+    log: Callable[[str], None] = run._log,
+) -> list[str]:
+    """Merge the agents Eli approved into the roster (on trial) and sync their profiles."""
+    root = Path(root)
+    rows, done, changed = agents(), [], False
+    for a in rows:
+        if a["status"] != "waiting":
+            continue
+        d = ledger.get_decision(conn, a["decision_id"])
+        if d is None or d["status"] == "open":
+            continue
+        changed = True
+        if d["status"] != "answered" or not str(d["answer"] or "").lower().startswith("approve"):
+            a["status"] = "dismissed"
+            done.append(f"agent {a['name']} dismissed; branch {a['branch']} is kept")
+            continue
+        try:
+            sha = grade.land(root, a["branch"], f"Add agent {a['name']}: {a['title']}", "main", runner=runner)
+        except grade.LandLater as e:
+            changed = False
+            log(f"agent {a['name']}: waiting to land: {e}")
+            continue
+        except grade.GradeError as e:
+            a["status"], a["error"] = "failed", str(e)
+            done.append(f"agent {a['name']} could not land: {e}")
+            continue
+        try:
+            profiles.sync(root, a["name"], cat, runner=runner)
+        except profiles.ProfileError as e:
+            log(f"agent {a['name']}: landed as {sha[:10]}, but its profile did not sync: {e}")
+        try:
+            grade.remove_worktree(root, grade.worktree_path("harness", f"agent-{a['name']}"), a["branch"], runner=runner)
+        except grade.GradeError as e:
+            log(f"agent {a['name']}: landed, but {e}")
+        a["status"], a["merge_sha"] = "adopted", sha
+        done.append(f"agent {a['name']} joined the roster on trial ({sha[:10]})")
+    if changed:
+        _save_agents(rows)
+    for m in done:
+        log(m)
+    return done
+
+
+def watch_adopted(
+    root: Path,
+    conn: sqlite3.Connection,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
+    cat: dict | None = None,
+    log: Callable[[str], None] = run._log,
+) -> list[str]:
+    """After a harness change is adopted, the role's next real attempts are the test the replay
+    could not be: once ``replay.watch_attempts`` work attempts are in, a pass rate below the
+    replay's base rate asks Eli to revert; a 'revert' answer undoes the merge and syncs the profile."""
+    root = Path(root)
+    need = settings.load(root)["replay.watch_attempts"]
+    done: list[str] = []
+    for r in ledger.list_harness(conn, status="adopted"):
+        result = r["result"] or {}
+        watch = dict(result.get("watch") or {})
+        role = r["roles"][0]
+        if not watch.get("decided"):
+            if not r.get("ended"):
+                continue
+            p, n = replay.watch_rate(conn, r["target"], role, r["ended"])
+            if n < need:
+                continue
+            base = result.get("base") or {}
+            bp, bn = int(base.get("pass") or 0), int(base.get("n") or 0)
+            watch.update({"pass": p, "n": n, "base_pass": bp, "base_n": bn, "decided": True})
+            if bn > 0 and p * bn < bp * n:  # p/n below bp/bn
+                d = ledger.create_decision(
+                    conn,
+                    r["target"],
+                    f"Revert harness change {r['id']}? {r['headline']}",
+                    f"Since it was adopted, {role} passed {p}/{n} work attempts; the replay's base was "
+                    f"{bp}/{bn}. Revert undoes merge {str(r['merge_sha'] or '')[:10]} and syncs the "
+                    "profile; keep leaves it.",
+                    ["revert", "keep"],
+                    "revert",
+                    source=f"boss-harness-watch:{r['id']}",
+                )
+                watch["decision_id"] = d
+                done.append(f"harness change {r['id']}: {role} {p}/{n} since adoption, base {bp}/{bn}; asked Eli to revert (decision {d})")
+            else:
+                done.append(f"harness change {r['id']}: {role} {p}/{n} since adoption, base {bp}/{bn}; holds")
+            ledger.update_harness(conn, r["id"], result={**result, "watch": watch})
+            continue
+        did = watch.get("decision_id")
+        if not did or watch.get("reverted") or watch.get("kept"):
+            continue
+        d = ledger.get_decision(conn, did)
+        if d is None or d["status"] == "open":
+            continue
+        if d["status"] == "answered" and str(d["answer"] or "").lower().startswith("revert") and r.get("merge_sha"):
+            try:
+                sha = grade.revert_merge(
+                    root, r["merge_sha"], f"Revert harness change {r['id']}: {r['headline']}", runner=runner
+                )
+            except grade.GradeError as e:
+                log(f"harness change {r['id']}: could not revert: {e}")
+                continue
+            try:
+                profiles.sync(root, role, cat, runner=runner)
+            except profiles.ProfileError as e:
+                log(f"harness change {r['id']}: reverted as {sha[:10]}, but profile {role} did not sync: {e}")
+            watch["reverted"] = sha
+            done.append(f"harness change {r['id']} reverted as {sha[:10]}")
+        else:
+            watch["kept"] = True
+            done.append(f"harness change {r['id']} kept after the watch")
+        ledger.update_harness(conn, r["id"], result={**result, "watch": watch})
     for m in done:
         log(m)
     return done

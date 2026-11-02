@@ -541,7 +541,7 @@ class Loop:
         role = roles.load(self.root, name, self.cat, target=target)
         if role["runs_on"]["harness"] not in ("hermes", "hermes-subscription"):
             raise RunError(f"role {name} does not run on hermes workers")
-        if role["status"] != "active":
+        if role["status"] not in roles.WORKING:
             raise RunError(f"role {name} is not active")
         return role
 
@@ -570,7 +570,7 @@ class Loop:
                 r = roles.load(self.root, name, self._cat)
             except roles.RoleError:
                 continue
-            if r["status"] == "active" and r["runs_on"]["harness"] in ("hermes", "hermes-subscription"):
+            if r["status"] in roles.WORKING and r["runs_on"]["harness"] in ("hermes", "hermes-subscription"):
                 out.add(name)
         return out
 
@@ -626,7 +626,7 @@ class Loop:
                 r = self._role(wanted)
             except (roles.RoleError, RunError):
                 return stage.role
-            if r.get("gate") == stage.gate and r["status"] == "active":
+            if r.get("gate") == stage.gate and r["status"] in roles.WORKING:
                 return wanted
         return stage.role
 
@@ -1608,6 +1608,7 @@ class Loop:
             found["note"],
             found["action"],
             lead_job,
+            cause_tag=found.get("cause_tag"),
         )
         self.log(f"goal {goal['id']}: lead says {found['action']}: {found['cause']}")
         return found

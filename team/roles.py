@@ -17,7 +17,10 @@ from team import catalog
 
 # "claude" is retained for reading legacy manifests; active roles use Hermes.
 HARNESSES = ("hermes", "hermes-subscription", "claude")
-STATUSES = ("active", "planned")
+# active: in every pipeline that names it. trial: a proposed agent Eli approved, working and
+# measured like any other until its rate earns 'active' (or a revert). planned: files only.
+STATUSES = ("active", "trial", "planned")
+WORKING = ("active", "trial")
 # Hermes toolsets a worker may be given (platform_toolsets.cli).
 TOOLSETS = (
     "read-only",
@@ -78,6 +81,9 @@ def load(root: Path, name: str, cat: dict | None = None, target: str | None = No
         raise RoleError(f"role {name}: role.toml says name = {role['name']!r}")
     if role["status"] not in STATUSES:
         raise RoleError(f"role {name}: status must be one of {STATUSES}")
+    parent = role.get("extends")
+    if parent is not None and (parent == name or parent not in names(root)):
+        raise RoleError(f"role {name}: extends names no existing role: {parent!r}")
     harness = role.get("runs_on", {}).get("harness")
     if harness not in HARNESSES:
         raise RoleError(f"role {name}: runs_on.harness must be one of {HARNESSES}")

@@ -51,7 +51,7 @@ def test_register_binds_both_hooks_and_the_boss_tools():
         "pre_tool_call",
     }
     assert set(middleware) == {"llm_request"}
-    assert "team_propose" in tools and len(tools) == 11
+    assert "team_propose" in tools and "team_propose_agent" in tools and len(tools) == 12
 
 
 def test_classify():

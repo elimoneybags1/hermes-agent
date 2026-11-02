@@ -308,6 +308,28 @@ def land(
     return _must(_git(repo, "rev-parse", "HEAD", runner=runner), "git rev-parse failed")
 
 
+def revert_merge(
+    repo: str | Path, merge_sha: str, message: str, base: str = "main", runner: Runner = subprocess.run
+) -> str:
+    """Revert a landed merge commit on ``base`` (``git revert -m 1``); returns the revert's sha.
+
+    Refuses staged changes and a checkout not on ``base``, like ``land``; a conflicting
+    revert is aborted cleanly.
+    """
+    repo = Path(repo)
+    if _must(_git(repo, "diff", "--cached", "--name-only", runner=runner), "git diff failed"):
+        raise GradeError("repository has staged changes")
+    current = _must(_git(repo, "branch", "--show-current", runner=runner), "git branch failed")
+    if current != base:
+        raise GradeError(f"checked-out branch is {current!r}, not {base!r}")
+    result = _git(repo, "revert", "-m", "1", "--no-edit", merge_sha, runner=runner)
+    if result.returncode != 0:
+        _git(repo, "revert", "--abort", runner=runner)
+        raise GradeError(f"revert conflict: {(result.stderr or result.stdout).strip()}")
+    _git(repo, "commit", "--amend", "-q", "-m", message, runner=runner)
+    return _must(_git(repo, "rev-parse", "HEAD", runner=runner), "git rev-parse failed")
+
+
 def remove_worktree(
     repo: str | Path, path: str | Path, branch: str, runner: Runner = subprocess.run
 ) -> None:

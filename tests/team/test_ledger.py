@@ -57,7 +57,7 @@ def test_init_creates_every_table_with_the_agreed_columns(conn):
         "lead_job_id",
         "created",
     ]
-    assert cols("diagnoses")[-4:] == ["note", "action", "lead_job_id", "created"]
+    assert cols("diagnoses")[-5:] == ["note", "action", "lead_job_id", "created", "cause_tag"]
     assert cols("goals")[-12:] == [
         "part_id", "base", "needs_commits", "harness_id", "arm",
         "type", "stage_idx", "risk", "acceptance_cmd", "stages", "stage_sha", "stage_attempts",

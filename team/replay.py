@@ -34,34 +34,39 @@ class ReplayError(RuntimeError):
     """The set cannot be built."""
 
 
-def set_path(target: str) -> Path:
-    return ledger.state_dir() / "replay" / f"{target}.json"
+def set_path(target: str, role: str) -> Path:
+    return ledger.state_dir() / "replay" / f"{target}-{role}.json"
 
 
-def load_set(target: str) -> dict | None:
-    path = set_path(target)
+def load_set(target: str, role: str) -> dict | None:
+    path = set_path(target, role)
     return json.loads(path.read_text()) if path.exists() else None
 
 
 def save_set(s: dict) -> None:
-    path = set_path(s["target"])
+    path = set_path(s["target"], s["role"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(s, indent=1, sort_keys=True) + "\n")
 
 
 def build_set(
-    conn: sqlite3.Connection, target: str, size: int, runner: Runner = subprocess.run
+    conn: sqlite3.Connection, target: str, size: int, role: str, runner: Runner = subprocess.run
 ) -> dict:
-    """Freeze the newest finished worker orders, one per goal, whose commit still exists."""
+    """Freeze the newest finished orders of ``role``, one per goal, whose commit still exists.
+
+    Attempts that died of infrastructure (``jobs.failure_kind = 'infra'``) are left out: they
+    say nothing about the role's files.
+    """
     repo = targets.repo_path(target)
     rows = conn.execute(
         "SELECT j.id AS job_id, j.target_commit, j.outcome, o.id AS order_id, o.body,"
-        " g.id AS goal_id, g.goal, g.check_cmd, g.role"
+        " g.id AS goal_id, g.goal, g.check_cmd, g.role, g.acceptance_cmd, g.type"
         " FROM jobs j JOIN orders o ON o.id = j.order_id JOIN goals g ON g.id = o.goal_id"
-        " WHERE j.target = ? AND j.outcome IS NOT NULL AND g.harness_id IS NULL"
+        " WHERE j.target = ? AND j.role = ? AND j.outcome IS NOT NULL AND g.harness_id IS NULL"
+        " AND (j.failure_kind IS NULL OR j.failure_kind != 'infra')"
         " AND (j.task_ref IS NULL OR j.task_ref NOT LIKE 'claude:%')"
         " ORDER BY j.id DESC",
-        (target,),
+        (target, role),
     ).fetchall()
     items: list[dict] = []
     seen: set[int] = set()
@@ -82,6 +87,8 @@ def build_set(
                 "order": json.loads(r["body"]),
                 "goal": r["goal"],
                 "check": r["check_cmd"],
+                "acceptance": r["acceptance_cmd"],
+                "type": r["type"],
                 "role": r["role"],
                 "commit": r["target_commit"],
                 "outcome": r["outcome"],
@@ -90,8 +97,8 @@ def build_set(
         if len(items) >= size:
             break
     if not items:
-        raise ReplayError("no finished worker orders to replay yet")
-    return {"target": target, "built": ledger._now(), "items": items, "base": None}
+        raise ReplayError(f"no finished {role} orders to replay yet")
+    return {"target": target, "role": role, "built": ledger._now(), "items": items, "base": None}
 
 
 def versions(root: Path, role_names: list[str]) -> dict[str, str]:
@@ -141,6 +148,9 @@ def start(
                 str(path),
                 item["check"],
                 base=item["commit"],
+                kind=item.get("type") or "bugfix",
+                acceptance_cmd=item.get("acceptance"),
+                stages=["implement"],  # one attempt of the role's own stage: no verify, no review
             )
             ledger.update_goal(conn, gid, harness_id=review_id, arm=arm)
             ledger.create_order(conn, gid, item["order"])
@@ -176,12 +186,21 @@ def results(conn: sqlite3.Connection, review_id: int) -> dict | None:
 
 
 def verdict(base: dict, branch: dict) -> str:
-    """``adopt`` when the branch passed more, or as many for fewer tokens; a tie is not a win."""
-    if branch["pass"] > base["pass"]:
-        return "adopt"
-    if branch["pass"] == base["pass"] and branch["tokens"] < base["tokens"]:
-        return "adopt"
-    return "dismiss"
+    """``adopt`` only when the branch passed more items than the base; a tie, even for fewer
+    tokens, is dismissed (IDEAS.md point 6: a change must beat the base rate)."""
+    return "adopt" if branch["pass"] > base["pass"] else "dismiss"
+
+
+def watch_rate(conn: sqlite3.Connection, target: str, role: str, since: str) -> tuple[int, int]:
+    """(passes, work attempts) of ``role`` on ``target`` started after ``since``, infra deaths left out."""
+    p, n = conn.execute(
+        "SELECT COALESCE(SUM(outcome = 'pass'), 0), COUNT(*) FROM jobs"
+        " WHERE target = ? AND role = ? AND started >= ? AND ended IS NOT NULL"
+        " AND (failure_kind IS NULL OR failure_kind != 'infra')"
+        " AND (task_ref IS NULL OR task_ref NOT LIKE 'claude:%')",
+        (target, role, since),
+    ).fetchone()
+    return int(p or 0), int(n or 0)
 
 
 def describe(base: dict, branch: dict) -> str:
