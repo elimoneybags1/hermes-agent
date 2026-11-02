@@ -375,3 +375,14 @@ def test_the_lead_reads_a_detached_clean_checkout(led):
         assert (tree / "app.py").read_text() == "VALUE = 1\n"
         assert grade.is_clean(tree)
     assert not tree.exists()
+
+
+def test_structured_reads_json_out_of_fences_and_prose():
+    plan = {"summary": "s", "parts": [{"n": 1}]}
+    assert lead.structured(json.dumps(plan)) == plan
+    assert lead.structured("Here is the plan:\n```json\n" + json.dumps(plan) + "\n```\nDone.") == plan
+    assert lead.structured("Sure. " + json.dumps(plan) + " That covers it.") == plan
+    assert lead.structured("[1, 2]") == [1, 2]
+    assert lead.structured("no plan here") is None
+    assert lead.structured("") is None and lead.structured(None) is None
+    assert lead.structured("42") is None  # a bare number is not an answer

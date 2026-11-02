@@ -28,6 +28,7 @@ The prompt carries the JSON schema; Team validates the returned answer.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -517,11 +518,42 @@ def call(
             result=result,
         )
     if result.get("structured") is None:
-        try:
-            result["structured"] = json.loads(result["result"])
-        except (TypeError, ValueError):
-            raise LeadError("lead gave no structured answer", result=result) from None
+        result["structured"] = structured(result["result"])
+        if result["structured"] is None:
+            raise LeadError(
+                "lead gave no structured answer; it said: " + _tail(str(result["result"] or ""), 500),
+                result=result,
+            )
     return result
+
+
+_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def structured(text: str | None) -> Any:
+    """The JSON object or array in the lead's final text, or None.
+
+    Hermes hands back the model's text, not a parsed object, and a model told
+    to answer only in JSON still wraps it in a code fence or a sentence often
+    enough that a strict ``json.loads`` lost real plans. The whole text is
+    tried first, then each fenced block, then the outermost ``{...}`` or
+    ``[...]`` span.
+    """
+    if not text or not isinstance(text, str):
+        return None
+    candidates = [text.strip(), *(m.group(1).strip() for m in _FENCE.finditer(text))]
+    for open_, close in (("{", "}"), ("[", "]")):
+        start, end = text.find(open_), text.rfind(close)
+        if 0 <= start < end:
+            candidates.append(text[start : end + 1])
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(value, (dict, list)):
+            return value
+    return None
 
 
 def ask(

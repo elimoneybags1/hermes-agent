@@ -378,6 +378,49 @@ def tiers(gw, order: dict[str, list[str]]) -> list[dict]:
     ]
 
 
+def planner_queue() -> list[dict]:
+    """Cards for project goals Eli approved that the planner has not turned into ledger goals yet.
+
+    An approved goal is drafted on a later tick of ``team run`` (one per tick),
+    so between Eli's click and the lead's answer it exists only in the
+    project; without these cards the Planner column said "Nothing here" while
+    a goal card beside it said "planner next".
+    """
+    out = []
+    for p in boss.proposals():
+        if p["status"] != "open":
+            continue
+        for g in p["goals"]:
+            if g["status"] not in ("approved", "drafting"):
+                continue
+            out.append(
+                {
+                    "id": f"{p['id']}.{g['n']}",
+                    "target": p["target"],
+                    "goal": g["goal"],
+                    "station": "lead",
+                    "pending": g["status"],
+                    "project": p["id"],
+                    "n": g["n"],
+                    "after": g.get("after") or [],
+                    "outcome": None,
+                    "detail": None,
+                    "check": g.get("check"),
+                    "branch": None,
+                    "owns": [],
+                    "depends_on": [],
+                    "files": [],
+                    "order_bytes": None,
+                    "order_version": None,
+                    "planned": None,
+                    "attempts": [],
+                    "created": g.get("created"),
+                    "finished": None,
+                }
+            )
+    return out
+
+
 def board(conn: sqlite3.Connection, root: Path, cat: dict | None = None) -> dict:
     cat = cat if cat is not None else catalog.load()
     order = ranks(cat)
@@ -389,6 +432,7 @@ def board(conn: sqlite3.Connection, root: Path, cat: dict | None = None) -> dict
         cards = [goal_card(conn, gw, g, at, cooldown_s) for g in goals]
         waiting = boss.waiting()
         cols = {z: [c for c in cards if c["station"] == z] for z in ("lead", "implement", "rescue")}
+        cols["lead"] = planner_queue() + cols["lead"]
         done = [c for c in cards if c["station"] in ("landed", "stopped")][:LANDED_SHOWN]
         return {
             "configured": configured(root),
