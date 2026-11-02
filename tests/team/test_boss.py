@@ -313,8 +313,8 @@ def test_status_lists_open_projects_and_what_waits(team):
     assert "goals waiting for Eli: 1" in text and f"  project {p1['id']} goal 1: Set VALUE to 2" in text
     assert "closed: Shut one., 2026-10-01" in text and text.count("Shut one.") == 1
 
-def test_status_and_findings_show_tokens_per_model_and_role(team):
-    from team import usage
+
+def test_status_and_findings_show_tokens_per_model_and_role(team, tmp_path):
     jid = ledger.start_job(team["conn"], "team", "abc", "implement", "v1")
     ledger.record_call(team["conn"], jid, "litellm", "alias-x", "implement", 100, 20, 5, True, response_model="real-model-a")
     ledger.record_call(team["conn"], jid, "litellm", "alias-x", "implement", 50, 10, 2, True, response_model="real-model-a")
@@ -334,13 +334,14 @@ def test_status_and_findings_show_tokens_per_model_and_role(team):
     assert "alias-y: 7 in, 3 out, 1 calls" in findings_text
     assert "tokens by role:" in findings_text
     # a fresh ledger with no calls shows no 'tokens overall' line
-    from tests.team.test_ledger import fresh_ledger
-    conn = fresh_ledger()
+    conn = ledger.connect(tmp_path / "empty.db")
+    ledger.init(conn)
     status_text_empty = boss.status(conn, "team")
     assert "tokens overall:" not in status_text_empty
     findings_text_empty = boss.findings(conn, "team")
     assert "tokens overall:" not in findings_text_empty
     conn.close()
+
 
 def test_a_suggestion_is_a_decision_not_an_edit(team):
     d = boss.suggest(team["conn"], "team", "Give implement a commit skill", "Add ...", "3 of 5 failed: no commits")
