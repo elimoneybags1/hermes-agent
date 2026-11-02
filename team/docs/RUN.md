@@ -4,8 +4,12 @@ Team uses Hermes kanban as its queue. Each goal gets a branch and worktree,
 and a **type** that picks its pipeline (`team/gates.py`): the stages it goes
 through, each a role and a code gate, and whether it lands by itself. Team
 runs each stage's gate and lands a passing branch with a `--no-ff` merge.
-Boss and lead handle planning; the roster's workers build. The standard
-Hermes dashboard and kanban board are available separately.
+Boss and lead handle planning; the roster's workers build. `team app`
+(127.0.0.1:8792) is Team's one UI: Work (projects, cards, the chart, the
+boss and aide), Agents (the roster with its gates and pass rates, the
+pipelines, proposing a new agent), Gateway (the route as a diagram with
+live rates, services, test, verify, logs, the catalog editors) and Usage.
+Hermes's own dashboard with the kanban board is separate (9119).
 
 ## Pipeline
 

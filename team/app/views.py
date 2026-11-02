@@ -72,7 +72,9 @@ def agents(root: Path, conn: sqlite3.Connection, cat: dict | None, target: str |
             "rate_all": all_rates.get(name, {"pass": 0, "n": 0, "infra": 0}),
             "problem": problem,
         })
-    stations = [s for s in rows if s["harness"] == "hermes" and s["gate"] in gates.GATES]
+    from team import board
+
+    stations = [s for s in board.stations(root) if s not in ("lead", "rescue")]
     pipelines = [
         {
             "type": kind,
@@ -83,7 +85,7 @@ def agents(root: Path, conn: sqlite3.Connection, cat: dict | None, target: str |
     ]
     return {
         "roles": rows,
-        "stations": [s["name"] for s in stations],
+        "stations": stations,
         "pipelines": pipelines,
         "gates": gates.GATES,
         "proposals": [a for a in boss.agents() if a["status"] == "waiting"],

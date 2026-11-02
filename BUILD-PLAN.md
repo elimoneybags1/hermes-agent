@@ -315,3 +315,20 @@ Appended by the build session, one dated line per phase exit with its number.
   waits on Eli allowing the path. Phase 5 landed: per-role replay sets,
   the post-adoption watch, cause tags and the retrospective, agents the
   boss can propose (397 tests).
+- 2026-11-02 Phase 6 landed (`33b959ae95`): one UI on 8792 with Agents,
+  Gateway (Mermaid route diagram from the catalog and usage.db) and a target
+  selector; integrations/dashboard and the Hermes tab plugin removed.
+  Sandbox batch 2 at this point: 5 of 10 goals landed through implement →
+  verify → review (42, 44, 45, 47, 48), 5 in review. 24 graded worker
+  attempts: 15 passed, 2 failed on their work, 7 died of infrastructure
+  (all before the 17:40Z fixes; since then 4 of 54 gateway calls failed).
+  Reviewer so far: 5 grounded `land` verdicts, 2 prose answers refused and
+  retried, 0 `fix`; the reviewer calibration spike (20 bad / 10 good
+  diffs) is still to run and decides the reviewer's model.
+- **Left when this session's usage limit stopped it:** ledger-ranked model
+  choice (`team/models.py` into `Loop._choice`), routines, the reviewer
+  spike, the small-model repo scout, seeding ui-build/backend-build/bugfix
+  as trial agents, and Phase 4's StudyApp half (needs Eli to allow the
+  path to the build session). `team` target is still disabled; the pinned
+  sandbox loop (`team run --target team-sandbox --no-boss --pin`) is
+  still running and may be stopped with `pkill -f 'team run --target'`.
