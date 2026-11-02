@@ -1,5 +1,8 @@
 # Running the committed Team workflow
 
+For the planned dashboard expansion, backend gaps, acceptance criteria, and
+independent model comparison brief, see [Dashboard scope](DASHBOARD-SCOPE.md).
+
 Team uses Hermes kanban as its queue. Each goal gets a branch and worktree,
 and a **type** that picks its pipeline (`team/gates.py`): the stages it goes
 through, each a role and a code gate, and whether it lands by itself. Team
