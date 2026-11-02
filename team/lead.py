@@ -598,7 +598,7 @@ def _file_map(files: list[str], wanted: list[str], words: list[str]) -> str:
     return "\n".join(lines)
 
 
-def briefing(tree: Path, goal: str, budget: int, runner: Runner = subprocess.run) -> str:
+def briefing(tree: Path, goal: str, budget: int, runner: Runner = subprocess.run, *, scout_context: str = "") -> str:
     """What the lead would otherwise spend its first turns reading, within ``budget`` bytes."""
     if budget <= 0:
         return ""
@@ -618,6 +618,10 @@ def briefing(tree: Path, goal: str, budget: int, runner: Runner = subprocess.run
         text = _read(tree / name)
         if text.strip():
             add(f"## {name}\n" + (text if len(text) <= cap else text[:cap] + "\n…"))
+    if scout_context:
+        remaining = budget - used
+        add(scout_context.encode()[:remaining].decode("utf-8", errors="ignore"))
+        return "\n\n".join(parts)
     files = _files(tree, runner)
     paths, words, plain = _terms(goal, files)
     mentions = _mentions(tree, words, files, runner)
@@ -659,9 +663,10 @@ def plan_prompt(
     if briefing:
         lines += [
             "Briefing on the checkout, gathered by Team so you need not read the repo turn by "
-            "turn: the target's instructions, its file map, and outlines (definitions with line "
-            "numbers) of the files the goal names or that mention its terms. Cite context ranges "
-            "from these outlines; open a file only when an outline is not enough to write the order.",
+            "turn: authoritative project instructions and either bounded scout evidence or file "
+            "outlines. Scout notes are hypotheses, not verified fixes. Reason from them first; "
+            "verify only the narrow cited ranges needed for a precise order. Do not reread entire "
+            "files merely to recreate a summary. Cite actual source ranges in the order.",
             briefing,
         ]
     before = (plan_context or {}).get("before") or []

@@ -110,14 +110,15 @@ def merge_notes(notes: list[dict[str, list[str]]], max_chars: int = MAX_SUMMARY_
         if not notes_list:
             lines.append("- (none)")
         else:
+            section_used = 0
             for note in notes_list:
                 bullet = f"- {note}"
                 # Check if adding this bullet would exceed the budget
-                current_length = sum(len(l) + 1 for l in lines)  # +1 for newlines
-                if current_length + len(bullet) > per_section_budget:
+                if section_used + len(bullet) + 1 > per_section_budget:
                     lines.append("- …(truncated)")
                     break
                 lines.append(bullet)
+                section_used += len(bullet) + 1
         lines.append("")
 
     return "\n".join(lines).strip()

@@ -34,13 +34,13 @@ Audit findings on 2026-11-02:
 - After each project, a review improves the agents and can propose a new one.
   Once adopted, the boss and lead see it in the roster.
 - This build does not go through Team's pipeline.
-- The build session may handle StudyApp's 28 uncommitted files.
+- Updated 2026-11-02: build Team only. Team may read the existing StudyApp checkout, including dirty/untracked source. Do not edit, clean, stash or move its existing work.
 
 ## Defaults chosen in planning (change them when reviewing)
 
 - "Land" means local `main`. Eli pushes. Workers get a hard block on
   `git push`.
-- StudyApp's 28 files go to a preservation branch, unsorted and undeleted.
+- StudyApp stays in its existing checkout. Preserve dirty and untracked work in place.
 - New agents are inbox cards that Eli approves, and they start on trial.
 - Eli adopts evolution changes at first. Auto-adopting skills can come after a
   track record exists.
@@ -58,8 +58,9 @@ Audit findings on 2026-11-02:
 - The proving target is a disposable clone of Team under
   `$HOME/state/team/acceptance/`, attached as `team-sandbox`, so goals are
   real-sized and nothing can land on the real repo.
-- The build session's hook blocks StudyApp. Before Phase 4, Eli allows that
-  path, or a session is started there, for the cleanup and spike work.
+- Eli authorized access to the existing StudyApp checkout from Team on 2026-11-02.
+  The runner scouts it read-only. Build-session edits remain confined to Team;
+  a future approved worker goal uses an isolated worktree and the landing guards.
 
 ## Phases
 
@@ -173,8 +174,9 @@ schema, so they are finished after it.
   `candidate_profile`. Overlays can add skills or narrow tools, models and
   budget, never widen them. `audit_profiles` must cover them.
 - `lead.menu` takes a target. `jobs.role_version` becomes `base+overlay`.
-- Move StudyApp's 28 files to a preservation branch, then `team attach`. Run
-  onboarding and have Eli approve the check.
+- Attach StudyApp without enabling dispatch or moving its dirty work. Run the
+  read-only scout first; reason over its summaries. Onboarding must validate a
+  check in an isolated worktree before normal changes can be dispatched.
 
 ### Phase 5: self-improvement and new agents
 
@@ -328,7 +330,27 @@ Appended by the build session, one dated line per phase exit with its number.
 - **Left when this session's usage limit stopped it:** ledger-ranked model
   choice (`team/models.py` into `Loop._choice`), routines, the reviewer
   spike, the small-model repo scout, seeding ui-build/backend-build/bugfix
-  as trial agents, and Phase 4's StudyApp half (needs Eli to allow the
-  path to the build session). `team` target is still disabled; the pinned
+  as trial agents, and Phase 4's StudyApp half. Access was subsequently
+  authorized; see the continuation below for the read-only attachment. `team` target is still disabled; the pinned
   sandbox loop (`team run --target team-sandbox --no-boss --pin`) is
   still running and may be stopped with `pkill -f 'team run --target'`.
+
+
+### 2026-11-02 continuation: preserve My Prof, build the runner
+
+Eli clarified that this session changes Team only. The existing My Prof
+checkout is registered as `myprof`, with summary-first planning enabled and
+build dispatch disabled pending verified onboarding. No clone, cleanup,
+stash, branch switch or direct app edits are authorized by this continuation.
+
+The runner now has an existing-checkout scout, content-addressed incremental
+summaries, stale-evidence filtering, source references, a free gateway backend,
+and bounded summary input for boss/lead/onboarding. `team ideas` gives only
+summaries to a stronger reasoning tier and saves proposals without dispatch.
+Model ranking from graded work (excluding infra) and opt-in routines are wired
+into the loop. The instructions above about preserving work replace the old
+preservation-branch plan.
+
+This does not claim the original acceptance campaign is complete: reviewer
+calibration, the paired evolution replay, specialist-role adoption, and the
+StudyApp onboarding/build campaign still need their own measured gates.

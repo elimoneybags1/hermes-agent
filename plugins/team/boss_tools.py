@@ -61,7 +61,14 @@ def findings(args: dict) -> str:
 
 
 def notes_read(args: dict) -> str:
-    return boss.read_notes(_target(args)) or "(no project notes yet)"
+    target = _target(args)
+    notes = boss.read_notes(target) or "(no project notes yet)"
+    if targets.require(target).get("scout"):
+        from team import scout
+
+        evidence = scout.context(target)
+        notes += "\n\n" + evidence + "\n\n" + scout.read_ideas(target, evidence)
+    return notes
 
 
 def notes_write(args: dict) -> str:
@@ -213,7 +220,7 @@ TOOLS = [
     ),
     (
         "team_notes_read",
-        "Read the project notes: purpose, decisions, the larger plan, open questions.",
+        "Read project notes and current bounded scout evidence: purpose, decisions, risks and improvement hypotheses.",
         {"target": _TARGET},
         [],
         notes_read,

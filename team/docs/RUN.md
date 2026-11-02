@@ -150,3 +150,62 @@ while a provider's tool-history translation is broken. Probe results measure
 current availability and basic protocol correctness, not coding quality or
 sustained quota capacity. Keep comparison rates next to their baseline and
 leave unknown usage or responders unknown.
+
+## Reading an existing project cheaply
+
+`team attach "$HOME/work/StudyApp" --name myprof --disabled` registers the
+existing checkout without cloning it or enabling dispatch. `team targets
+--set myprof scout true` enables summary-first planning. `team scout myprof
+--max-calls 24` reads tracked, modified and untracked source, excluding ignored
+files, common data/dependency directories, credential filenames, symlinks,
+binary files, lockfiles and oversized files. It never stashes, checks out,
+commits or edits target files. Credentials embedded in ordinary source are
+not detected by filename filtering; the source scope must be appropriate for
+the configured free-model gateway.
+
+Scouting uses tool-free calls to the free gateway, with a per-run call cap and
+one scout lock per target. Receipts and content-addressed chunk summaries live
+under `$TEAM_STATE/targets/<target>/scout/`. Re-running continues pending chunks
+and reuses unchanged ones. The report states partial coverage, exclusions,
+errors, actual provider token usage (or missing usage), and source/summary
+character counts. Character reduction is not a measured Claude token saving.
+
+`team ideas myprof` sends only the bounded scout summary to `tier-reasoning`,
+with no file or terminal tools, and saves proposals plus usage under
+`scout/ideas.json`. It does not queue builds. This is a way to use a stronger
+reasoner for choosing improvements without paying for it to read bulk source.
+
+The boss's `team_notes_read` includes the bounded scout evidence. The lead
+refreshes summaries for its clean planning worktree and receives them instead
+of bulk source outlines; project instructions remain authoritative. Onboarding
+gets matching cached evidence first. Changed or deleted file summaries are
+omitted. Model suggestions are hypotheses: the planner must verify narrow
+source ranges before ordering edits, and code gates still decide correctness.
+The dirty-checkout report is kept separately from clean-worktree planning.
+
+## Model selection and routines
+
+Role pins and the lead's explicit first-attempt model remain authoritative.
+Other worker attempts use graded outcomes for that role/target (pooled by role
+when target evidence is sparse), excluding infrastructure failures. Before
+there is enough evidence the manifest order is used. Rankings use smoothed
+pass rates; exploration gives the least-observed candidate a turn every fifth
+eligible choice. The recorded reason includes pass counts and the baseline.
+
+Opt-in routines live in `$TEAM_STATE/targets/<target>/routines.toml`:
+
+```toml
+[[routines]]
+name = "survey"
+action = "scout"
+enabled = false
+every_s = 86400
+```
+
+`action = "goal"` additionally requires `goal = "..."` and a configured target
+check. Enabling such a routine authorizes that goal on the interval; it uses
+the normal lead/pipeline/landing policy. No routine is enabled by default.
+Disabled targets and quota pauses are respected; build routines wait for active
+goals. A durable claim prevents duplicates in one interval. A crash leaves an
+unresolved claim that blocks later intervals until inspected; it is never
+silently retried. The `routine_runs` ledger table records outcomes and errors.

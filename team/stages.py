@@ -274,6 +274,10 @@ def onboard_brief(goal: dict, target: dict, *, failure: str | None = None, attem
     """The onboarding stage: find how this repo is checked and prove the check can fail."""
     known = {k: target.get(k) for k in ("check", "test_runner", "e2e", "setup") if target.get(k)}
     out = [goal["goal"], f"## The repo\n{target['path']} (target `{target['name']}`), checked out in your worktree."]
+    if target.get("scout"):
+        from team import scout
+
+        out.append(scout.context(target["name"], tree=Path(goal["worktree"]) if goal.get("worktree") else None))
     if known:
         out.append("## What Team already has for it (confirm, correct or replace)\n" + "\n".join(f"- {k}: `{v}`" for k, v in known.items()))
     out.append(

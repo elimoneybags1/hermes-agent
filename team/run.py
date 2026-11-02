@@ -361,6 +361,14 @@ class Loop:
 
     def tick_target(self, name: str, dispatch: bool = True) -> None:
         kanban.ensure_board(name, runner=self.runner)
+        if dispatch:
+            from team import routines
+
+            try:
+                routines.tick(self.root, self.conn, name, self.now(), runner=self.runner,
+                              cat=self._cat, log=self.log)
+            except ValueError as e:
+                self.log(f"{name}: invalid routine: {e}")
         dispatched = 0
         if dispatch and ledger.active_pause(self.conn, name, self.now()) is None:
             result = kanban.dispatch(
@@ -545,15 +553,14 @@ class Loop:
             raise RunError(f"role {name} is not active")
         return role
 
-    def _choice(self, role: dict, attempt: int) -> catalog.ModelChoice:
+    def _choice(self, role: dict, attempt: int, target: str | None = None) -> catalog.ModelChoice:
         if role["runs_on"]["harness"] == "hermes-subscription":
             model = role["runs_on"].get("model") or "claude-opus-5-5"
             choice = catalog.resolve(f"claude-subscription:{model}", self.cat)
             return choice._replace(provider="team-subscription")
-        spec = roles.candidate(role, attempt)
-        if not spec:
-            raise RunError(f"role {role['name']} has no model candidates")
-        return catalog.resolve(spec, self.cat)
+        from team import models
+
+        return models.choose(self.conn, role, attempt, self.cat, target)
 
     def _owned(self, goal: dict) -> list[str] | None:
         if not goal.get("part_id"):
@@ -972,7 +979,7 @@ class Loop:
         if order is not None and attempt == 1:
             choice = catalog.resolve(order["order"]["model"], self.cat)
         else:
-            choice = self._choice(role, attempt)
+            choice = self._choice(role, attempt, goal["target"])
         grade.ensure_worktree(
             self._repo(goal), goal["worktree"], goal["branch"], runner=self.runner
         )
@@ -1119,7 +1126,7 @@ class Loop:
             )
         if nxt <= role["escalation"]["after_failures"] and status == "review":
             # Same task, reopened: the worker sees the failure in its comments.
-            choice = self._choice(role, nxt)
+            choice = self._choice(role, nxt, goal["target"])
             kanban.set_model(goal["target"], task_id, choice, runner=self.runner)
             kanban.reopen_review(
                 goal["target"],
@@ -1589,7 +1596,7 @@ class Loop:
                     found["excerpts"] = lead.excerpts(
                         found["context"], tree, self.cfg["lead.context_bytes"]
                     )[0]
-        except (lead.LeadError, grade.GradeError) as e:
+        except (lead.LeadError, grade.GradeError, ValueError, RunError) as e:
             ledger.finish_job(self.conn, lead_job, "error", "lead", str(e))
             self.log(f"goal {goal['id']}: no diagnosis, retrying without it: {e}")
             return None
@@ -1751,7 +1758,16 @@ def draft_goal(
             repo, target, f"plan-{lead_job}", base, runner
         ) as tree:
             # Read once, in code, what the lead used to spend a dozen turns reading.
-            briefing = lead.briefing(tree, goal, loop.cfg["lead.briefing_bytes"], runner=runner)
+            scout_context = ""
+            if record.get("scout"):
+                from team import scout
+
+                report = scout.scan(target, tree=tree, publish=False)
+                scout_context = scout.context(target, tree=tree, report=report)
+                if report["errors"]:
+                    raise RunError("scout failed before lead planning: " + "; ".join(report["errors"]))
+            briefing = lead.briefing(tree, goal, loop.cfg["lead.briefing_bytes"], runner=runner,
+                                     scout_context=scout_context)
             summary, parts, kind = lead.ask(
                 root,
                 tree,
@@ -1773,7 +1789,7 @@ def draft_goal(
                 runner,
                 on_call=lambda r: loop._lead_call(lead_job, r),
             )
-    except (lead.LeadError, grade.GradeError) as e:
+    except (lead.LeadError, grade.GradeError, ValueError, RunError) as e:
         ledger.finish_job(conn, lead_job, "error", "lead", str(e))
         hint = (
             " (Claude usage limit; try later, or `team goal --no-lead`)"

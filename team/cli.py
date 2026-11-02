@@ -55,10 +55,35 @@ def _print(obj) -> None:
 
 
 def cmd_attach(args) -> int:
-    target = targets.attach(args.path, name=args.name, check=args.check)
+    target = targets.attach(args.path, name=args.name, check=args.check,
+                            enabled=False if args.disabled else None)
     kanban.ensure_board(target["name"], f"Team target {target['name']}")
     print(f"attached {target['name']} at {target['path']} (board {target['board']})")
     return 0
+
+
+def cmd_ideas(args) -> int:
+    from team import scout
+
+    try:
+        _print(scout.ideas(args.target, model=args.model))
+    except scout.ScoutError as e:
+        print(f"team ideas: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_scout(args) -> int:
+    from team import scout
+
+    try:
+        report = scout.scan(args.target, model=args.model, max_calls=args.max_calls)
+    except scout.ScoutError as e:
+        print(f"team scout: {e}", file=sys.stderr)
+        return 1
+    _print({k: v for k, v in report.items() if k not in ("files", "skipped", "summary")})
+    print(scout.context(args.target, report=report))
+    return 1 if report["errors"] else 0
 
 
 def cmd_targets(args) -> int:
@@ -344,7 +369,19 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("path")
     a.add_argument("--name")
     a.add_argument("--check", help='the command that decides "done" for this target')
+    a.add_argument("--disabled", action="store_true", help="register without enabling dispatch")
     a.set_defaults(func=cmd_attach)
+
+    s = sub.add_parser("scout", help="summarize the existing checkout with a free model; no repo edits")
+    s.add_argument("target")
+    s.add_argument("--model", default="tier-simple")
+    s.add_argument("--max-calls", type=int, default=24)
+    s.set_defaults(func=cmd_scout)
+
+    i = sub.add_parser("ideas", help="ask a reasoning model for proposals from scout summaries only")
+    i.add_argument("target")
+    i.add_argument("--model", default="tier-reasoning")
+    i.set_defaults(func=cmd_ideas)
 
     t = sub.add_parser("targets", help="list targets, or set one's field")
     t.add_argument("--json", action="store_true")

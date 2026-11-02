@@ -23,6 +23,7 @@ NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]*")
 
 # key: (type, default, help)
 FIELDS: dict[str, tuple[type, object, str]] = {
+    "scout": (bool, False, "Use a small-model source summary before planning."),
     "check": (
         str,
         None,
@@ -136,7 +137,8 @@ def require(name: str) -> dict:
 
 
 def attach(
-    repo_path: Path | str, name: str | None = None, check: str | None = None
+    repo_path: Path | str, name: str | None = None, check: str | None = None,
+    *, enabled: bool | None = None,
 ) -> dict:
     """Register a git repo as a target and return its record.
 
@@ -165,6 +167,8 @@ def attach(
         target[key] = (existing or {}).get(key, default)
     if check is not None:
         target["check"] = check.strip() or None
+    if enabled is not None:
+        target["enabled"] = enabled
     _write(target)
     return target
 
