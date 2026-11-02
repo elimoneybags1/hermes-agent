@@ -82,19 +82,25 @@ def newest_source(root: Path) -> float:
     return newest
 
 
+def changed_since(root: Path, started: float, loaded: str | None, *, head: str | None = None) -> str | None:
+    """Why a process that loaded Team's code at ``started`` (from commit ``loaded``) is behind the
+    checkout, or None. Used for the gateway and for ``team run`` itself."""
+    head = head or checkout_sha(root)
+    if loaded and head and loaded != head:
+        return f"started from {loaded[:10]}, checkout is at {head[:10]}"
+    if newest_source(root) > started:
+        return "a Team source file changed after it started"
+    return None
+
+
 def stale(root: Path, home: Path | None = None, *, head: str | None = None) -> str | None:
     """Why the running gateway does not match the checkout, or None (also when none runs)."""
     home = home or hermes_home()
     gw = running(home)
     if gw is None:
         return None
-    loaded = loaded_sha(home)
-    head = head or checkout_sha(root)
-    if loaded and head and loaded != head:
-        return f"gateway booted from {loaded[:10]}, checkout is at {head[:10]}"
-    if newest_source(root) > gw["started"]:
-        return "a Team source file changed after the gateway started"
-    return None
+    why = changed_since(root, gw["started"], loaded_sha(home), head=head)
+    return f"gateway: {why}" if why else None
 
 
 def refresh(root: Path, home: Path | None = None, *, run=subprocess.run, head: str | None = None) -> str | None:

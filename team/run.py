@@ -1332,11 +1332,35 @@ def run_loop(
     interval: int | None = None,
     runner: Runner = subprocess.run,
     sleep: Callable[[float], None] = time.sleep,
+    loop: Loop | None = None,
+    restart: Callable[[], None] | None = None,
 ) -> None:
-    """Tick until stopped; the interval is re-read from settings every tick."""
-    loop = Loop(root, conn, runner=runner)
+    """Tick until stopped; the interval is re-read from settings every tick.
+
+    Between ticks nothing of this process is in flight (workers run under
+    Hermes's kanban, the lead's draft is synchronous inside a tick), so when
+    Team's code has changed since this process started it replaces itself with
+    the same command, and the next tick runs the checkout's code. Without this
+    a loop started before a commit kept the old ``team`` modules for days.
+    """
+    from team import gateway  # team.gateway imports only the ledger
+
+    loop = loop or Loop(root, conn, runner=runner)
+    born, sha = time.time(), gateway.checkout_sha(root)
     while True:
         loop.tick()
         if once:
             return
+        why = gateway.changed_since(root, born, sha)
+        if why:
+            loop.log(f"team run {why}; restarting with the checkout's code")
+            (restart or _reexec)()
+            born, sha = time.time(), gateway.checkout_sha(root)  # a restart that returned (tests)
         sleep(interval if interval is not None else loop.cfg["loop.interval_s"])
+
+
+def _reexec() -> None:
+    """Replace this process with the same command line, keeping pid, stdio and environment."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, list(sys.orig_argv))

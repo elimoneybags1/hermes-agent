@@ -41,14 +41,14 @@ def _root(tmp_path: Path) -> Path:
 def test_a_gateway_from_another_commit_is_stale(tmp_path):
     root, home = _root(tmp_path), _home(tmp_path, sha=OLD)
     why = gateway.stale(root, home, head=HEAD)
-    assert why == f"gateway booted from {OLD[:10]}, checkout is at {HEAD[:10]}"
+    assert why == f"gateway: started from {OLD[:10]}, checkout is at {HEAD[:10]}"
 
 
 def test_a_source_edit_after_the_gateway_started_is_stale(tmp_path):
     root, home = _root(tmp_path), _home(tmp_path)
     assert gateway.stale(root, home, head=HEAD) is None
     (root / "team" / "roles.py").write_text("# edited\n")  # now, after the lock's mtime
-    assert gateway.stale(root, home, head=HEAD) == "a Team source file changed after the gateway started"
+    assert gateway.stale(root, home, head=HEAD) == "gateway: a Team source file changed after it started"
     # Caches are not source.
     cache = root / "team" / "__pycache__"
     cache.mkdir()
@@ -75,7 +75,7 @@ def test_refresh_restarts_only_a_stale_gateway(tmp_path):
     assert gateway.refresh(root, _home(tmp_path), run=run, head=HEAD) is None
     assert calls == []
     home = _home(tmp_path / "b", sha=OLD) if (tmp_path / "b").mkdir() is None else None
-    assert gateway.refresh(root, home, run=run, head=HEAD).startswith("gateway booted from")
+    assert gateway.refresh(root, home, run=run, head=HEAD).startswith("gateway: started from")
     assert calls == [[str(root / "team" / "bin" / "team-hermes"), "gateway", "restart", "--detach"]]
 
 

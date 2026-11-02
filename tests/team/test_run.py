@@ -693,3 +693,31 @@ def test_subscription_role_dispatches_through_proxy_profile(world):
         profiles.profile_dir("implement")
         / "plugins/model-providers/team-subscription/__init__.py"
     ).is_file()
+
+
+def test_the_loop_restarts_itself_between_ticks_when_team_code_changed(tmp_path, monkeypatch):
+    from team import gateway
+
+    class FakeLoop:
+        cfg = {"loop.interval_s": 0}
+        ticks, logged = 0, []
+
+        def tick(self):
+            self.ticks += 1
+
+        def log(self, msg):
+            self.logged.append(msg)
+
+    changes = iter([None, "a Team source file changed after it started", None])
+    monkeypatch.setattr(gateway, "changed_since", lambda root, born, sha: next(changes))
+    monkeypatch.setattr(gateway, "checkout_sha", lambda root: "abc")
+    restarts, loop = [], FakeLoop()
+
+    def sleep(_s):
+        if loop.ticks == 3:
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run.run_loop(tmp_path, None, interval=0, sleep=sleep, loop=loop, restart=lambda: restarts.append(1))
+    assert loop.ticks == 3 and restarts == [1]
+    assert loop.logged == ["team run a Team source file changed after it started; restarting with the checkout's code"]
