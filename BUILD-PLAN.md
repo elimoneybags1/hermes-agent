@@ -1,0 +1,241 @@
+# Team: from one builder to a working agent pipeline
+
+Approved by Eli on 2026-11-02. This file is the brief for the session that
+builds it. It is built directly in this repository, not through Team's own
+pipeline; Team changes nothing in itself until the new pipeline has proved
+itself on a disposable target.
+
+## Context
+
+Eli wants to do his project work through Team instead of Claude Code directly:
+work routed by type to specialised agents, agents that improve after each
+project and can propose new agents, and one clean visual UI, gateway included.
+
+Audit findings on 2026-11-02:
+- Only `implement` builds. The stages exist in the ledger, but no code moves a
+  goal between them.
+- Nothing has been built for a repo other than Team.
+- 45.9% of chat calls failed (903 of 1,968). `tier-medium` falls off
+  `north-mini-code` (462/470 OK) onto `laguna-xs-2.1` (30/177 OK). There were
+  also 143 `__aiter__` stream crashes in LiteLLM.
+- The replay loop is built but has never run. `self-evolution/` is unused.
+  Three UIs overlap.
+
+## Eli's decisions
+
+- First real target: StudyApp (`$HOME/work/StudyApp`, remote `my-prof`).
+- Repos without tests start with an onboarding goal that writes the check. Eli
+  approves it once.
+- Autonomy by type: bug fixes and small changes land automatically if they
+  pass; features need plan approval; security, dependencies and money always
+  ask.
+- Claude plans. The goal is orders precise enough, with the right tools and
+  skills, that small free models do the building.
+- After each project, a review improves the agents and can propose a new one.
+  Once adopted, the boss and lead see it in the roster.
+- This build does not go through Team's pipeline.
+- The build session may handle StudyApp's 28 uncommitted files.
+
+## Defaults chosen in planning (change them when reviewing)
+
+- "Land" means local `main`. Eli pushes. Workers get a hard block on
+  `git push`.
+- StudyApp's 28 files go to a preservation branch, unsorted and undeleted.
+- New agents are inbox cards that Eli approves, and they start on trial.
+- Eli adopts evolution changes at first. Auto-adopting skills can come after a
+  track record exists.
+- A new agent may only use a gate already in the registry. A new gate is a Team
+  code change.
+
+## How this gets built
+
+- Directly in this repo, committing as it goes, `team/bin/team-check` as the
+  gate. Never push.
+- Step 0, before any code: stop the `team run` loop and disable the `team`
+  target. Finish or park goals 17, 21 and 22. Confirm in `ps` and the log that
+  nothing is dispatching.
+- Team stays off its own target until the end of Phase 3.
+- The proving target is a disposable clone of Team under
+  `$HOME/state/team/acceptance/`, attached as `team-sandbox`, so goals are
+  real-sized and nothing can land on the real repo.
+- The build session's hook blocks StudyApp. Before Phase 4, Eli allows that
+  path, or a session is started there, for the cleanup and spike work.
+
+## Phases
+
+| # | Build | Exit, measured |
+|---|---|---|
+| 0 | Pause the loop, run the spikes | Each spike has a recorded number |
+| 1 | Gateway reliability | At most 5% of 30 consecutive attempts die on infrastructure, shown beside the raw non-200 rate |
+| 2 | Pipeline engine and per-target loops | 10 `team-sandbox` goals go through pipelines; a no-op commit is refused |
+| 3 | Roles, gates, reviewer, risk rules | Reviewer meets the spike bar; every active role maps to a registered gate; re-enable `team` |
+| 4 | Target overlays, onboarding, StudyApp | Check reproduces in a worktree; a deliberate break fails it; Eli approves; 10 goals land |
+| 5 | Retrospective, proposing agents, replay fixes | One real paired replay finishes and is decided |
+| 6 | One UI | Old dashboards removed; 8792 shows agents, targets and a live gateway diagram |
+
+Done: 20 consecutive StudyApp goals finish with no hands from Eli beyond
+required approvals.
+
+UI work can start beside Phase 2. The agent and pipeline views need that
+schema, so they are finished after it.
+
+### Spikes (Phase 0)
+
+1. Worktree check. Provision with an APFS `cp -c` of `node_modules` plus
+   `prisma generate`, using an env allowlist. Pass: `npm run check` is green
+   and `test:browser` runs in two parallel worktrees without collisions. Needs
+   StudyApp access.
+2. Reasoning stripping. Replay failed requests with reasoning fields removed.
+   If non-200s don't fall substantially, the cause is wrong: stop and
+   re-diagnose.
+3. Reviewer accuracy. 20 bad diffs (failed jobs plus seeded bugs) and 10 good
+   ones, free model against Sonnet. Pass: no misses on auto-land work and
+   under 20% false blocks. This picks the reviewer's model.
+4. Free models on precise orders. 5 StudyApp-class orders. This tests the whole
+   strategy. Show Eli the number before Phase 3. If it's poor, the money goes
+   to better orders or Claude takes more of the building.
+
+### Phase 1: gateway
+
+- Strip replayed reasoning fields; fix the stream crash at
+  `litellm/litellm/proxy/proxy_server.py:10192`.
+- Reorder or drop models in `tier-medium` using `usage.db`. Models are catalog
+  edits through `integrations/portkey/build.py`.
+- Classify each failed attempt as infrastructure or work, so bad gateway days
+  don't count against agents.
+- Correct `CLAUDE.md` and `HANDOFF-GATEWAY.md` where they claim `spend_guard`
+  is active or give wrong ports. No API key goes in until the guard is really
+  built.
+- Mark `gateway-rs` as idle. Don't rewrite it.
+
+### Phase 2: pipeline engine
+
+- Replace both `_land` calls (`team/run.py:386`, `:632`) with
+  `_advance(goal)`: land, or move to the next stage on the same branch.
+- New `team/gates.py` holds pipelines and gates in Python, not agent-editable.
+- New acceptance gate: orders gain `type`, `done_when[]` and `acceptance_cmd`.
+  Today any commit on a passing repo passes, which isn't safe for auto-land.
+- Schema: `goals` gains `type`, `stage_idx`, `risk`, `checked_base_sha`;
+  `parts.stage` adds `security` (rebuild the CHECK in `team/ledger.py:142`);
+  `diagnoses` gains `cause_tag`; `role.toml` gains `gate`, `extends`;
+  `target.json` gains `setup`, `e2e`, `check_env`, `risk_paths`.
+- Per-target loops: one `team run --target X` per target plus one global
+  process, a per-target lock, and a global file lock capping concurrent checks.
+  No async checks: grading and landing together act as the merge queue.
+- Check whether `worker.max_calls_per_goal=15` is too tight; goal 15's worker
+  used 34 calls.
+- Make model orders apply past attempt 1 where the code needs it
+  (`team/run.py:520`).
+
+### Pipelines
+
+| Type | Stages | Landing |
+|---|---|---|
+| onboarding | onboard → review | Eli approves |
+| bugfix / small | test_write → implement → verify → review | auto |
+| feature | spec (plan approval) → test_write → implement → verify → review | auto after approval |
+| security | spec → implement → verify → security → review | Eli |
+| dependencies / money | same as security | Eli |
+
+- Verify is code with no model: check, acceptance, `e2e`.
+- Risk can only go up. A `risk_paths` hit (manifests, lockfiles, migrations,
+  auth, billing, CI) or an oversized diff forces `ask`, whatever type the lead
+  chose.
+
+### Phase 3: roster
+
+| Role | Gate, enforced by code |
+|---|---|
+| implement | Owned files, check, acceptance |
+| test-write | Only test files changed; new tests fail at base; existing tests pass |
+| review | Veto only; each `done_when` cites a diff line or logged exit code that code validates |
+| security | Read-only; scanner diff clean; verdict always goes to Eli |
+| onboard | Check passes at HEAD and fails on a seeded break |
+
+- UI, backend and bugfix builders are `extends = "implement"` plus their own
+  skills, tools and candidate models. They share a gate, so they aren't
+  separate roles underneath, but they appear by name in the roster and ledger.
+  Pool their rates until each has about 20 attempts.
+- Enable `plugins/security-guidance`. Start skills from the bundled set:
+  `test-driven-development`, `systematic-debugging`, `dogfood`,
+  `simplify-code`.
+- Update `team/board.py:120,434`, which hardcodes the columns, the lead's menu
+  and the `write-work-order` skill.
+- Rescue's tool list is hardcoded in `team/hermes_run.py:137`; give it role
+  tools.
+- A reviewer can only veto. Code gates still decide done (principle 3).
+
+### Phase 4: overlays and StudyApp
+
+- Overlays live at `$TEAM_STATE/targets/<t>/overlay/<role>/`, each a local
+  git repo.
+- `profiles.sync` builds `<role>--<target>` from base plus overlay, following
+  `candidate_profile`. Overlays can add skills or narrow tools, models and
+  budget, never widen them. `audit_profiles` must cover them.
+- `lead.menu` takes a target. `jobs.role_version` becomes `base+overlay`.
+- Move StudyApp's 28 files to a preservation branch, then `team attach`. Run
+  onboarding and have Eli approve the check.
+
+### Phase 5: self-improvement and new agents
+
+- `record_closed` triggers code that gathers rates and `cause_tag` counts,
+  excluding infrastructure failures.
+- A narrow lead call then proposes at most one change per project. It's only
+  allowed when the same cause shows in at least 3 goals across at least 2
+  projects. Otherwise it records nothing.
+- New `boss.propose_agent` and tool: role files, a registered gate, and the
+  evidence. It arrives as an inbox card and starts on trial.
+- Replay fixes in `team/replay.py`: role-scoped fixed set of 8, paired by
+  item; sync candidate profiles for every role in the set; exclude
+  infrastructure-dead runs; ties are dismissed (removes the fewer-tokens
+  adoption in `verdict()`).
+- Replay at this size is a regression guard and a signal, not proof. After
+  adoption, watch the next 10 attempts and propose a revert if the rate falls
+  below base.
+- Cut for now: DSPy, `self-evolution/` and GEPA, until one replay-adopted
+  change exists. Take Harness2's method only (several candidates compared on
+  the same task). It can't run under free-only, so its repo isn't needed.
+
+### Phase 6: UI
+
+- `team/app` on 8792 becomes the one UI. Keep Hermes's kanban dashboard.
+- Move verify, test, recent and log views from `integrations/dashboard`, whose
+  functions `team/app/edit.py:187` already imports, then delete it and
+  `plugins/team/dashboard`.
+- Agents: the roster, each agent's rates beside base with counts, plus its
+  gate, skills and history.
+- Propose agent: a form that calls `boss.propose_agent`, never a direct file
+  write.
+- Work: a target selector, with columns derived from the pipelines.
+- Gateway: vendor one `mermaid.min.js`, no framework or build step. Generate
+  the route diagram server-side from `catalog.json` and live health, with
+  plain controls for models and keys.
+- Fix the Usage page if its `fill()` calls overwrite each other
+  (`app.js:1078`).
+
+## Critical files
+
+`team/run.py`, `team/grade.py`, `team/lead.py`, `team/roles.py`,
+`team/profiles.py`, `team/replay.py`, `team/boss.py`, `team/ledger.py`,
+`team/board.py`, `team/hermes_run.py`, new `team/gates.py`,
+`plugins/team/boss_tools.py`, `team/app/`, `integrations/portkey/build.py`,
+`litellm/team/`.
+
+Ownership rule holds: any upstream or subtree edit is a marked `[team]` commit
+listed in `PROVENANCE.md`.
+
+## Verification
+
+- `team/bin/team-check` passes at every commit; `team gate audit` is clean.
+- Each phase exit is read from `team.db`, `usage.db` and `requests.jsonl`,
+  rates beside base rates with counts.
+- Negative tests per gate: a no-op commit refused, a test-write that touches
+  source refused, a `risk_paths` hit forced to `ask`, a worker `git push`
+  blocked, an overlay that widens tools refused.
+- End to end in a browser at 8792: a bug fix on `team-sandbox` runs through
+  every stage and lands, with the agents and gateway views matching the ledger.
+- Evidence comes from processes and logs, not markdown.
+
+## Progress
+
+Appended by the build session, one dated line per phase exit with its number.
