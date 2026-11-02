@@ -354,3 +354,15 @@ preservation-branch plan.
 This does not claim the original acceptance campaign is complete: reviewer
 calibration, the paired evolution replay, specialist-role adoption, and the
 StudyApp onboarding/build campaign still need their own measured gates.
+
+
+Verification of continuation (`0860629b0a`): `team/bin/team-check` passed
+406 tests and lint; `team gate audit` was clean; `team run --target myprof
+--no-boss --once` exited zero without dispatch (target deliberately disabled).
+Live scouting through the free gateway succeeded. The latest bounded My Prof
+pass used 24 new calls plus 24 cache hits and still had 778 chunks pending.
+The summary-only reasoning call used 1,828 input / 2,083 output tokens from a
+6,338-character evidence brief. These are measured call receipts, not a claim
+of measured Claude-token savings or a full-repo audit. Findings are unverified
+proposals, not fixes approved for dispatch. Receipts are under the target's
+`scout/` state directory. My Prof's checkout was not edited by this build.
