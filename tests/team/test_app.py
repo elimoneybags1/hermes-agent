@@ -287,25 +287,13 @@ def test_answering_the_boss_question_carries_the_answer_back(root, tmp_path, tea
     assert "dismissed your question" in c.view()["messages"][2]["text"]
 
 
-# New test for usage API
-@pytest.fixture
-def chat():
-    """A simple chat fixture for testing."""
-    import tempfile
-    from team.app import chat as chat_mod
-    tmp_path = tempfile.mkdtemp()
-    c = chat_mod.Chat(tmp_path, popen=None)
-    return c
-
-
 def test_usage_api_returns_the_breakdown_and_its_total_matches_the_models(root, tmp_path, team_state, monkeypatch):
     """Test the GET /api/usage endpoint returns usage breakdown and total matches sum of by-model."""
     # Monkeypatch list_targets to return ["team"]
     monkeypatch.setattr(server.targets, "list_targets", lambda: [{"name": "team"}])
-    
     # Track what usage_breakdown is called with
     recorded_target = None
-    
+
     def mock_usage_breakdown(conn, target):
         nonlocal recorded_target
         recorded_target = target
@@ -318,17 +306,15 @@ def test_usage_api_returns_the_breakdown_and_its_total_matches_the_models(root, 
             "by_role": {"implement": {"input": 30, "output": 7, "calls": 3}},
             "by_goal": {"1": {"input": 30, "output": 7, "calls": 3}}
         }
-    
     # Monkeypatch usage_breakdown
     monkeypatch.setattr(server.usage, "usage_breakdown", mock_usage_breakdown)
-    
+
     # Build app
-    c = chat.Chat(tmp_path, popen=None)
+    c = chat.Chat(tmp_path, popen=popen_with(Proc([])), aide=False)
     app = server.App(root, chat=c)
-    
     # Call the endpoint
     out = app.get("/api/usage", {})
-    
+
     # Assert the results
     assert out["target"] == "team"
     assert out["targets"] == ["team"]
@@ -336,10 +322,10 @@ def test_usage_api_returns_the_breakdown_and_its_total_matches_the_models(root, 
     assert out["total"]["input"] == sum(v["input"] for v in out["by_model"].values())
     assert out["total"]["output"] == sum(v["output"] for v in out["by_model"].values())
     assert out["total"]["calls"] == sum(v["calls"] for v in out["by_model"].values())
-    
+
     # Second case: empty targets list
-    monkeypatch.setattr(server.targets, "list_targets", lambda: [])
-    
+    monkeypatch.setattr(server.targets, "list_targets", list)
+
     out = app.get("/api/usage", {})
     assert out["target"] is None
     assert out["targets"] == []
