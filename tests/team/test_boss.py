@@ -434,7 +434,7 @@ def test_the_tools_register_and_refuse_politely(team, monkeypatch):
 def test_boss_profile_is_lean_and_locked(team):
     role = roles.load(team["root"], "boss", CATALOG)
     cfg = profiles.role_config(team["root"], role, CATALOG)
-    assert cfg["model"] == {"provider": "team-subscription", "default": "claude-sonnet-5-5"}
+    assert cfg["model"] == {"provider": "team-subscription", "default": "claude-sonnet-5-5", "streaming": False}
     assert cfg["platform_toolsets"]["cli"] == ["clarify", "memory", "session_search", "team"]
     assert cfg["timeouts"]["tools"]["sequential_call"] == 3600
     assert cfg["compression"]["threshold"] == 0.25 and cfg["compression"]["enabled"] is True
