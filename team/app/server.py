@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from team import board, boss, catalog, ledger
+from team import board, boss, catalog, ledger, targets, usage
 from team.app import chat as chat_mod
 from team.app import edit
 
@@ -63,6 +63,8 @@ class App:
             return edit.gateway(self.root).overview()
         if path == "/api/history":
             return {"changes": edit.history(self.root)}
+        if path == "/api/usage":
+            return self.usage(query)
         raise edit.EditError("not found", 404)
 
     def post(self, path: str, d: dict) -> dict:
@@ -112,6 +114,16 @@ class App:
             plans = boss.flow(conn, limit=30)
         plans.sort(key=lambda c: (c["status"] != "open", -c["id"]))
         return {"plans": plans, "decisions": decisions, "waiting": boss.waiting()}
+
+    def usage(self, query: dict) -> dict:
+        """Return usage breakdown for a target."""
+        names = [t["name"] for t in targets.list_targets()]
+        name = query.get("target", [""])[0] or (names[0] if names else "")
+        if not name:
+            return {"target": None, "targets": [], "total": {"input": 0, "output": 0, "calls": 0}, "by_model": {}, "by_role": {}, "by_goal": {}}
+        with _conn() as conn:
+            data = usage.usage_breakdown(conn, name)
+        return {"target": name, "targets": names, **data}
 
     def _project(self, plan_id: int) -> dict:
         p = next((x for x in boss.proposals() if x["id"] == plan_id), None)
