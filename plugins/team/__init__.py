@@ -49,6 +49,7 @@ def register(ctx) -> None:
     ctx.register_hook("api_request_error", _on_api_request_error)
     ctx.register_hook("pre_tool_call", _module("worker_tools").pre_tool_call)
     ctx.register_hook("post_auxiliary_call", _on_post_api_request)
+    ctx.register_middleware("llm_request", _module("request_shape").llm_request)
     from toolsets import create_custom_toolset
 
     create_custom_toolset(

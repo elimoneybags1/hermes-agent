@@ -393,8 +393,6 @@
   },
   {
    "id": "laguna-s-2.1",
-   "tier": "medium",
-   "order": 3,
    "context": 262144,
    "max_output": 32768,
    "tools": true,
@@ -406,14 +404,15 @@
     {
      "provider": "openrouter",
      "provider_model_id": "poolside/laguna-s-2.1:free",
-     "free": "yes"
+     "free": "yes",
+     "unavailable": "404 'no longer available' from OpenRouter, 14 of 14 requests on 2026-11-02; unrouted the same day"
     }
    ]
   },
   {
    "id": "gemma-4-31b",
    "tier": "medium",
-   "order": 7,
+   "order": 8,
    "context": 262144,
    "max_output": 32768,
    "tools": true,
@@ -445,7 +444,7 @@
   {
    "id": "gemini-2.5-flash",
    "tier": "medium",
-   "order": 4,
+   "order": 6,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -463,7 +462,7 @@
   {
    "id": "gemini-3-flash-preview",
    "tier": "medium",
-   "order": 6,
+   "order": 7,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -481,7 +480,7 @@
   {
    "id": "ministral-14b",
    "tier": "medium",
-   "order": 8,
+   "order": 3,
    "context": 262144,
    "tools": true,
    "vision": true,

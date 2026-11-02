@@ -470,7 +470,10 @@ def litellm_config(catalog: dict, models: list[dict]) -> dict:
         "litellm_settings": {
             "drop_params": ll["drop_params"],
             "telemetry": False,
-            "callbacks": ["spend_guard.guard", "forward_headers.forward", "session_pin.pin", "usage_log.logger"],
+            "callbacks": [
+                "reasoning_strip.strip", "spend_guard.guard", "forward_headers.forward",
+                "session_pin.pin", "usage_log.logger",
+            ],
         },
         "general_settings": {
             "master_key": "os.environ/LITELLM_MASTER_KEY",

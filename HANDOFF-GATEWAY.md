@@ -10,6 +10,17 @@ Team-owned connection layer in Rust.
 Read `PLAN.md` first: "How each piece works" and all of "Phase 2". The short
 version:
 
+> **Corrections, 2026-11-02** (the brief below is the original and is kept as
+> written): Portkey runs on **8788**, not 8787. `anthropic` is not blocked by
+> name: Claude is routed, through the subscription bridge
+> (`integrations/subscription/`) as a catalog provider, never through an API
+> key. The Portkey subtree carries four `[team]` commits, not two, plus
+> `litellm/team/` in the LiteLLM subtree; `PROVENANCE.md` lists them. Step 6,
+> the Rust rewrite under `integrations/gateway-rs/`, was started and then
+> stopped: it is not running, nothing launches it, and its `build.rs` has
+> drifted from `build.py` (no `spend_guard`, no pair or probe configs). It is
+> not being finished; `build.py` is the generator.
+
 ```
 Hermes profiles ──┐
 other tools ──────┼──► LiteLLM :4000 ──► Portkey :8787 ──► providers

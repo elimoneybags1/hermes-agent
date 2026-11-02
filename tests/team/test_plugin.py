@@ -31,11 +31,14 @@ def test_register_binds_both_hooks_and_the_boss_tools():
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    bound, tools = {}, []
+    bound, tools, middleware = {}, [], {}
 
     class Ctx:
         def register_hook(self, name, cb, **kw):
             bound[name] = cb
+
+        def register_middleware(self, kind, cb):
+            middleware[kind] = cb
 
         def register_tool(self, **kw):
             tools.append(kw["name"])
@@ -47,6 +50,7 @@ def test_register_binds_both_hooks_and_the_boss_tools():
         "post_auxiliary_call",
         "pre_tool_call",
     }
+    assert set(middleware) == {"llm_request"}
     assert "team_propose" in tools and len(tools) == 11
 
 
