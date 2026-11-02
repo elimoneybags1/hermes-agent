@@ -14,14 +14,18 @@ harness = "hermes"
 [escalation]
 harness = "hermes-subscription"
 model = "claude-sonnet-5-5"
-after_failures = 1
+# Two free attempts before Claude: the first sandbox batch sent six reviews to Claude after
+# one prose answer each and hit the subscription's limit (2026-11-02).
+after_failures = 2
 
 [budget]
 max_turns = 15
 run_budget_s = 600
 
 [models]
-candidates = ["tier-medium", "tier-complex"]
+# tier-complex first: the reviewer's job is to follow a JSON shape and read a diff; the
+# medium tier answered in prose 2 of 7 times.
+candidates = ["tier-complex", "tier-medium"]
 pinned = ""
 
 [hermes.compression]
