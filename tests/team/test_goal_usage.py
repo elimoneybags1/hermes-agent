@@ -58,8 +58,8 @@ def test_goal_usage_settings_defaults(tmp_path):
     settings_dict = settings.load(tmp_path)
     
     # Check that the new settings exist with correct defaults
-    assert settings_dict.get("worker.max_calls_per_goal") == 15
-    assert settings_dict.get("worker.max_input_tokens_per_goal") == 400000
+    assert settings_dict.get("worker.max_calls_per_goal") == 60
+    assert settings_dict.get("worker.max_input_tokens_per_goal") == 2000000
 
 
 def test_goal_usage_empty_goal(conn):

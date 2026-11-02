@@ -26,6 +26,7 @@ from team import (
     boss,
     catalog,
     claude_roles,
+    gates,
     gateway,
     grade,
     kanban,
@@ -61,14 +62,30 @@ def cmd_attach(args) -> int:
 
 
 def cmd_targets(args) -> int:
+    if args.set:
+        name, key, raw = args.set
+        kind = targets.FIELDS.get(key, (str,))[0]
+        value: object = raw
+        if kind is bool:
+            value = raw.strip().lower() in ("1", "true", "yes", "on")
+        try:
+            t = targets.set_field(name, key, value)
+        except targets.TargetError as e:
+            print(f"team targets: {e}", file=sys.stderr)
+            return 1
+        print(f"{name}: {key} = {json.dumps(t[key])}")
+        return 0
     rows = targets.list_targets()
     if args.json:
         _print(rows)
         return 0
     for t in rows:
         flag = "" if t.get("enabled", True) else " (disabled)"
+        extra = "".join(
+            f"  {k}: {json.dumps(t[k])}" for k in ("e2e", "setup", "check_env", "risk_paths") if t.get(k)
+        )
         print(
-            f"{t['name']:<16} {t['path']}  check: {t.get('check') or '(default)'}{flag}"
+            f"{t['name']:<16} {t['path']}  check: {t.get('check') or '(default)'}{flag}{extra}"
         )
     return 0
 
@@ -108,18 +125,32 @@ def cmd_goal(args) -> int:
             print(f"goal {g['id']}: {state} on {g['branch']} ({g['role']}): {g['goal'].splitlines()[0][:60]}")
         return 0
     goal = run.start_goal(
-        ROOT, conn, args.target, args.goal, role=args.role, check=args.check
+        ROOT, conn, args.target, args.goal, role=args.role, check=args.check,
+        kind=args.type, acceptance=args.acceptance,
     )
     print(
-        f"goal {goal['id']}: task {goal['current_task']} on {goal['branch']} ({goal['role']})"
+        f"goal {goal['id']}: task {goal['current_task']} on {goal['branch']} ({goal['role']}, {goal['type']})"
     )
     return 0
 
 
 def cmd_run(args) -> int:
     conn = _conn()
+    only = tuple(args.target) if args.target else None
+    boss_work = not args.no_boss
+    if args.boss_only:
+        only, boss_work = (), True
+    # One loop per target (and one for the boss's work) on this machine, enforced by lock files.
+    names = list(only) if only else ["all"]
+    if boss_work:
+        names.append("boss")
     try:
-        run.run_loop(ROOT, conn, once=args.once, interval=args.interval)
+        held = [run.acquire_lock(n) for n in names]  # noqa: F841 - the locks live as long as the handles
+    except run.RunError as e:
+        print(f"team run: {e}", file=sys.stderr)
+        return 1
+    try:
+        run.run_loop(ROOT, conn, once=args.once, interval=args.interval, only=only, boss_work=boss_work)
     except KeyboardInterrupt:
         print("team run: stopped", file=sys.stderr)
     return 0
@@ -304,8 +335,12 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--check", help='the command that decides "done" for this target')
     a.set_defaults(func=cmd_attach)
 
-    t = sub.add_parser("targets", help="list targets")
+    t = sub.add_parser("targets", help="list targets, or set one's field")
     t.add_argument("--json", action="store_true")
+    t.add_argument(
+        "--set", nargs=3, metavar=("NAME", "KEY", "VALUE"),
+        help="set a target field: " + ", ".join(f"{k} ({v[2].split('.')[0]})" for k, v in targets.FIELDS.items()),
+    )
     t.set_defaults(func=cmd_targets)
 
     r = sub.add_parser("roles", help="the roster and its Hermes profiles")
@@ -318,8 +353,16 @@ def build_parser() -> argparse.ArgumentParser:
     g = sub.add_parser("goal", help="hand Team a goal on a target")
     g.add_argument("target")
     g.add_argument("goal")
-    g.add_argument("--role", default="implement", help="with --no-lead")
+    g.add_argument("--role", help="with --no-lead: the builder for the first worker stage")
     g.add_argument("--check")
+    g.add_argument(
+        "--type", default=gates.DEFAULT_TYPE, choices=gates.TYPES,
+        help="with --no-lead: the pipeline the goal goes through (the lead picks it otherwise)",
+    )
+    g.add_argument(
+        "--acceptance",
+        help="with --no-lead: a command that fails before the work and must pass after (the new tests)",
+    )
     g.add_argument(
         "--no-lead",
         action="store_true",
@@ -330,6 +373,12 @@ def build_parser() -> argparse.ArgumentParser:
     rn = sub.add_parser("run", help="dispatch, grade, land, escalate: the loop")
     rn.add_argument("--once", action="store_true")
     rn.add_argument("--interval", type=int)
+    rn.add_argument(
+        "--target", action="append", metavar="NAME",
+        help="work only on this target (repeatable); one such loop per target keeps a slow check from stalling the rest",
+    )
+    rn.add_argument("--no-boss", action="store_true", help="leave the boss's releases and reviews to another loop")
+    rn.add_argument("--boss-only", action="store_true", help="only the boss's releases and reviews, no target")
     rn.set_defaults(func=cmd_run)
 
     lg = sub.add_parser("ledger", help="jobs and goals")

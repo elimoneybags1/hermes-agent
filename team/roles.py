@@ -103,6 +103,12 @@ def load(root: Path, name: str, cat: dict | None = None) -> dict:
     assignable = role.setdefault("assignable", True)
     if not isinstance(assignable, bool):
         raise RoleError(f"role {name}: assignable must be true or false")
+    # The code that grades this role's work (team.gates.GATES). No role without one.
+    from team import gates
+
+    gate = role.setdefault("gate", "check")
+    if gate not in gates.GATES:
+        raise RoleError(f"role {name}: gate must be one of {sorted(gates.GATES)}, not {gate!r}")
     role["skills"] = skills(root, name)
     return role
 

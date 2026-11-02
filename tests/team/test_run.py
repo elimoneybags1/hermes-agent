@@ -358,8 +358,10 @@ def test_pass_lands_and_records(world):
         in git(world["repo"], "log", "-1", "--format=%s").stdout
     )
     assert world["hermes"].tasks["t_1"]["status"] == "done"
-    job = ledger.get_job(world["conn"], g["job_id"])
-    assert job["outcome"] == "pass" and job["grader"] == "check"
+    verify, job = ledger.list_jobs(world["conn"])[:2]  # the code-only verify stage, then the worker's
+    assert job["outcome"] == "pass" and job["grader"] == "check" and job["task_ref"] == "t_1"
+    assert verify["outcome"] == "pass" and verify["grader"] == "verify" and verify["task_ref"] == "team-run:verify"
+    assert g["job_id"] == verify["id"] and g["stage_idx"] == 1 and g["type"] == "bugfix"
     assert (
         ledger.calls_for(world["conn"], job_id=job["id"])[0]["response_model"]
         == "glm-5.3"
@@ -409,6 +411,8 @@ def test_fail_reopens_on_next_candidate_then_claude_then_eli(world):
     g = ledger.get_goal(world["conn"], goal["id"])
     assert g["attempt"] == 3 and g["outcome"] == "pass"
     jobs = ledger.list_jobs(world["conn"])
+    assert jobs[0]["task_ref"] == "team-run:verify"  # the code-only stage after Claude's pass
+    jobs = jobs[1:]
     assert (
         jobs[0]["task_ref"] == "claude:sess-9"
         and jobs[0]["model_choice"]["provider"] == "team-subscription"
@@ -572,9 +576,11 @@ def test_an_answered_question_lands_the_branch_when_it_already_passes(world):
     g = ledger.get_goal(world["conn"], goal["id"])
     assert g["outcome"] == "pass" and g["detail"].startswith("landed")
     assert len(briefs) == 1  # Claude was not run again
-    job = ledger.get_job(world["conn"], g["job_id"])
-    assert job["task_ref"] == "team-run:regrade" and job["outcome"] == "pass"
+    [job] = [j for j in ledger.list_jobs(world["conn"]) if j["task_ref"] == "team-run:regrade"]
+    assert job["outcome"] == "pass"
     assert job["model_choice"]["why"] == f"re-graded after decision {decision['id']}"
+    # then the code-only verify stage ran and passed before the land
+    assert ledger.get_job(world["conn"], g["job_id"])["task_ref"] == "team-run:verify"
 
 
 def test_a_dismissed_question_stops_the_goal(world):
@@ -759,7 +765,7 @@ def test_the_loop_restarts_itself_between_ticks_when_team_code_changed(tmp_path,
         cfg = {"loop.interval_s": 0}
         ticks, logged = 0, []
 
-        def tick(self):
+        def tick(self, **kwargs):
             self.ticks += 1
 
         def log(self, msg):
@@ -836,3 +842,108 @@ def test_left_work_sees_commits_edits_and_new_files(world):
     git(wt, "add", "-A")
     git(wt, "commit", "-q", "-m", "done")
     assert world["loop"]._left_work(goal) is True
+
+
+# --- the pipeline: stages, gates, landing policy (team.gates) ----------------------
+
+
+def _goal(world, text="Set VALUE to 2", **kw):
+    return run.start_goal(world["root"], world["conn"], "team", text, runner=world["hermes"], cat=CATALOG, **kw)
+
+
+def test_a_commit_that_changes_nothing_is_refused(world):
+    goal = _goal(world)
+    wt = Path(goal["worktree"])
+    grade.ensure_worktree(world["repo"], wt, goal["branch"])
+    git(wt, "commit", "-q", "--allow-empty", "-m", "done, honest")
+    world["hermes"].tasks[goal["current_task"]]["status"] = "review"
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] is None and g["attempt"] == 2
+    [comment] = world["hermes"].comments["t_1"][:1]
+    assert comment.startswith("FAILED:") and "no changes against base" in comment
+    job = next(j for j in ledger.list_jobs(world["conn"]) if j["attempt"] == 1)
+    assert job["outcome"] == "fail" and job["failure_kind"] == "work"
+
+
+def test_the_acceptance_command_must_pass_too(world):
+    goal = _goal(world, acceptance="grep -q 'VALUE = 3' app.py")
+    assert "fails now and must pass" not in world["hermes"].tasks["t_1"]["body"]  # a plain brief, no order
+    worker_commits(world, goal)  # VALUE = 2: the check passes, the acceptance does not
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] is None and g["attempt"] == 2
+    assert "acceptance command failed" in world["hermes"].comments["t_1"][0]
+    assert (world["repo"] / "app.py").read_text() == "VALUE = 1\n"  # nothing landed
+
+
+def test_verify_runs_the_target_e2e_and_sends_a_failure_back_to_the_builder(world):
+    targets.set_field("team", "e2e", "test -f e2e-ok")
+    goal = _goal(world)
+    worker_commits(world, goal)
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    jobs = ledger.list_jobs(world["conn"])
+    verify = next(j for j in jobs if j["task_ref"] == "team-run:verify")
+    assert verify["role"] == "team" and verify["outcome"] == "fail" and "e2e FAILED" in verify["grader_detail"]
+    assert verify["failure_kind"] == "work" and verify["role_version"] == "code"
+    # back to the builder: a second attempt on a new task, told what failed
+    assert g["outcome"] is None and g["stage_idx"] == 0 and g["attempt"] == 2 and g["current_task"] == "t_2"
+    assert "e2e FAILED" in world["hermes"].tasks["t_2"]["body"]
+    assert ledger.pass_rate(world["conn"], "team") == (1, 1)  # the code gate's row is not an agent attempt
+    # the builder makes e2e pass: verify passes, the goal lands
+    (Path(g["worktree"]) / "e2e-ok").write_text("")
+    git(Path(g["worktree"]), "add", "-A")
+    git(Path(g["worktree"]), "commit", "-q", "-m", "e2e fixture")
+    world["hermes"].tasks["t_2"]["status"] = "review"
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["detail"].startswith("landed")
+
+
+def test_a_risky_diff_waits_for_eli_to_land(world):
+    targets.set_field("team", "risk_paths", ["app.py"])
+    goal = _goal(world)
+    worker_commits(world, goal)
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] is None and g["risk"] == "ask" and g["detail"].startswith("waiting for Eli to land")
+    [d] = [d for d in ledger.list_decisions(world["conn"], "team") if d["source"] == "land"]
+    assert d["goal_id"] == goal["id"] and "app.py" in d["context"] and d["options"][0] == "land it"
+    assert (world["repo"] / "app.py").read_text() == "VALUE = 1\n"
+    world["loop"].tick()  # still waiting, no second decision
+    assert len([d for d in ledger.list_decisions(world["conn"], "team", status=None) if d["source"] == "land"]) == 1
+    ledger.answer_decision(world["conn"], d["id"], "land it")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["detail"].startswith("landed")
+    assert (world["repo"] / "app.py").read_text().startswith("VALUE = 2")
+
+
+def test_eli_can_refuse_to_land_and_the_branch_is_kept(world):
+    goal = _goal(world, kind="dependencies")  # always Eli's to land
+    worker_commits(world, goal)
+    world["loop"].tick()
+    [d] = [d for d in ledger.list_decisions(world["conn"], "team") if d["source"] == "land"]
+    assert "always waits for Eli" in d["context"]
+    ledger.answer_decision(world["conn"], d["id"], "drop it")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "fail" and "chose not to land" in g["detail"]
+    assert grade.branch_exists(world["repo"], goal["branch"])
+    assert (world["repo"] / "app.py").read_text() == "VALUE = 1\n"
+
+
+def test_a_goal_type_must_exist_and_the_builder_must_fit_the_stage(world):
+    with pytest.raises(Exception, match="unknown goal type"):
+        _goal(world, kind="refactor")
+    goal = _goal(world, role="implement")  # explicit builder with the right gate
+    assert goal["role"] == "implement" and goal["type"] == "bugfix" and goal["stage_idx"] == 0
+
+
+def test_one_team_run_per_target(team_state):
+    held = run.acquire_lock("team")
+    with pytest.raises(run.RunError, match="another team run holds"):
+        run.acquire_lock("team")
+    held.close()
+    run.acquire_lock("team").close()  # free again

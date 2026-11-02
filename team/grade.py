@@ -216,6 +216,23 @@ def changed_files(
     return sorted(p for p in out.splitlines() if p)
 
 
+def lines_changed(
+    repo: Path, branch: str, base: str = "main", runner: Runner = subprocess.run
+) -> int:
+    """Lines added plus removed on the branch since it left base (binary files count 0)."""
+    out = _must(
+        _git(repo, "diff", "--numstat", f"{base}...{branch}", runner=runner), "git diff failed"
+    )
+    total = 0
+    for line in out.splitlines():
+        cols = line.split("\t")
+        if len(cols) >= 2:
+            for c in cols[:2]:
+                if c.isdigit():
+                    total += int(c)
+    return total
+
+
 def outside_owned(changed: list[str], owned: list[str]) -> list[str]:
     """Changed paths that no owned path covers (exact file or directory prefix)."""
 

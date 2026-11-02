@@ -36,6 +36,8 @@ def part(key="p1", **over):
         "toolsets": ["file", "terminal"],
         "skills": ["commit-before-done"],
         "model": "tier-simple",
+        "acceptance_cmd": "./check.sh",
+        "done_when": ["VALUE is 2 in app.py"],
     }
     p.update(over)
     return p

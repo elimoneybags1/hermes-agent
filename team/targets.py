@@ -29,6 +29,30 @@ FIELDS: dict[str, tuple[type, object, str]] = {
         'This target\'s "done" check. Empty uses grading.default_check.',
     ),
     "enabled": (bool, True, "Whether `team run` works on this target."),
+    "e2e": (
+        str,
+        None,
+        "A command the verify stage runs in the worktree after the check and the acceptance "
+        "command: the real thing (a browser test, a smoke run). Empty means none.",
+    ),
+    "setup": (
+        str,
+        None,
+        "A command run once in a fresh worktree before any worker starts (install dependencies, "
+        "generate clients). Empty means none.",
+    ),
+    "check_env": (
+        list,
+        [],
+        "Environment variable names passed through to the check, setup and e2e commands; "
+        "everything else a worker's shell sees is Team's own.",
+    ),
+    "risk_paths": (
+        list,
+        [],
+        "Path patterns (fnmatch) whose change always waits for Eli to land, on top of "
+        "team.gates.DEFAULT_RISK_PATHS.",
+    ),
 }
 
 
@@ -129,9 +153,9 @@ def attach(
         "commit": commit,
         "attached_at": existing["attached_at"] if existing else _now(),
         "board": name,
-        "check": (existing or {}).get("check"),
-        "enabled": (existing or {}).get("enabled", True),
     }
+    for key, (_kind, default, _help) in FIELDS.items():
+        target[key] = (existing or {}).get(key, default)
     if check is not None:
         target["check"] = check.strip() or None
     _write(target)
@@ -152,12 +176,17 @@ def set_field(name: str, key: str, value: object) -> dict:
         raise TargetError(f"unknown target setting: {key}")
     target = require(name)
     kind = FIELDS[key][0]
-    if key == "check":
+    if kind is str:
         if value is not None and not isinstance(value, str):
-            raise TargetError("check must be a string")
+            raise TargetError(f"{key} must be a string")
         value = (value or "").strip() or None
     elif kind is bool and not isinstance(value, bool):
         raise TargetError(f"{key} must be true or false")
+    elif kind is list:
+        if isinstance(value, str):
+            value = [v.strip() for v in value.split(",") if v.strip()]
+        if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+            raise TargetError(f"{key} must be a list of non-empty strings")
     target[key] = value
     _write(target)
     return target

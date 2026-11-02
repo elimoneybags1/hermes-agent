@@ -34,8 +34,14 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
     ),
     "escalation.claude_max_turns": (int, 60, "Turn limit for a Claude gateway attempt."),
     "escalation.claude_timeout_s": (int, 1800, "Time limit for a Claude gateway attempt."),
-    "worker.max_calls_per_goal": (int, 15, "Most worker model calls one goal may use across all its attempts; past this the goal stops and goes back to the lead. Trial limit."),
-    "worker.max_input_tokens_per_goal": (int, 400000, "Most worker input tokens one goal may use across all its attempts; past this the goal stops and goes back to the lead. Trial limit."),
+    "worker.max_calls_per_goal": (int, 60, "Most worker model calls one goal may use across all its attempts; past this the goal stops and goes back to the lead. Passing attempts averaged 27 calls, the largest 73 (ledger, 2026-11-02). Trial limit, not yet enforced."),
+    "worker.max_input_tokens_per_goal": (int, 2000000, "Most worker input tokens one goal may use across all its attempts; past this the goal stops and goes back to the lead. Trial limit, not yet enforced."),
+    "risk.max_changed_lines": (
+        int,
+        800,
+        "A goal whose diff against base changes more lines than this waits for Eli to land, "
+        "whatever its type (team.gates.risk_of).",
+    ),
     "lead.enabled": (
         bool,
         True,

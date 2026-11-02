@@ -35,7 +35,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from team import catalog, claude_run, grade, hermes_run, roles
+from team import catalog, claude_run, gates, grade, hermes_run, roles
 from team.ledger import state_dir
 
 Runner = Callable[..., subprocess.CompletedProcess[Any]]
@@ -59,9 +59,12 @@ _STRS = {"type": "array", "items": {"type": "string"}}
 
 PLAN_SCHEMA = {
     "type": "object",
-    "required": ["summary", "parts"],
+    "required": ["summary", "type", "parts"],
     "properties": {
         "summary": {"type": "string"},
+        # The pipeline the goal goes through (team.gates.PIPELINES): what stages run and
+        # whether it lands by itself or waits for Eli.
+        "type": {"type": "string", "enum": list(gates.TYPES)},
         "parts": {
             "type": "array",
             "items": {
@@ -77,6 +80,8 @@ PLAN_SCHEMA = {
                     "toolsets",
                     "skills",
                     "model",
+                    "acceptance_cmd",
+                    "done_when",
                 ],
                 "properties": {
                     "key": {"type": "string"},
@@ -91,6 +96,12 @@ PLAN_SCHEMA = {
                     "toolsets": _STRS,
                     "skills": _STRS,
                     "model": {"type": "string"},
+                    # One shell command, run in the worktree, that fails before the part is
+                    # built and passes after: usually the new test file. The gate that
+                    # refuses a no-op.
+                    "acceptance_cmd": {"type": "string"},
+                    # What a reviewer checks, one observable fact per line.
+                    "done_when": _STRS,
                 },
             },
         },
@@ -133,6 +144,8 @@ def menu(root: Path, cat: dict | None = None) -> dict[str, dict]:
         if role["runs_on"]["harness"] != "hermes" or role["status"] != "active":
             continue
         if not role.get("assignable", True):  # the aide answers Eli; it builds nothing
+            continue
+        if role.get("gate", "check") != "check":  # test-write, review, security: pipeline stages, not the lead's to assign
             continue
         out[name] = {
             "does": role["does"],
@@ -256,6 +269,15 @@ def validate_plan(
         errors += ref_errors
         deps = [str(d) for d in p.get("depends_on") or []]
         errors += [f"{where}: depends on unknown part {d!r}" for d in deps if d not in keys]
+        acceptance = str(p.get("acceptance_cmd") or "").strip()
+        if not acceptance or "\n" in acceptance:
+            errors.append(
+                f"{where}: acceptance_cmd must be one shell command that fails before the part "
+                "is built and passes after (usually the new tests)"
+            )
+        done_when = [str(s).strip() for s in p.get("done_when") or [] if str(s).strip()]
+        if not done_when:
+            errors.append(f"{where}: done_when needs at least one observable fact")
         clean.append(
             {
                 "key": key,
@@ -270,6 +292,8 @@ def validate_plan(
                 "toolsets": toolsets,
                 "skills": skills,
                 "model": model,
+                "acceptance_cmd": acceptance,
+                "done_when": done_when,
             }
         )
     if errors:
@@ -279,6 +303,14 @@ def validate_plan(
         return [], ["depends_on has a cycle"]
     errors += _parallel_overlaps(ordered)
     return ([], errors) if errors else (ordered, [])
+
+
+def plan_type(data: Any) -> tuple[str, list[str]]:
+    """The plan's goal type (``team.gates.TYPES``), defaulting to bugfix; a wrong one is refused."""
+    kind = str((data or {}).get("type") or gates.DEFAULT_TYPE) if isinstance(data, dict) else gates.DEFAULT_TYPE
+    if kind not in gates.TYPES:
+        return gates.DEFAULT_TYPE, [f"type {kind!r} is not one of {list(gates.TYPES)}"]
+    return kind, []
 
 
 def _topo(parts: list[dict]) -> list[dict] | None:
@@ -398,6 +430,13 @@ def render(
         f"Run commands there. The check `{goal['check_cmd']}` passes there, and your "
         "work is committed on the branch: uncommitted work is lost and does not count."
     )
+    if order.get("acceptance_cmd"):
+        done += (
+            f" Team also runs `{order['acceptance_cmd']}` there: it fails now and must pass "
+            "when you are done."
+        )
+    if order.get("done_when"):
+        done += "\n\nWhat the reviewer checks:\n" + _bullets(order["done_when"])
     if not claude:
         done += (
             " Then call `kanban_request_review` with what you did and the check's last "
@@ -614,6 +653,17 @@ def plan_prompt(
         f"Plan the goal as at most {max_parts} parts and write each part's work order.",
         "Workers you can assign, and what each may be given:",
         json.dumps(roles_menu, indent=2),
+        "Give the plan a `type`, which decides the stages it goes through and whether it "
+        "lands by itself: " + "; ".join(
+            f"`{t}` ({'lands when every gate passes' if gates.LANDING[t] == 'auto' else 'Eli lands it'})"
+            for t in gates.TYPES
+        ) + ". A change to dependencies, lockfiles, migrations, CI, auth, billing or secrets "
+        "waits for Eli whatever the type.",
+        "Give every part an `acceptance_cmd`: one shell command, run in the worktree, that "
+        "fails before the part is built and passes after, usually the part's own new tests "
+        "(for example `pytest tests/x_test.py -q` or `node --test tests/x.test.ts`). Team runs "
+        "it after the check; a commit that changes nothing fails it. And `done_when`: the "
+        "observable facts a reviewer verifies, one per line.",
     ]
     if refused:
         lines += [

@@ -34,6 +34,9 @@ from datetime import datetime, timezone, UTC
 from pathlib import Path
 
 OUTCOMES = ("pass", "fail", "error", "timeout")
+# The "role" of a job that is a code-only gate (team.gates), not an agent's attempt;
+# rates leave these out, because they say nothing about any agent.
+CODE_ROLE = "team"
 DECISION_STATUSES = ("open", "answered", "dismissed")
 PLAN_STATUSES = ("draft", "active", "done")
 PART_STAGES = (
@@ -41,10 +44,12 @@ PART_STAGES = (
     "test_write",
     "implement",
     "test_verify",
+    "security",
     "review",
     "land",
     "done",
 )
+_PART_STAGE_SQL = "('spec', 'test_write', 'implement', 'test_verify', 'security', 'review', 'land', 'done')"
 VIOLATION_KINDS = ("off-gateway", "non-catalog", "paid-key")
 
 SCHEMA = """
@@ -141,7 +146,7 @@ CREATE TABLE IF NOT EXISTS parts (
     target      TEXT NOT NULL,
     title       TEXT NOT NULL,
     stage       TEXT NOT NULL CHECK (stage IN
-                  ('spec', 'test_write', 'implement', 'test_verify', 'review', 'land', 'done')),
+                  ('spec', 'test_write', 'implement', 'test_verify', 'security', 'review', 'land', 'done')),
     branch      TEXT,
     depends_on  TEXT NOT NULL DEFAULT '[]',
     owned_paths TEXT NOT NULL DEFAULT '[]',
@@ -287,9 +292,52 @@ def init(conn: sqlite3.Connection) -> None:
             # set by finish_job so a bad gateway day never counts against an agent.
             conn.execute("ALTER TABLE jobs ADD COLUMN failure_kind TEXT")
 
+        if "type" not in goal_columns:
+            # The pipeline a goal goes through (team.gates), where it is in it, how it lands,
+            # and the lead's acceptance command: the gate that refuses a no-op.
+            conn.execute("ALTER TABLE goals ADD COLUMN type TEXT NOT NULL DEFAULT 'bugfix'")
+            conn.execute("ALTER TABLE goals ADD COLUMN stage_idx INTEGER NOT NULL DEFAULT 0")
+            conn.execute("ALTER TABLE goals ADD COLUMN risk TEXT NOT NULL DEFAULT 'auto'")
+            conn.execute("ALTER TABLE goals ADD COLUMN acceptance_cmd TEXT")
+
+    _widen_part_stages(conn)
     # Backfill goal_id for existing calls
     backfill_call_goals(conn)
     backfill_failure_kinds(conn)
+
+
+def _widen_part_stages(conn: sqlite3.Connection) -> None:
+    """A ledger whose parts.stage CHECK predates 'security' gets the table rebuilt once."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'parts'").fetchone()
+    if not row or "'security'" in (row[0] or ""):
+        return
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        with conn:
+            conn.executescript(
+                f"""
+                CREATE TABLE parts_new (
+                    id          INTEGER PRIMARY KEY,
+                    plan_id     INTEGER NOT NULL REFERENCES plans(id),
+                    target      TEXT NOT NULL,
+                    title       TEXT NOT NULL,
+                    stage       TEXT NOT NULL CHECK (stage IN {_PART_STAGE_SQL}),
+                    branch      TEXT,
+                    depends_on  TEXT NOT NULL DEFAULT '[]',
+                    owned_paths TEXT NOT NULL DEFAULT '[]',
+                    status      TEXT NOT NULL DEFAULT 'open',
+                    created     TEXT NOT NULL,
+                    finished    TEXT
+                );
+                INSERT INTO parts_new SELECT id, plan_id, target, title, stage, branch, depends_on,
+                    owned_paths, status, created, finished FROM parts;
+                DROP TABLE parts;
+                ALTER TABLE parts_new RENAME TO parts;
+                CREATE INDEX IF NOT EXISTS parts_plan_id ON parts(plan_id);
+                """
+            )
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _check(value: str, allowed: tuple[str, ...], what: str) -> None:
@@ -405,9 +453,9 @@ def backfill_failure_kinds(conn: sqlite3.Connection) -> int:
 def failure_counts(
     conn: sqlite3.Connection, target: str | None = None, role: str | None = None
 ) -> dict[str, int]:
-    """Finished failures by kind: {'infra': n, 'work': n}."""
-    sql = "SELECT failure_kind, COUNT(*) FROM jobs WHERE ended IS NOT NULL AND outcome != 'pass'"
-    args: list = []
+    """Finished failures by kind, agents' attempts only: {'infra': n, 'work': n}."""
+    sql = "SELECT failure_kind, COUNT(*) FROM jobs WHERE ended IS NOT NULL AND outcome != 'pass' AND role != ?"
+    args: list = [CODE_ROLE]
     if target is not None:
         sql += " AND target = ?"
         args.append(target)
@@ -475,9 +523,9 @@ def open_job_for_task(conn: sqlite3.Connection, task_ref: str) -> dict | None:
 def pass_rate(
     conn: sqlite3.Connection, target: str | None = None, role: str | None = None
 ) -> tuple[int, int]:
-    """(passes, finished) for the given target and role. Report both, never a bare rate."""
-    sql = "SELECT SUM(outcome = 'pass'), COUNT(*) FROM jobs WHERE ended IS NOT NULL"
-    args: list = []
+    """(passes, finished) for the given target and role, agents' attempts only. Report both, never a bare rate."""
+    sql = "SELECT SUM(outcome = 'pass'), COUNT(*) FROM jobs WHERE ended IS NOT NULL AND role != ?"
+    args: list = [CODE_ROLE]
     if target is not None:
         sql += " AND target = ?"
         args.append(target)
@@ -662,7 +710,11 @@ def goal_usage(conn: sqlite3.Connection, goal_id: int) -> dict:
 
 # --- goals ------------------------------------------------------------------
 
-GOAL_FIELDS = ("attempt", "current_task", "job_id", "detail", "harness_id", "arm")
+GOAL_FIELDS = (
+    "attempt", "current_task", "job_id", "detail", "harness_id", "arm",
+    "role", "stage_idx", "risk",  # move along the pipeline (team.gates)
+)
+RISKS = ("auto", "ask")
 
 
 def create_goal(
@@ -676,12 +728,21 @@ def create_goal(
     part_id: int | None = None,
     base: str = "main",
     needs_commits: bool = True,
+    kind: str = "bugfix",
+    acceptance_cmd: str | None = None,
+    risk: str = "auto",
 ) -> int:
-    """Start tracking a goal ``team run`` works on; returns its id."""
+    """Start tracking a goal ``team run`` works on; returns its id.
+
+    ``kind`` is the pipeline (``team.gates.PIPELINES``), ``role`` the first stage's worker,
+    ``acceptance_cmd`` the command that fails before the part is built and passes after.
+    """
+    _check(risk, RISKS, "risk")
     with conn:
         cur = conn.execute(
             "INSERT INTO goals (target, goal, role, branch, worktree, check_cmd, created,"
-            " part_id, base, needs_commits) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " part_id, base, needs_commits, type, stage_idx, risk, acceptance_cmd)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
             (
                 target,
                 goal,
@@ -693,6 +754,9 @@ def create_goal(
                 part_id,
                 base,
                 int(needs_commits),
+                kind,
+                risk,
+                acceptance_cmd,
             ),
         )
     return cur.lastrowid
