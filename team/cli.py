@@ -213,6 +213,18 @@ def cmd_plans(args) -> int:
                     f"{part['steps']} steps, reads {', '.join(part['context']) or 'nothing'}"
                 )
         return 0
+    if args.plans_cmd == "reopen":
+        try:
+            r = boss.reopen(conn, p["target"], p["id"])
+        except boss.BossError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        print(
+            f"project {p['id']} reopened: goals {', '.join(map(str, r['approved'])) or 'none'} "
+            f"go back to the lead; ledger goals {', '.join(map(str, r['revived'])) or 'none'} "
+            "resume where they stopped. `team run` picks them up on its next tick."
+        )
+        return 0
     if p["status"] != "open":
         print(f"project {p['id']} is {p['status']}", file=sys.stderr)
         return 1
@@ -347,7 +359,7 @@ def build_parser() -> argparse.ArgumentParser:
     pl = sub.add_parser("plans", help="the boss's proposals: one line each")
     pls = pl.add_subparsers(dest="plans_cmd")
     pls.add_parser("list")
-    for verb in ("show", "approve", "dismiss"):
+    for verb in ("show", "approve", "dismiss", "reopen"):
         pls.add_parser(verb).add_argument("id", type=int)
     pl.set_defaults(func=cmd_plans)
 

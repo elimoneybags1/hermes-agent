@@ -372,6 +372,7 @@ def render(
     failure: str | None = None,
     attempt: int = 1,
     claude: bool = False,
+    answer: str | None = None,
 ) -> str:
     """The task body: the order, the code it needs, and what done means."""
     out = [f"{order.get('goal') or goal['goal']}", f"## Your part: {order['title']}"]
@@ -405,6 +406,8 @@ def render(
     out.append(done)
     if order.get("lead_note"):
         out.append("## From the lead, after the last attempt\n" + order["lead_note"])
+    if answer:
+        out.append("## Eli answered the question this goal stopped on\n" + answer)
     if failure:
         out.append(f"## Attempt {attempt - 1} failed. What it left\n{_tail(failure)}")
     return "\n\n".join(out)

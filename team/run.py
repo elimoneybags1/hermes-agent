@@ -69,6 +69,7 @@ QUOTA_RESET_RE = re.compile(r"'X-RateLimit-Reset': '(\d+)'")
 LOG_TAIL_BYTES = 8000
 # A Claude 429 (subscription limit) pauses the target this long, then retries the same attempt.
 CLAUDE_LIMIT = "claude usage limit"
+ASKED = "asked Eli: decision "  # a Claude attempt's job detail while the goal waits for Eli's answer
 CLAUDE_LIMIT_PAUSE_S = 3600
 QUOTA_END_CHARS = 2000
 
@@ -127,6 +128,7 @@ def brief(
     failure: str | None,
     owned: list[str] | None,
     claude: bool = False,
+    answer: str | None = None,
 ) -> str:
     text = (
         f"{goal['goal']}\n\n"
@@ -142,6 +144,8 @@ def brief(
             "\n\nWhen you are done, call `kanban_request_review` with a summary of what "
             "you did and the check's last line. Never call `kanban_complete`: Team grades."
         )
+    if answer:
+        text += f"\n\nEli answered the question this goal stopped on:\n{answer}"
     if failure:
         text += f"\n\nAttempt {attempt - 1} failed. What it left:\n{_tail(failure)}"
         if "merge conflict with" in failure:
@@ -379,6 +383,8 @@ class Loop:
                 self._finish_replay(goal, job)
             elif job["outcome"] == "pass":
                 self._land(goal)
+            elif claude and (job["grader_detail"] or "").startswith(ASKED):
+                return self._after_decision(goal, job)
             elif claude and (job["grader_detail"] or "").startswith(CLAUDE_LIMIT):
                 if (
                     ledger.active_pause(self.conn, goal["target"], self.now())
@@ -707,7 +713,14 @@ class Loop:
         else:
             self._give_up(goal, f"all {goal['attempt']} attempts failed", failure)
 
-    def _claude_attempt(self, goal: dict, attempt: int, failure: str | None) -> None:
+    def _claude_attempt(
+        self,
+        goal: dict,
+        attempt: int,
+        failure: str | None,
+        *,
+        answer: str | None = None,
+    ) -> None:
         grade.ensure_worktree(
             self._repo(goal), goal["worktree"], goal["branch"], runner=self.runner
         )
@@ -739,9 +752,10 @@ class Loop:
                 failure=failure,
                 attempt=attempt,
                 claude=True,
+                answer=answer,
             )
             if order is not None
-            else brief(goal, attempt, failure, owned, claude=True),
+            else brief(goal, attempt, failure, owned, claude=True, answer=answer),
             max_turns=self.cfg["escalation.claude_max_turns"],
             timeout_s=self.cfg["escalation.claude_timeout_s"],
             runner=self.runner,
@@ -758,12 +772,13 @@ class Loop:
         model_tracking.record_result(self.conn, job, result, goal["role"])
         asked = self._claude_decision(goal, decision_file)
         if asked:
-            ledger.finish_job(
-                self.conn, job, "fail", "claude", f"asked Eli: decision {asked}"
-            )
-            self._give_up(
-                goal, f"Claude needs a decision from Eli (decision {asked})", None
-            )
+            # Not a failed attempt: the goal waits for Eli's answer. step() sees
+            # the job's detail and comes back here when the decision is settled.
+            reason = f"waiting for Eli: decision {asked}"
+            ledger.finish_job(self.conn, job, "error", "claude", f"{ASKED}{asked}")
+            ledger.update_goal(self.conn, goal["id"], detail=reason)
+            self._block(goal, reason)
+            self.log(f"goal {goal['id']}: Claude asked Eli (decision {asked}); waiting")
             return
         if not result["ok"] and claude_run.usage_limited(result):
             # Not a failed attempt: the subscription is out of quota. Pause the
@@ -796,6 +811,36 @@ class Loop:
             self._land(goal)
         else:
             self._give_up(goal, "the Claude attempt failed too", detail)
+
+    def _after_decision(self, goal: dict, job: dict) -> bool:
+        """The goal stopped on a question to Eli. Nothing until he answers; then
+        the branch is graded as it stands (grade() merges main into it, so a
+        fix that landed meanwhile counts) and Claude runs again only if that
+        fails, with Eli's answer in its brief. A dismissed question stops the goal."""
+        did = int(job["grader_detail"][len(ASKED):].split()[0])
+        d = ledger.get_decision(self.conn, did)
+        if d is None or d["status"] == "open":
+            return False
+        if d["status"] == "dismissed":
+            self._give_up(goal, f"Eli dismissed its question (decision {did})", d["question"])
+            return True
+        answer = f"Question: {d['question']}\nAnswer: {d['answer']}"
+        ok, detail = self.grade(goal)
+        if ok:
+            regrade = self._start_job(
+                goal,
+                goal["attempt"],
+                "team-run:regrade",
+                catalog.ModelChoice("none", "team-run", "none", f"re-graded after decision {did}"),
+            )
+            ledger.finish_job(self.conn, regrade, "pass", "check", detail)
+            ledger.update_goal(self.conn, goal["id"], job_id=regrade)
+            self.log(f"goal {goal['id']}: passes as it stands after decision {did}; landing")
+            self._land(goal)
+            return True
+        self.log(f"goal {goal['id']}: decision {did} answered; Claude continues with the answer")
+        self._claude_attempt(goal, goal["attempt"], detail, answer=answer)
+        return True
 
     def _claude_decision(self, goal: dict, path: Path) -> int | None:
         """A decision Claude wrote to $TEAM_DECISION_FILE goes to Eli's inbox."""

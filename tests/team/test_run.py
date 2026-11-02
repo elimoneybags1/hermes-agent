@@ -493,7 +493,13 @@ def test_claude_usage_limit_pauses_instead_of_giving_up(world):
     assert [j["attempt"] for j in ledger.list_jobs(world["conn"])][:2] == [3, 3]
 
 
-def test_claude_writes_a_decision_for_eli(world):
+def _last_brief(world) -> str:
+    """The brief of the Claude attempt FakeHermes is running right now."""
+    return json.loads(world["hermes"].calls[-1][4])["brief"]
+
+
+def ask_eli(world):
+    """Two free attempts fail, then the Claude attempt asks Eli; returns (goal, decision, briefs)."""
     goal = run.start_goal(
         world["root"],
         world["conn"],
@@ -502,8 +508,10 @@ def test_claude_writes_a_decision_for_eli(world):
         runner=world["hermes"],
         cat=CATALOG,
     )
+    briefs = []
 
     def claude_asks(worktree, env):
+        briefs.append(_last_brief(world))
         Path(env["TEAM_DECISION_FILE"]).write_text(
             json.dumps(
                 {
@@ -525,9 +533,58 @@ def test_claude_writes_a_decision_for_eli(world):
         for d in ledger.list_decisions(world["conn"], "team")
         if d["source"] == "claude"
     ]
+    return goal, decision, briefs
+
+
+def test_claude_writes_a_decision_for_eli_and_the_goal_waits_for_the_answer(world):
+    goal, decision, briefs = ask_eli(world)
     assert decision["question"] == "Which value?" and decision["options"] == ["2", "3"]
+    # the question is the only card: no "goal stopped" card on top of it
+    assert ledger.list_decisions(world["conn"], "team") == [decision]
     g = ledger.get_goal(world["conn"], goal["id"])
-    assert "needs a decision" in g["detail"]
+    assert g["outcome"] is None and g["detail"] == f"waiting for Eli: decision {decision['id']}"
+    job = ledger.get_job(world["conn"], g["job_id"])
+    assert job["outcome"] == "error" and job["grader_detail"] == f"asked Eli: decision {decision['id']}"
+    world["loop"].tick()  # still waiting: nothing runs
+    assert ledger.get_goal(world["conn"], goal["id"])["job_id"] == job["id"] and len(briefs) == 1
+
+    def claude_fixes(worktree, env):
+        briefs.append(_last_brief(world))
+        (worktree / "app.py").write_text("VALUE = 2\n")
+        git(worktree, "commit", "-q", "-am", "claude fixed it")
+
+    world["hermes"].claude_behaviour = claude_fixes
+    ledger.answer_decision(world["conn"], decision["id"], "2")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["attempt"] == 3
+    assert len(briefs) == 2
+    assert "Eli answered" in briefs[-1] and "Which value?" in briefs[-1] and "Answer: 2" in briefs[-1]
+
+
+def test_an_answered_question_lands_the_branch_when_it_already_passes(world):
+    goal, decision, briefs = ask_eli(world)
+    wt = Path(goal["worktree"])
+    (wt / "app.py").write_text("VALUE = 2\n")
+    git(wt, "commit", "-q", "-am", "Eli fixed it by hand")
+    ledger.answer_decision(world["conn"], decision["id"], "2, and I did it")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["detail"].startswith("landed")
+    assert len(briefs) == 1  # Claude was not run again
+    job = ledger.get_job(world["conn"], g["job_id"])
+    assert job["task_ref"] == "team-run:regrade" and job["outcome"] == "pass"
+    assert job["model_choice"]["why"] == f"re-graded after decision {decision['id']}"
+
+
+def test_a_dismissed_question_stops_the_goal(world):
+    goal, decision, _ = ask_eli(world)
+    ledger.dismiss_decision(world["conn"], decision["id"])
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "fail" and f"dismissed its question (decision {decision['id']})" in g["detail"]
+    [stopped] = [d for d in ledger.list_decisions(world["conn"], "team") if d["source"] == "run"]
+    assert stopped["question"].startswith(f"Goal {goal['id']} stopped")
 
 
 def test_violation_blocks_the_goal(world):

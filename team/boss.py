@@ -225,6 +225,43 @@ def send_back(conn: sqlite3.Connection, target: str, plan_id: int, n: int, text:
     return g
 
 
+def reopen(conn: sqlite3.Connection, target: str, plan_id: int) -> dict:
+    """Another go at a project that closed with failures.
+
+    A goal the lead could not plan is approved again (a fresh draft, with the
+    fixed lead). A stopped goal's ledger rows are revived where they stopped:
+    the loop steps them from their last job, so one waiting on Eli's answer
+    resumes with it and one whose attempt failed takes its next attempt. Open
+    "goal stopped" cards for those rows are moot and are dismissed. Returns
+    ``{"approved": [n, ...], "revived": [goal id, ...]}``.
+    """
+    p = load_proposal(target, plan_id)
+    if p["status"] == "dismissed":
+        raise BossError(f"project {plan_id} was dismissed; propose it again instead")
+    approved, revived = [], []
+    for g in p["goals"]:
+        if g["status"] == "failed":
+            g["status"], g["error"] = "approved", None
+            approved.append(g["n"])
+        elif g["status"] == "stopped":
+            for gid in g.get("goal_ids", []):
+                row = ledger.get_goal(conn, gid)
+                if row and row["outcome"] and row["outcome"] != "pass":
+                    ledger.revive_goal(conn, gid)
+                    revived.append(gid)
+                    for d in ledger.list_decisions(conn, target):
+                        if d["goal_id"] == gid and d["source"] == "run":
+                            ledger.dismiss_decision(conn, d["id"])
+            g["status"] = "released"
+    if not approved and not revived:
+        raise BossError(f"project {plan_id} has no failed or stopped goal to reopen")
+    p["status"] = "open"
+    p.pop("closed", None)
+    ledger.update_plan(conn, plan_id, status="active")
+    _save(p)
+    return {"approved": approved, "revived": revived}
+
+
 def settle_goals(conn: sqlite3.Connection, p: dict, answer: str | None) -> list[int]:
     """Approve (``"approve"``) or skip (``None``) every goal of ``p`` still waiting for Eli."""
     done = []
