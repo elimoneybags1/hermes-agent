@@ -581,6 +581,14 @@ def calls_for(
     sql = "SELECT * FROM calls WHERE " + " OR ".join(where) + " ORDER BY id"
     return [dict(r) for r in conn.execute(sql, args)]
 
+def goal_usage(conn: sqlite3.Connection, goal_id: int) -> dict:
+    """Return call and token totals for a goal, excluding Claude and lead calls."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(COALESCE(api_calls, 1)), 0) AS calls, COALESCE(SUM(COALESCE(tokens_in, 0)), 0) AS tokens_in FROM calls WHERE goal_id = ? AND task_ref IS NOT NULL AND task_ref NOT LIKE 'claude:%'",
+        (goal_id,)
+    ).fetchone()
+    return {"calls": row["calls"], "tokens_in": row["tokens_in"]}
+
 
 # --- goals ------------------------------------------------------------------
 
