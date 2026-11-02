@@ -314,12 +314,82 @@ def test_status_lists_open_projects_and_what_waits(team):
     assert "closed: Shut one., 2026-10-01" in text and text.count("Shut one.") == 1
 
 
+def test_status_and_findings_show_tokens_per_model_and_role(team, tmp_path):
+    jid = ledger.start_job(team["conn"], "team", "abc", "implement", "v1")
+    ledger.record_call(team["conn"], jid, "litellm", "alias-x", "implement", 100, 20, 5, True, response_model="real-model-a")
+    ledger.record_call(team["conn"], jid, "litellm", "alias-x", "implement", 50, 10, 2, True, response_model="real-model-a")
+    ledger.record_call(team["conn"], jid, "litellm", "alias-y", "implement", 7, 3, 1, False)
+    # status should show tokens per model and role
+    status_text = boss.status(team["conn"], "team")
+    assert "tokens overall: 157 in, 33 out, 3 calls" in status_text
+    assert "tokens by model (model the gateway returned):" in status_text
+    assert "real-model-a: 150 in, 30 out, 2 calls" in status_text
+    assert "alias-y: 7 in, 3 out, 1 calls" in status_text
+    assert "tokens by role:" in status_text
+    # findings should also show tokens per model and role
+    findings_text = boss.findings(team["conn"], "team")
+    assert "tokens overall: 157 in, 33 out, 3 calls" in findings_text
+    assert "tokens by model (model the gateway returned):" in findings_text
+    assert "real-model-a: 150 in, 30 out, 2 calls" in findings_text
+    assert "alias-y: 7 in, 3 out, 1 calls" in findings_text
+    assert "tokens by role:" in findings_text
+    # a fresh ledger with no calls shows no 'tokens overall' line
+    conn = ledger.connect(tmp_path / "empty.db")
+    ledger.init(conn)
+    status_text_empty = boss.status(conn, "team")
+    assert "tokens overall:" not in status_text_empty
+    findings_text_empty = boss.findings(conn, "team")
+    assert "tokens overall:" not in findings_text_empty
+    conn.close()
+
+
 def test_a_suggestion_is_a_decision_not_an_edit(team):
     d = boss.suggest(team["conn"], "team", "Give implement a commit skill", "Add ...", "3 of 5 failed: no commits")
     row = ledger.get_decision(team["conn"], d)
     assert row["source"] == "boss-suggestion" and row["options"] == ["apply", "dismiss"]
     with pytest.raises(boss.BossError):
         boss.suggest(team["conn"], "team", "t", "", "why")
+
+
+def test_an_applied_suggestion_becomes_a_project_the_lead_drafts(team):
+    kept = boss.suggest(team["conn"], "team", "Cap worker calls", "Set a per-goal cap of 15 calls.", "goal 16: 74 calls vs 13 to 34")
+    dropped = boss.suggest(team["conn"], "team", "Auto-close topics", "Close the topic when its plan lands.", "boss re-reads old topics")
+    waiting = boss.suggest(team["conn"], "team", "Later", "Something else.", "because")
+    assert boss.apply_suggestions(team["root"], team["conn"]) == []  # all three still open
+    boss.settle(team["conn"], kept, "apply")
+    boss.settle(team["conn"], dropped, None)
+    logged = []
+    assert boss.apply_suggestions(team["root"], team["conn"], log=logged.append) == [(kept, 1)]
+    assert logged == [f"suggestion {kept} applied: project 1 (Cap worker calls)"]
+    p = boss.load_proposal("team", 1)
+    assert p["headline"] == "Cap worker calls" and p["summary"].startswith("Set a per-goal cap of 15 calls.")
+    [g] = p["goals"]
+    assert g["goal"] == "Set a per-goal cap of 15 calls." and f"decision {kept}" in g["notes"]
+    assert ledger.get_decision(team["conn"], g["decision_id"])["answer"] == "approve"  # Eli already said apply
+    rows = {s["decision_id"]: s for s in boss.suggestions("team")}
+    assert rows[kept]["project"] == 1 and rows[dropped]["project"] is None and "project" not in rows[waiting]
+    assert boss.apply_suggestions(team["root"], team["conn"]) == []  # never twice
+    team["answers"].queue.append(plan_answer())
+    team["loop"].tick()
+    assert boss.load_proposal("team", 1)["goals"][0]["status"] == "released"
+
+
+def test_a_closed_project_leaves_the_boss_a_findings_cue(team):
+    p = propose(team)
+    approve(team, p)
+    team["loop"].tick()
+    gid = saved(team, p)["goals"][0]["goal_ids"][0]
+    worker_commits(team, ledger.get_goal(team["conn"], gid))
+    assert boss.take_notes() == []
+    team["loop"].tick()  # lands and closes
+    [note] = boss.take_notes()
+    assert note.startswith(f"Project {p['id']} closed: Make VALUE two. Goals: 1 landed.")
+    assert "team_findings for target team" in note and "team_suggest" in note
+    assert boss.take_notes() == []  # taken once
+    p2 = propose(team, draft=False, headline="Never mind.")
+    skip(team, p2)
+    team["loop"].tick()
+    assert saved(team, p2)["status"] == "dismissed" and boss.take_notes() == []  # nothing was built
 
 
 def _tools():

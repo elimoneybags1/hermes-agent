@@ -35,7 +35,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from team import grade, ledger, profiles, replay, roles, run, settings, targets
+from team import grade, ledger, profiles, replay, roles, run, settings, targets, usage
 from team.goals_landed import all_goals_landed
 
 HEADLINE_CHARS = 160
@@ -626,9 +626,87 @@ def record_closed(conn: sqlite3.Connection, target: str) -> list[dict]:
         p["closed"] = ledger._now()[:10]
         ledger.update_plan(conn, p["id"], status="done")
         _save(p)
+        if built:
+            queue_note(review_note(p))
         out.append(p)
     return out
 
+
+# --- notes to the boss -----------------------------------------------------------------
+#
+# The loop has no line to the boss: the boss answers in the app's chat, which
+# is another process. A note is a file the loop drops here and the chat picks
+# up on its next poll, as one boss turn. Today's only note is the review cue a
+# closed project leaves, which is what turns results into suggestions.
+
+
+def notes_dir() -> Path:
+    return ledger.state_dir() / "boss" / "notes"
+
+
+def queue_note(text: str) -> Path:
+    """Leave a message for the boss; the app's chat sends it on its next poll."""
+    d = notes_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    stamp = ledger._now().replace(":", "").replace("-", "")
+    path = d / f"{stamp}-{len(list(d.iterdir())) + 1:03d}.json"
+    path.write_text(json.dumps({"text": text.strip(), "at": ledger._now()}))
+    return path
+
+
+def take_notes() -> list[str]:
+    """The queued notes, oldest first; each is removed as it is taken."""
+    d = notes_dir()
+    if not d.is_dir():
+        return []
+    out = []
+    for path in sorted(d.glob("*.json")):
+        try:
+            out.append(json.loads(path.read_text())["text"])
+        except (ValueError, KeyError):
+            pass
+        path.unlink(missing_ok=True)
+    return out
+
+
+def review_note(p: dict) -> str:
+    counts = Counter(g["status"] for g in p["goals"])
+    return (
+        f"Project {p['id']} closed: {p['headline']} Goals: "
+        + ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
+        + f". Read team_findings for target {p['target']} and compare the numbers with their base "
+        "rates. If a pattern cost attempts or tokens, propose one fix: team_suggest, or "
+        "team_propose_harness when the fix is a worker role's own files. If nothing stands out, "
+        "say so in one line."
+    )
+
+def _usage_lines(conn: sqlite3.Connection, target: str) -> list[str]:
+    """Return usage lines for boss status/findings: overall, by model, by role."""
+    data = usage.usage_breakdown(conn, target)
+    if data["total"]["calls"] == 0:
+        return []
+    out: list[str] = []
+    t = data["total"]
+    out.append(f"tokens overall: {t['input']} in, {t['output']} out, {t['calls']} calls")
+    out.append("tokens by model (model the gateway returned):")
+    # Sort by input + output descending, at most 8
+    sorted_models = sorted(
+        data["by_model"].items(),
+        key=lambda kv: kv[1]["input"] + kv[1]["output"],
+        reverse=True,
+    )[:8]
+    for name, b in sorted_models:
+        out.append(f"  {name}: {b['input']} in, {b['output']} out, {b['calls']} calls")
+    out.append("tokens by role:")
+    # Sort by input + output descending, at most 8
+    sorted_roles = sorted(
+        data["by_role"].items(),
+        key=lambda kv: kv[1]["input"] + kv[1]["output"],
+        reverse=True,
+    )[:8]
+    for name, b in sorted_roles:
+        out.append(f"  {name}: {b['input']} in, {b['output']} out, {b['calls']} calls")
+    return out
 
 def status(conn: sqlite3.Connection, target: str) -> str:
     """What is running, waiting for Eli, and what came back lately; a few hundred tokens."""
@@ -692,6 +770,7 @@ def status(conn: sqlite3.Connection, target: str) -> str:
         "implement attempts passed: "
         + ", ".join(f"{name} {p}/{n}" for name, (p, n) in rates.items())
     )
+    out += _usage_lines(conn, target)
     return "\n".join(out)
 
 
@@ -724,6 +803,7 @@ def findings(conn: sqlite3.Connection, target: str, limit: int = 40) -> str:
     if cost:
         out.append("worker input tokens per landed goal (newest first):")
         out += [f"  goal {r['id']}: {r['tin']} over {r['n']} calls" for r in cost]
+    out += _usage_lines(conn, target)
     from team import model_tracking
 
     out += model_tracking.findings(conn, jobs)
@@ -733,12 +813,61 @@ def findings(conn: sqlite3.Connection, target: str, limit: int = 40) -> str:
 # --- suggestions ------------------------------------------------------------------
 
 
+def _suggestions_path(target: str) -> Path:
+    return _dir(target) / "suggestions.jsonl"
+
+
+def suggestions(target: str) -> list[dict]:
+    path = _suggestions_path(target)
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def apply_suggestions(
+    root: Path, conn: sqlite3.Connection, *, log: Callable[[str], None] = run._log
+) -> list[tuple[int, int]]:
+    """A suggestion Eli answered "apply" becomes a project with one approved goal on its
+    target, so the lead drafts it and a worker builds it on the next ticks. Returns the
+    (decision id, project id) pairs made now; a settled suggestion is never applied twice."""
+    made = []
+    for target in [t["name"] for t in targets.list_targets()]:
+        rows, changed = suggestions(target), False
+        for s in rows:
+            if "project" in s:
+                continue
+            d = ledger.get_decision(conn, s["decision_id"])
+            if d is None or d["status"] == "open":
+                continue
+            changed = True
+            if d["status"] != "answered" or not str(d["answer"] or "").lower().startswith("apply"):
+                s["project"] = None
+                continue
+            try:
+                p = propose(
+                    root, conn, target, s["title"],
+                    f"{s['change']}\n\nWhy: {s['why']}"[:SUMMARY_CHARS], [{"goal": s["change"]}],
+                    notes=f"Eli applied the boss's suggestion (decision {d['id']}). Why: {s['why']}",
+                )
+                settle(conn, p["goals"][0]["decision_id"], "approve")
+            except BossError as e:
+                s["project"], s["error"] = None, str(e)
+                log(f"suggestion {d['id']} could not become a project: {e}")
+                continue
+            s["project"] = p["id"]
+            made.append((d["id"], p["id"]))
+            log(f"suggestion {d['id']} applied: project {p['id']} ({s['title'][:60]})")
+        if changed:
+            _suggestions_path(target).write_text("".join(json.dumps(s) + "\n" for s in rows))
+    return made
+
+
 def suggest(conn: sqlite3.Connection, target: str, title: str, change: str, why: str) -> int:
     """A proposed change to how Team works, as a decision; nothing changes until Eli applies it."""
     title, change, why = _line(title, HEADLINE_CHARS), change.strip(), why.strip()
     if not title or not change or not why:
         raise BossError("a suggestion needs a title, the change, and why (with the evidence)")
-    path = _dir(target) / "suggestions.jsonl"
+    path = _suggestions_path(target)
     path.parent.mkdir(parents=True, exist_ok=True)
     decision = ledger.create_decision(
         conn, target, title, f"{change}\n\nWhy: {why}", SUGGESTION_OPTIONS, "apply",

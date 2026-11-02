@@ -89,6 +89,23 @@ def test_chat_shows_a_failed_run_and_queues_while_busy(team_state, tmp_path):
         chat.Chat(tmp_path, popen=None).send("x", to="lead")
 
 
+def test_the_loops_notes_reach_the_boss_on_poll(team_state, tmp_path):
+    from team import boss
+
+    boss.queue_note("Project 7 closed: X. Read team_findings.")
+    boss.queue_note("Project 8 closed: Y.")
+    popen = popen_with(Proc([result("s1", "Nothing stands out.", 10, 2, 0, 0)]))
+    c = chat.Chat(tmp_path, popen=popen, aide=False)
+    assert c.poll() == 2
+    c.drain()
+    msgs = c.view()["messages"]
+    assert [m["role"] for m in msgs] == ["you", "you", "boss"]
+    assert msgs[0]["kind"] == "note" and msgs[0]["text"].startswith("Project 7 closed")
+    sent = popen.calls[0][popen.calls[0].index("-q") + 1]
+    assert len(popen.calls) == 1 and sent == "Project 7 closed: X. Read team_findings.\n\nProject 8 closed: Y."
+    assert boss.take_notes() == [] and c.poll() == 0
+
+
 def test_the_aide_answers_questions_and_hands_the_rest_to_the_boss(team_state, tmp_path):
     popen = popen_with(
         Proc([result("a1", "HANDOFF: asks to build something", 100, 5, 0, 0)]),

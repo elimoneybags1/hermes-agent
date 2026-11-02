@@ -136,7 +136,7 @@
     const main = document.getElementById("main");
     main.className = "page page--" + page;
     fill(main);
-    const pages = { work: Work, team: TeamPage, litellm: LiteLLMPage, portkey: PortkeyPage };
+    const pages = { work: Work, team: TeamPage, litellm: LiteLLMPage, portkey: PortkeyPage, usage: UsagePage };
     stopPage = (pages[page] || Work)(main) || null;
   }
   window.addEventListener("hashchange", route);
@@ -1036,5 +1036,57 @@
     draw().catch(fail);
   }
 
-  route();
+    // ---------- Usage page ----------
+
+  function usageTable(title, label, map, name) {
+    const rows = Object.keys(map).sort(function (a, b) {
+      return (map[b].input + map[b].output) - (map[a].input + map[a].output);
+    });
+    return h("div", { class: "card usage-card" },
+      h("h3", null, title),
+        h("thead", null,
+          h("tr", null, [label, "Calls", "Input", "Output", "Total"].map(function (c, i) {
+            return h("th", { class: i ? "r" : "" }, c);
+          }))
+      ),
+      h("tbody", null,
+        rows.map(function (k) {
+          const b = map[k];
+          return h("tr", null,
+            h("td", null, name ? name(k) : k),
+            h("td", { class: "r" }, num(b.calls)),
+            h("td", { class: "r" }, num(b.input)),
+            h("td", { class: "r" }, num(b.output)),
+            h("td", { class: "r" }, num(b.input + b.output))
+          );
+        })
+      )
+    );
+  }
+
+  function UsagePage(main) {
+    async function load(target) {
+      const d = await api("usage" + (target ? "?target=" + encodeURIComponent(target) : ""));
+      fill(pick, d.targets.map(function (n) {
+        return h("option", { value: n, selected: n === d.target }, n);
+      }));
+      pick.hidden = d.targets.length < 2;
+      fill(head, tile("Tokens in", fmt(d.total.input), fmt(d.total.output) + " out · " + d.total.calls + " calls"));
+      fill(tables,
+        d.target === null
+          ? h("div", { class: "muted" }, "No target attached.")
+          : usageTable("By model", "Model", d.by_model, null)
+      );
+      fill(tables, usageTable("By role / tier", "Role", d.by_role, null));
+      fill(tables, usageTable("By goal", "Goal", d.by_goal, function (k) {
+        return k === "none" ? "not linked to a goal" : "#" + k;
+      }));
+    }
+    const pick = h("select", { onchange: function () { load(pick.value); } });
+    const head = h("div", { class: "usage-head" });
+    const tables = h("div", { class: "usage-tables" });
+    fill(main, h("h1", null, "Usage"), h("p", { class: "muted" }, "Tokens by the model LiteLLM answered with, by role, and by goal."), pick, head, tables);
+    load("").catch(fail);
+    return;
+  }
 })();
