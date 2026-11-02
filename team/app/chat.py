@@ -29,7 +29,7 @@ import threading
 import time
 from pathlib import Path
 
-from team import gateway, ledger, profiles, settings
+from team import boss, gateway, ledger, profiles, settings
 
 LANES = ("aide", "boss")
 TOOLSETS = {"boss": "team,memory,session_search", "aide": "team-read"}
@@ -115,7 +115,15 @@ class Chat:
         except Exception:
             return False
 
+    def poll(self) -> int:
+        """Send the boss what the loop left for it (boss.queue_note); returns how many."""
+        notes = boss.take_notes()
+        for text in notes:
+            self.note(text)
+        return len(notes)
+
     def view(self) -> dict:
+        self.poll()
         with self.lock:
             return {
                 "session": self.data["lanes"]["boss"]["session"],

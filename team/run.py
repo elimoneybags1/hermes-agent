@@ -261,6 +261,7 @@ class Loop:
             from team import boss  # boss builds on this module
 
             try:
+                boss.apply_suggestions(self.root, self.conn, log=self.log)
                 boss.release_approved(
                     self.root,
                     self.conn,

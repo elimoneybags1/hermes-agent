@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 import secrets
 import sys
+import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -239,9 +241,22 @@ def handler(app: App, hosts: set[str]):
     return Handler
 
 
+POLL_S = 30  # how often the boss gets the loop's notes when no browser is open
+
+
 def serve(root: Path, port: int) -> None:
     app = App(root)
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler(app, hosts))
+
+    def poll() -> None:
+        while True:
+            time.sleep(POLL_S)
+            try:
+                app.chat.poll()
+            except Exception:  # the next poll tries again
+                traceback.print_exc(file=sys.stderr)
+
+    threading.Thread(target=poll, daemon=True).start()
     print(f"Team app on http://127.0.0.1:{port}/", flush=True)
     httpd.serve_forever()

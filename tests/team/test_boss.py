@@ -351,6 +351,47 @@ def test_a_suggestion_is_a_decision_not_an_edit(team):
         boss.suggest(team["conn"], "team", "t", "", "why")
 
 
+def test_an_applied_suggestion_becomes_a_project_the_lead_drafts(team):
+    kept = boss.suggest(team["conn"], "team", "Cap worker calls", "Set a per-goal cap of 15 calls.", "goal 16: 74 calls vs 13 to 34")
+    dropped = boss.suggest(team["conn"], "team", "Auto-close topics", "Close the topic when its plan lands.", "boss re-reads old topics")
+    waiting = boss.suggest(team["conn"], "team", "Later", "Something else.", "because")
+    assert boss.apply_suggestions(team["root"], team["conn"]) == []  # all three still open
+    boss.settle(team["conn"], kept, "apply")
+    boss.settle(team["conn"], dropped, None)
+    logged = []
+    assert boss.apply_suggestions(team["root"], team["conn"], log=logged.append) == [(kept, 1)]
+    assert logged == [f"suggestion {kept} applied: project 1 (Cap worker calls)"]
+    p = boss.load_proposal("team", 1)
+    assert p["headline"] == "Cap worker calls" and p["summary"].startswith("Set a per-goal cap of 15 calls.")
+    [g] = p["goals"]
+    assert g["goal"] == "Set a per-goal cap of 15 calls." and f"decision {kept}" in g["notes"]
+    assert ledger.get_decision(team["conn"], g["decision_id"])["answer"] == "approve"  # Eli already said apply
+    rows = {s["decision_id"]: s for s in boss.suggestions("team")}
+    assert rows[kept]["project"] == 1 and rows[dropped]["project"] is None and "project" not in rows[waiting]
+    assert boss.apply_suggestions(team["root"], team["conn"]) == []  # never twice
+    team["answers"].queue.append(plan_answer())
+    team["loop"].tick()
+    assert boss.load_proposal("team", 1)["goals"][0]["status"] == "released"
+
+
+def test_a_closed_project_leaves_the_boss_a_findings_cue(team):
+    p = propose(team)
+    approve(team, p)
+    team["loop"].tick()
+    gid = saved(team, p)["goals"][0]["goal_ids"][0]
+    worker_commits(team, ledger.get_goal(team["conn"], gid))
+    assert boss.take_notes() == []
+    team["loop"].tick()  # lands and closes
+    [note] = boss.take_notes()
+    assert note.startswith(f"Project {p['id']} closed: Make VALUE two. Goals: 1 landed.")
+    assert "team_findings for target team" in note and "team_suggest" in note
+    assert boss.take_notes() == []  # taken once
+    p2 = propose(team, draft=False, headline="Never mind.")
+    skip(team, p2)
+    team["loop"].tick()
+    assert saved(team, p2)["status"] == "dismissed" and boss.take_notes() == []  # nothing was built
+
+
 def _tools():
     spec = importlib.util.spec_from_file_location("team_boss_tools", REPO / "plugins" / "team" / "boss_tools.py")
     module = importlib.util.module_from_spec(spec)

@@ -41,10 +41,12 @@ How to work:
 5. Keep `team_notes_write` current when a decision is made: purpose,
    decisions with dates, the larger plan, open questions. It is a summary that
    you rewrite, not a log, and it has a size cap.
-6. When results come back, check `team_findings`. If a pattern costs attempts
-   or tokens (the same failure twice, a part that keeps escalating), say so
-   and propose one fix with `team_suggest`, with the counts next to the base
-   rate. Never claim a number you did not read from a tool.
+6. When a project closes, Team sends you a message saying so: that is your
+   cue to read `team_findings`. If a pattern costs attempts or tokens (the
+   same failure twice, a part that keeps escalating), say so and propose one
+   fix with `team_suggest`, with the counts next to the base rate; a
+   suggestion Eli applies becomes a goal Team builds. If nothing stands out,
+   one line saying so. Never claim a number you did not read from a tool.
 7. When the fix is to a worker role's own instructions or skills (what the
    workers keep doing wrong), do better than a suggestion: read the role with
    `team_harness_read`, write the whole new file, and send it with
