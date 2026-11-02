@@ -20,6 +20,14 @@ each part a work order. Code in `team/lead.py` decides whether the plan is usabl
 | `skills` | each one is a skill of the role |
 | `model` | one of the role's `models.candidates`, resolvable in the catalog |
 | `depends_on` | known part keys, no cycle |
+| `acceptance_cmd` | one shell command that fails before the part is built and passes after; the `check` gate runs it after the target's check |
+| `done_when` | at least one observable fact for the reviewer |
+
+The plan as a whole has a `type` (`team/gates.py`: bugfix, feature,
+dependencies, security, onboarding), which picks the goal's stages and whether
+it lands by itself. The menu lists builders only: roles whose gate is `check`.
+Stage roles (test-write, review, security) are the pipeline's to run, not the
+lead's to assign.
 
 A refused plan goes back to the lead once, with the reasons. A second refusal,
 a usage limit or a failed call stops `team goal` with the reason. Nothing is

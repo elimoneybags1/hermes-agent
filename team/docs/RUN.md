@@ -1,9 +1,36 @@
 # Running the committed Team workflow
 
-Team uses Hermes kanban as its queue. Each goal gets a branch and worktree;
-Team runs the target's check and lands a passing branch with a `--no-ff` merge.
-Boss and lead handle planning; implement executes the parts. The standard
+Team uses Hermes kanban as its queue. Each goal gets a branch and worktree,
+and a **type** that picks its pipeline (`team/gates.py`): the stages it goes
+through, each a role and a code gate, and whether it lands by itself. Team
+runs each stage's gate and lands a passing branch with a `--no-ff` merge.
+Boss and lead handle planning; the roster's workers build. The standard
 Hermes dashboard and kanban board are available separately.
+
+## Pipeline
+
+| Type | Stages (a stage whose role is not active is skipped) | Landing |
+|---|---|---|
+| bugfix, feature | test_write → implement → test_verify → review | by itself |
+| dependencies | implement → test_verify → review | Eli |
+| security | implement → test_verify → security → review | Eli |
+| onboarding | spec (onboard) → review | Eli |
+
+`test_verify` is code only: Team merges the base, then runs the target's
+check, the part's acceptance command and the target's `e2e` command in the
+worktree; its job row has role `team` and never counts as an agent's attempt.
+A code-only stage that fails sends the goal back to the builder as a failed
+attempt with the output. Risk only goes up: whatever the type, a diff that
+touches dependencies, lockfiles, migrations, CI, auth, billing or secrets
+(`team.gates.DEFAULT_RISK_PATHS` plus the target's `risk_paths`), or more
+lines than `risk.max_changed_lines`, waits for Eli: a `Land goal N?` decision
+in the inbox; "land it" lands, anything else keeps the branch and fails the
+goal.
+
+Every part from the lead carries an **acceptance command**: one command that
+fails before the part is built and passes after (its own new tests). The
+`check` gate runs it after the target's check, and refuses a commit that
+changes nothing against the base.
 
 ## Commands
 
@@ -32,6 +59,16 @@ the role manifest, not a `--model` CLI argument.
 `team/bin/team-check` runs the worktree's `scripts/run_tests.sh tests/team` with
 the main checkout's PM test interpreter, then Team lint. Either failure makes
 the check fail. Worktrees reuse the environment without installing another one.
+
+`run` takes `--target NAME` (repeatable) to work on those targets only, so one
+loop per target keeps a slow check on one from stalling the rest; `--no-boss`
+leaves the boss's releases and reviews to another loop and `--boss-only` does
+only those; `--pin` keeps the loop on the code it started with instead of
+restarting when the checkout changes. One loop per target is enforced with
+lock files under `$TEAM_STATE/run/`, and checks run one at a time machine-wide
+(`check.lock`). `goal --no-lead` takes `--type` and `--acceptance`.
+`targets --set NAME KEY VALUE` sets a target's `check`, `enabled`, `e2e`,
+`setup`, `check_env` or `risk_paths` (lists are comma-separated).
 
 ## Review, checks, and landing
 
