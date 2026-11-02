@@ -173,14 +173,14 @@ def propose_harness(args: dict) -> str:
 TOOLS = [
     (
         "team_status",
-        "What is running, what waits for Eli, and the latest results on a target.",
+        "What is running, what waits for Eli, and the latest results on a target, plus tokens spent per model and per role.",
         {"target": _TARGET},
         [],
         status,
     ),
     (
         "team_findings",
-        "Where attempts fail, what the lead diagnosed, and tokens per landed goal. Read before suggesting an improvement.",
+        "Where attempts fail, what the lead diagnosed, tokens per landed goal, and tokens per model and role. Read before suggesting an improvement.",
         {"target": _TARGET},
         [],
         findings,

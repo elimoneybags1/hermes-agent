@@ -35,7 +35,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from team import grade, ledger, profiles, replay, roles, run, settings, targets
+from team import grade, ledger, profiles, replay, roles, run, settings, targets, usage
 from team.goals_landed import all_goals_landed
 
 HEADLINE_CHARS = 160
@@ -629,6 +629,33 @@ def record_closed(conn: sqlite3.Connection, target: str) -> list[dict]:
         out.append(p)
     return out
 
+def _usage_lines(conn: sqlite3.Connection, target: str) -> list[str]:
+    """Return usage lines for boss status/findings: overall, by model, by role."""
+    data = usage.usage_breakdown(conn, target)
+    if data["total"]["calls"] == 0:
+        return []
+    out: list[str] = []
+    t = data["total"]
+    out.append(f"tokens overall: {t['input']} in, {t['output']} out, {t['calls']} calls")
+    out.append("tokens by model (model the gateway returned):")
+    # Sort by input + output descending, at most 8
+    sorted_models = sorted(
+        data["by_model"].items(),
+        key=lambda kv: kv[1]["input"] + kv[1]["output"],
+        reverse=True,
+    )[:8]
+    for name, b in sorted_models:
+        out.append(f"  {name}: {b['input']} in, {b['output']} out, {b['calls']} calls")
+    out.append("tokens by role:")
+    # Sort by input + output descending, at most 8
+    sorted_roles = sorted(
+        data["by_role"].items(),
+        key=lambda kv: kv[1]["input"] + kv[1]["output"],
+        reverse=True,
+    )[:8]
+    for name, b in sorted_roles:
+        out.append(f"  {name}: {b['input']} in, {b['output']} out, {b['calls']} calls")
+    return out
 
 def status(conn: sqlite3.Connection, target: str) -> str:
     """What is running, waiting for Eli, and what came back lately; a few hundred tokens."""
@@ -692,6 +719,7 @@ def status(conn: sqlite3.Connection, target: str) -> str:
         "implement attempts passed: "
         + ", ".join(f"{name} {p}/{n}" for name, (p, n) in rates.items())
     )
+    out += _usage_lines(conn, target)
     return "\n".join(out)
 
 
@@ -724,6 +752,7 @@ def findings(conn: sqlite3.Connection, target: str, limit: int = 40) -> str:
     if cost:
         out.append("worker input tokens per landed goal (newest first):")
         out += [f"  goal {r['id']}: {r['tin']} over {r['n']} calls" for r in cost]
+    out += _usage_lines(conn, target)
     from team import model_tracking
 
     out += model_tracking.findings(conn, jobs)
