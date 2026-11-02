@@ -239,3 +239,20 @@ listed in `PROVENANCE.md`.
 ## Progress
 
 Appended by the build session, one dated line per phase exit with its number.
+
+- 2026-11-02 Step 0: `team` target disabled, `team run` (pid 96240) stopped;
+  goals 17, 21–32 parked open, nothing dispatches. Three kanban workers were
+  still running and timed out on their own budgets.
+- 2026-11-02 Spike 2 (reasoning fields): the dumped failed worker request
+  replayed to `laguna-xs-2.1` and `ministral-14b` → 400 / `null` with the
+  fields, 200 without. Cause confirmed. A second cause found on the way:
+  LiteLLM returned `None` for an uncurable provider 422 (`null` body, or the
+  500 `__aiter__` on stream); reproduced, patched (`[team]` commit
+  `85445cffc0`), re-verified: HTTP 422 with the provider's message.
+- 2026-11-02 Phase 1 interim: after the hook, the patch and the catalog
+  reorder, 30 consecutive worker-shaped requests through `tier-medium` →
+  0/30 non-200 (before: 903/1,968 = 45.9% non-200 that day). The exit
+  criterion proper (≤5% of 30 consecutive *attempts* dying of
+  infrastructure) is measured on `team-sandbox` goals in Phase 2; the ledger
+  now records `jobs.failure_kind` for it. Backfill over the existing ledger:
+  2 of 19 finished failures classified infra.
