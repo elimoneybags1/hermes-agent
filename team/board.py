@@ -320,6 +320,17 @@ def merge_files(repo: Path, branch: str, goal_id: int) -> list[str]:
     return []
 
 
+def _stage_name(goal: dict) -> str | None:
+    """The pipeline stage the goal is at, from the stage list fixed at its creation."""
+    try:
+        names = json.loads(goal.get("stages") or "[]")
+    except ValueError:
+        names = []
+    if not names:
+        return None
+    return names[min(int(goal.get("stage_idx") or 0), len(names) - 1)]
+
+
 def goal_card(conn, gw, goal: dict, order, cooldown_s: int = 0) -> dict:
     part = ledger.get_part(conn, goal["part_id"]) if goal.get("part_id") else None
     latest = ledger.latest_order(conn, goal["id"])
@@ -344,6 +355,9 @@ def goal_card(conn, gw, goal: dict, order, cooldown_s: int = 0) -> dict:
         "target": goal["target"],
         "goal": goal["goal"],
         "station": station,
+        "type": goal.get("type") or "bugfix",
+        "stage": _stage_name(goal),
+        "risk": goal.get("risk") or "auto",
         "outcome": goal["outcome"],
         "detail": _short(goal.get("detail")),
         "check": goal["check_cmd"],
@@ -446,13 +460,15 @@ def planner_queue() -> list[dict]:
     return out
 
 
-def board(conn: sqlite3.Connection, root: Path, cat: dict | None = None) -> dict:
+def board(conn: sqlite3.Connection, root: Path, cat: dict | None = None, target: str | None = None) -> dict:
+    """The Work page's data: cards by station, the roster's configuration, tokens, tiers.
+    ``target`` narrows the cards to one target; the response names every target either way."""
     cat = cat if cat is not None else catalog.load()
     order = ranks(cat)
     cooldown_s = int(cat.get("policy", {}).get("litellm", {}).get("cooldown_time") or 0)
     gw = _gateway()
     try:
-        goals = ledger.list_goals(conn, all_goals=True)
+        goals = ledger.list_goals(conn, target=target, all_goals=True)
         at = ranks_at(root, cat)
         cards = [goal_card(conn, gw, g, at, cooldown_s) for g in goals]
         waiting = boss.waiting()
@@ -463,6 +479,8 @@ def board(conn: sqlite3.Connection, root: Path, cat: dict | None = None) -> dict
         done = [c for c in cards if c["station"] in ("landed", "stopped")][:LANDED_SHOWN]
         return {
             "configured": configured(root),
+            "target": target,
+            "targets": [t["name"] for t in targets.list_targets() if t.get("enabled", True)],
             "waiting": waiting,
             "columns": cols,
             "done": done,

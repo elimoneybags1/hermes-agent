@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Team's gateway dashboard: edit catalog.json and the keys, rebuild, restart, test, watch.
-
-    server.py [--port N]      serve index.html and /api on 127.0.0.1 (default 8791)
+"""The gateway's controls, used by Team's app (team/app): edit catalog.json and the keys,
+rebuild, restart, test, probe, verify, watch.
 
 Everything it changes goes through the same gates as a hand edit: a catalog
 edit is rendered by integrations/portkey/build.py first and refused with
@@ -29,19 +28,16 @@ import secrets
 import socket
 import sqlite3
 import subprocess
-import sys
 import threading
 import time
 import urllib.error
 import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parent.parent
+REPO = HERE.parent
 CATALOG = REPO / "integrations" / "portkey" / "catalog.json"
 BUILD = REPO / "integrations" / "portkey" / "build.py"
-DEFAULT_PORT = 8791
 ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 MASTER = "LITELLM_MASTER_KEY"
 SERVICES = {
@@ -635,116 +631,3 @@ def recent(n: int = 100) -> dict:
 
 
 # ---------- HTTP ----------
-
-class Handler(BaseHTTPRequestHandler):
-    server_version = "team-dashboard"
-    token = ""
-    port = DEFAULT_PORT
-
-    def log_message(self, fmt, *args):  # one line per request on stderr, no bodies
-        sys.stderr.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {fmt % args}\n")
-
-    def _send(self, status: int, body: bytes, ctype: str) -> None:
-        self.send_response(status)
-        self.send_header("content-type", ctype)
-        self.send_header("content-length", str(len(body)))
-        self.send_header("cache-control", "no-store")
-        self.send_header("x-content-type-options", "nosniff")
-        self.send_header("x-frame-options", "DENY")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _json(self, status: int, obj) -> None:
-        self._send(status, json.dumps(obj, ensure_ascii=False).encode(), "application/json")
-
-    def _allowed(self) -> bool:
-        hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}
-        if self.headers.get("host") not in hosts:
-            self._json(403, {"error": "wrong Host header"})
-            return False
-        origin = self.headers.get("origin")
-        if origin and origin not in {f"http://{h}" for h in hosts}:
-            self._json(403, {"error": "cross-origin request refused"})
-            return False
-        if self.path.startswith("/api/") and not secrets.compare_digest(self.headers.get("x-team-token", ""), self.token):
-            self._json(403, {"error": "missing or stale token; reload the page"})
-            return False
-        return True
-
-    def _body(self) -> dict:
-        n = int(self.headers.get("content-length") or 0)
-        if n > 2 * 1024 * 1024:
-            raise Problem("request too large")
-        try:
-            d = json.loads(self.rfile.read(n) or b"{}")
-        except ValueError:
-            raise Problem("body is not JSON") from None
-        if not isinstance(d, dict):
-            raise Problem("body must be a JSON object")
-        return d
-
-    def do_GET(self):
-        if not self._allowed():
-            return
-        path = self.path.split("?", 1)[0]
-        query = dict(p.split("=", 1) for p in self.path.split("?", 1)[1].split("&") if "=" in p) if "?" in self.path else {}
-        try:
-            if path in ("/", "/index.html"):
-                html = (HERE / "index.html").read_text().replace("__TEAM_TOKEN__", self.token)
-                return self._send(200, html.encode(), "text/html; charset=utf-8")
-            if path == "/api/overview":
-                return self._json(200, overview())
-            if path == "/api/verify":
-                return self._json(200, verify_status())
-            if path == "/api/recent":
-                return self._json(200, recent(min(int(query.get("n", 100)), 1000)))
-            if path == "/api/log":
-                name = query.get("service", "")
-                if name not in SERVICES:
-                    raise Problem("service must be portkey or litellm")
-                return self._json(200, {"service": name, "text": tail_log(name, min(int(query.get("n", 200)), 2000))})
-            self._json(404, {"error": "not found"})
-        except Problem as e:
-            self._json(e.status, {"error": str(e)})
-
-    def do_POST(self):
-        if not self._allowed():
-            return
-        try:
-            d = self._body()
-            if self.path == "/api/check":
-                files = render(d.get("catalog"))
-                return self._json(200, {"ok": True, **summary(d["catalog"], files)})
-            if self.path == "/api/save":
-                return self._json(200, save_catalog(d.get("catalog"), str(d.get("base", "")), bool(d.get("restart", True))))
-            if self.path == "/api/key":
-                return self._json(200, save_key(str(d.get("file", "")), str(d.get("name", "")), str(d.get("value", ""))))
-            if self.path == "/api/restart":
-                return self._json(200, restart(str(d.get("service", "")), json.loads(catalog_text())))
-            if self.path == "/api/test":
-                return self._json(200, send_test(str(d.get("via", "")), str(d.get("model", "")),
-                                                 str(d.get("prompt") or PROBE_PROMPT), int(d.get("max_tokens") or 256)))
-            if self.path == "/api/verify":
-                return self._json(200, start_verify(bool(d.get("include_unavailable"))))
-            if self.path == "/api/probe":
-                return self._json(200, probe(str(d.get("provider", ""))))
-            self._json(404, {"error": "not found"})
-        except Problem as e:
-            self._json(e.status, {"error": str(e)})
-
-
-def main(argv: list[str]) -> int:
-    port = DEFAULT_PORT
-    for a in argv:
-        if a.startswith("--port="):
-            port = int(a.split("=", 1)[1])
-    Handler.token = secrets.token_urlsafe(24)
-    Handler.port = port
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"team dashboard on http://127.0.0.1:{port}/", flush=True)
-    httpd.serve_forever()
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

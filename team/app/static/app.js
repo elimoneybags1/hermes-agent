@@ -136,7 +136,7 @@
     const main = document.getElementById("main");
     main.className = "page page--" + page;
     fill(main);
-    const pages = { work: Work, team: TeamPage, litellm: LiteLLMPage, portkey: PortkeyPage, usage: UsagePage };
+    const pages = { work: Work, agents: AgentsPage, team: TeamPage, gateway: GatewayPage, litellm: GatewayPage, portkey: GatewayPage, usage: UsagePage };
     stopPage = (pages[page] || Work)(main) || null;
   }
   window.addEventListener("hashchange", route);
@@ -178,13 +178,21 @@
     const roles = [
       { key: "boss", title: "Boss", sub: cfg.boss.model || "?", working: chatBusy, note: b.waiting.length ? b.waiting.length + " goal" + (b.waiting.length > 1 ? "s" : "") + " for you" : null },
       { key: "aide", title: "Aide", sub: (cfg.aide && cfg.aide.tiers || []).join(" → ") || "off", working: aideBusy, note: aideBusy ? "answering" : null },
-      { key: "lead", title: "Planner", sub: cfg.lead.model || "?", working: planning, note: planning ? "drafting" : null },
-      { key: "implement", title: "Implementer", sub: (cfg.implement.tiers || []).join(" → "), working: b.columns.implement.length > 0, note: b.columns.implement.length ? b.columns.implement.length + " building" : null },
-      { key: "rescue", title: "Rescue", sub: cfg.rescue.model || "?", working: b.columns.rescue.length > 0, note: b.columns.rescue.length ? b.columns.rescue.length + " rescuing" : null },
     ];
+    // one entry per station: the planner, every active worker role in pipeline order, the rescue
+    (cfg.stations || ["lead", "implement", "rescue"]).forEach(function (s) {
+      const n = (b.columns[s] || []).length;
+      if (s === "lead") roles.push({ key: "lead", title: "Planner", sub: cfg.lead.model || "?", working: planning, note: planning ? "drafting" : null });
+      else if (s === "rescue") roles.push({ key: "rescue", title: "Rescue", sub: cfg.rescue.model || "?", working: n > 0, note: n ? n + " rescuing" : null });
+      else {
+        const c = cfg[s] || {};
+        roles.push({ key: s, title: s === "implement" ? "Implementer" : (c.title || s), sub: (c.tiers || []).join(" → "), working: n > 0,
+          note: n ? n + (s === "implement" ? " building" : " working") : null });
+      }
+    });
     fill(document.getElementById("roles"), roles.map(function (r) {
-      return h("button", { class: "role" + (r.working ? " role--working" : ""), title: "Open " + r.title + " in Team", onclick: function () {
-        try { sessionStorage.setItem("team-sel", r.key === "lead" ? "lead" : r.key === "rescue" ? "implement" : r.key); } catch (e) { /* private window */ }
+      return h("button", { class: "role" + (r.working ? " role--working" : ""), title: "Open " + r.title + " in Agents", onclick: function () {
+        try { sessionStorage.setItem("team-sel", r.key === "rescue" ? "implement" : r.key); } catch (e) { /* private window */ }
         location.hash = "#team";
       } },
         h("span", { class: "role-dot" }),
@@ -457,7 +465,7 @@
     }
 
     async function loadBoard() {
-      const b = await api("board");
+      const b = await api("board" + (workTarget ? "?target=" + encodeURIComponent(workTarget) : ""));
       boardCache = b; drawSidebar();
       fill(chart, Chart(b, reload));
     }
@@ -595,9 +603,13 @@
   }
 
   const COLORS = { lead: "violet", implement: "blue", rescue: "amber", done: "green" };
+  const COLOR_CYCLE = ["blue", "violet", "amber", "green"];
+  function colorFor(key, i) { return COLORS[key] || COLOR_CYCLE[(i || 0) % COLOR_CYCLE.length]; }
+  // The target the Work page shows; "" is every target.
+  let workTarget = (function () { try { return sessionStorage.getItem("team-target") || ""; } catch (e) { return ""; } })();
 
-  function column(key, title, sub, items, extra) {
-    return h("div", { class: "col col--" + COLORS[key] },
+  function column(key, title, sub, items, extra, color) {
+    return h("div", { class: "col col--" + (color || colorFor(key, 0)) },
       h("div", { class: "col-head" },
         h("span", { class: "col-dot" }), h("span", { class: "col-title" }, title),
         h("span", { class: "col-count" }, String(items.length))),
@@ -617,11 +629,17 @@
   const ZONES = { boss: "Boss", aide: "Aide", lead: "Planner", implement: "Implementer", rescue: "Rescue", other: "Not attributed" };
   let showTiers = false, showTokens = false;
 
-  function Chart(b) {
+  function Chart(b, reload) {
     const cfg = b.configured, z = b.tokens.zones, t = b.tokens.total;
+    const stations = cfg.stations || ["lead", "implement", "rescue"];
     const landed = b.done.filter(function (g) { return g.station === "landed"; });
     const stopped = b.done.filter(function (g) { return g.station !== "landed"; });
-    const building = b.columns.implement.length + b.columns.rescue.length;
+    const building = stations.filter(function (s) { return s !== "lead"; }).reduce(function (n, s) { return n + (b.columns[s] || []).length; }, 0);
+    const targetPick = (b.targets || []).length > 1 ? h("select", { class: "pick", title: "Which target's goals to show", onchange: function (e) {
+      workTarget = e.target.value;
+      try { sessionStorage.setItem("team-target", workTarget); } catch (err) { /* private window */ }
+      if (reload) reload();
+    } }, h("option", { value: "", selected: !workTarget }, "all targets"), b.targets.map(function (name) { return h("option", { value: name, selected: name === workTarget }, name); })) : null;
     const tiersBox = h("div", { class: "tiers", hidden: !showTiers }, b.tiers.map(function (tr) {
       return h("div", { class: "card tier" }, h("div", { class: "tier-name" }, tr.tier),
         tr.models.map(function (m) {
@@ -643,7 +661,8 @@
     return h("div", { class: "board" },
       h("div", { class: "board-head" },
         h("h2", null, "The team"),
-        h("div", { class: "muted" }, building ? building + " goal" + (building > 1 ? "s" : "") + " building" : "Nobody is building right now.")),
+        h("div", { class: "muted" }, building ? building + " goal" + (building > 1 ? "s" : "") + " building" : "Nobody is building right now."),
+        targetPick),
       h("div", { class: "tiles" },
         tile("Waiting for you", String(b.waiting.length), "goals to approve", b.waiting.length ? "tile--accent" : ""),
         tile("Building", String(building), "goals with a worker on them"),
@@ -651,9 +670,14 @@
         tile("Tokens in", fmt(t.tokens_in), fmt(t.tokens_out) + " out · " + (t.calls || 0) + " calls"),
         tile("Cache", t.cache_read === null && t.cache_write === null ? "—" : fmt(t.cache_read) + " / " + fmt(t.cache_write), t.cache_read === null && t.cache_write === null ? "not recorded yet" : "read / write")),
       h("div", { class: "cols" },
-        column("lead", "Planner", "work orders, tools, context · " + (cfg.lead.model || "?"), b.columns.lead),
-        column("implement", "Implementer", "builds each part · " + (cfg.implement.tiers || []).join(" → "), b.columns.implement),
-        column("rescue", "Rescue", "after " + (cfg.rescue.after_failures || "?") + " failed attempts · " + (cfg.rescue.model || "?"), b.columns.rescue),
+        stations.map(function (s, i) {
+          const items = b.columns[s] || [];
+          if (s === "lead") return column("lead", "Planner", "work orders, tools, context · " + (cfg.lead.model || "?"), items);
+          if (s === "rescue") return column("rescue", "Rescue", "after " + (cfg.rescue.after_failures || "?") + " failed attempts · " + (cfg.rescue.model || "?"), items);
+          if (s === "implement") return column("implement", "Implementer", "builds each part · " + (cfg.implement.tiers || []).join(" → "), items);
+          const c = cfg[s] || {};
+          return column(s, c.title || s, (c.gate ? "gate " + c.gate + " · " : "") + ((c.tiers || []).join(" → ") || "?"), items, null, colorFor(s, i));
+        }),
         column("done", "Landed", landed.length + " landed" + (stopped.length ? ", " + stopped.length + " stopped" : ""), b.done)),
       h("div", { class: "board-more" },
         toggle("Tokens by role", function () { return showTokens; }, function (v) { showTokens = v; }, tokensBox),
@@ -1088,5 +1112,196 @@
     fill(main, h("h1", null, "Usage"), h("p", { class: "muted" }, "Tokens by the model LiteLLM answered with, by role, and by goal."), pick, head, tables);
     load("").catch(fail);
     return;
+  }
+
+  // ---------- Agents: the roster, its numbers, and proposing a new one ----------
+
+  function kvl(k, v) { return v ? h("div", { class: "kv-line" }, h("span", { class: "muted" }, k + " "), v) : null; }
+  function thead(cols) { return h("thead", null, h("tr", null, cols.map(function (c) { return h("th", null, c); }))); }
+  function rateText(r) { return r && r.n ? r.pass + "/" + r.n + (r.infra ? " (+" + r.infra + " infra)" : "") : "no attempts yet"; }
+
+  function AgentsPage(main) {
+    const list = h("div", { class: "agents" }, h("div", { class: "muted" }, "Loading…"));
+    const pipes = h("div", { class: "pipelines" });
+    const form = h("div", { class: "card propose" });
+    const waiting = h("div", { class: "agents-waiting" });
+    fill(main,
+      h("div", { class: "page-head" }, h("h1", null, "Agents"),
+        h("div", { class: "muted" }, "Every role: what it does, the code that grades it, its tools, models and skills, and its passes over work attempts (attempts that died of infrastructure counted apart). Propose a new one below; it lands on trial once you approve its card in Work.")),
+      waiting, list, h("h2", null, "Pipelines"), pipes, h("h2", null, "Propose an agent"), form);
+    let data = null, formDrawn = false;
+
+    function agentCard(r) {
+      const status = badge(r.status || "?", r.status === "active" ? "badge--live" : r.status === "trial" ? "badge--ok" : "badge--outline",
+        r.status === "trial" ? "approved by you; measured like every role" : r.status === "planned" ? "files only; not in any pipeline" : "");
+      return h("div", { class: "card agent" + (r.problem ? " agent--bad" : "") },
+        h("div", { class: "card-head" }, h("strong", null, r.title), status, r.extends ? badge("extends " + r.extends, "badge--outline") : null,
+          h("span", { class: "spacer" }),
+          h("button", { class: "linkish", onclick: function () { try { sessionStorage.setItem("team-sel", r.name); } catch (e) { /* private window */ } location.hash = "#team"; } }, "edit files")),
+        h("div", { class: "muted" }, r.does),
+        h("div", { class: "kvs" },
+          kvl("graded by", r.gate + ": " + r.gate_means),
+          kvl("runs on", (r.harness || "?") + (r.model ? " · " + r.model : "") + (r.candidates.length ? " · " + r.candidates.join(" → ") : "")),
+          r.escalation && r.escalation.model ? kvl("rescue", r.escalation.model + " after " + r.escalation.after_failures + " failed attempts") : null,
+          kvl("tools", r.tools.join(", ")),
+          kvl("skills", r.skills.join(", ") || "none"),
+          r.overlays.length ? kvl("overlays", r.overlays.join(", ")) : null),
+        h("div", { class: "rate" }, h("span", { class: "rate-n" }, rateText(r.rate)),
+          h("span", { class: "muted" }, data.target ? " on " + data.target + " · everywhere " + rateText(r.rate_all) : " passed")),
+        r.problem ? h("div", { class: "problems" }, r.problem) : null);
+    }
+
+    function drawPipes() {
+      fill(pipes, h("table", { class: "table" }, thead(["Type", "Stages (a stage whose role is not active is skipped)", "Lands"]),
+        h("tbody", null, data.pipelines.map(function (p) {
+          return h("tr", null, h("td", null, h("code", null, p.type)),
+            h("td", null, p.stages.map(function (s, i) {
+              return [i ? " → " : null, h("span", { class: "stage", title: "gate " + s.gate + ": " + (data.gates[s.gate] || "") }, s.name, s.role ? " (" + s.role + ")" : " (Team)")];
+            })),
+            h("td", null, p.landing === "auto" ? "by itself" : "you"));
+        }))));
+    }
+
+    function drawForm() {
+      if (formDrawn) return;
+      formDrawn = true;
+      const text = function (ph, rows) { return rows ? h("textarea", { class: "chat-input", rows: String(rows), placeholder: ph }) : h("input", { type: "text", placeholder: ph }); };
+      const name = text("name: lowercase-with-dashes, e.g. ui-build"), title = text("title"), does = text("what work it takes, one sentence"),
+        graded = text("how its gate decides the work is done"), cands = text("models, fastest first: tier-medium, tier-complex"),
+        why = text("why: what recurred, counts next to the base rate", 2), soul = text("SOUL.md: who it is and how it works", 8);
+      const gate = h("select", null, Object.keys(data.gates).map(function (g) { return h("option", { value: g, selected: g === "check" }, g + " — " + data.gates[g]); }));
+      const extendsPick = h("select", null, h("option", { value: "" }, "extends nobody"),
+        data.roles.filter(function (r) { return r.gate === "check" && r.harness === "hermes"; }).map(function (r) { return h("option", { value: r.name }, "extends " + r.name + " (starts from its skills)"); }));
+      const tools = h("div", { class: "tags" }, data.toolsets.map(function (t) {
+        return h("label", { class: "check" }, h("input", { type: "checkbox", value: t, checked: ["terminal", "file", "kanban"].indexOf(t) >= 0 }), " " + t);
+      }));
+      const target = h("select", null, data.targets.map(function (t) { return h("option", { value: t, selected: t === data.target }, "for the inbox of " + t); }));
+      const submit = h("button", { class: "btn btn--primary", onclick: async function () {
+        submit.disabled = true;
+        try {
+          const r = await api("agents/propose", {
+            target: target.value, name: name.value, title: title.value, does: does.value, graded_by: graded.value, gate: gate.value,
+            tools: Array.from(tools.querySelectorAll("input:checked")).map(function (i) { return i.value; }),
+            candidates: cands.value.split(",").map(function (s) { return s.trim(); }).filter(Boolean),
+            soul: soul.value, why: why.value, extends: extendsPick.value,
+          });
+          toast("Agent " + r.name + " is on " + r.branch + "; its card (decision " + r.decision_id + ") waits in Work.");
+          load();
+        } catch (e) { fail(e); }
+        submit.disabled = false;
+      } }, "Propose");
+      fill(form,
+        h("div", { class: "muted" }, "The role goes on a branch and is validated like any role: a registered gate, known toolsets, catalog models. Approve its card in Work and it joins the roster on trial."),
+        h("div", { class: "form-grid" }, name, title, does, graded, gate, extendsPick, cands, target),
+        h("div", null, h("div", { class: "muted" }, "tools"), tools),
+        soul, why,
+        h("div", { class: "actions" }, submit));
+    }
+
+    async function load() {
+      data = await api("agents" + (workTarget ? "?target=" + encodeURIComponent(workTarget) : ""));
+      fill(waiting, data.proposals.length ? h("div", { class: "card" }, "Waiting for you in Work: " + data.proposals.map(function (a) { return a.name; }).join(", ")) : null);
+      fill(list, data.roles.map(agentCard));
+      drawPipes(); drawForm();
+    }
+    return every(30000, function () { return load().catch(fail); });
+  }
+
+  // ---------- Gateway: the route as a diagram, the controls, the editors ----------
+
+  async function loadMermaid() {
+    if (window.mermaid) return window.mermaid;
+    await new Promise(function (resolve, reject) {
+      const s = document.createElement("script");
+      s.src = "/static/vendor/mermaid.min.js"; s.onload = resolve; s.onerror = function () { reject(new Error("mermaid.min.js did not load")); };
+      document.head.appendChild(s);
+    });
+    window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", flowchart: { htmlLabels: true, curve: "basis" },
+      theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "neutral" });
+    return window.mermaid;
+  }
+
+  function GatewayPage(main) {
+    const tabs = h("div", { class: "subnav" });
+    const view = h("section", { class: "editor" });
+    fill(main, h("div", { class: "page-head" }, h("h1", null, "Gateway"),
+      h("div", { class: "muted" }, "Every call: a Hermes profile → LiteLLM, which chooses the model → Portkey, which chooses the provider → a free provider. Numbers are LiteLLM's log for the last 24 hours.")), tabs, view);
+    let selected = (function () { try { return sessionStorage.getItem("gw-sel") || "overview"; } catch (e) { return "overview"; } })(), stop = null;
+    const pages = { overview: GatewayOverview, models: LiteLLMPage, providers: PortkeyPage };
+    function pick(k) { selected = k; try { sessionStorage.setItem("gw-sel", k); } catch (e) { /* private window */ } drawNav(); draw(); }
+    function drawNav() {
+      fill(tabs, [["overview", "Overview"], ["models", "Models & tiers"], ["providers", "Providers & keys"]].map(function (p) {
+        return h("button", { class: "pill" + (selected === p[0] ? " on" : ""), onclick: function () { pick(p[0]); } }, p[1]);
+      }));
+    }
+    function draw() { if (stop) stop(); stop = null; fill(view); stop = (pages[selected] || GatewayOverview)(view) || null; }
+    drawNav(); draw();
+    return function () { if (stop) stop(); };
+  }
+
+  function rows(list, cols) {
+    return h("table", { class: "table" }, thead(cols.map(function (c) { return c[0]; })),
+      h("tbody", null, list.map(function (r) { return h("tr", null, cols.map(function (c) { const v = typeof c[1] === "function" ? c[1](r) : r[c[1]]; return h("td", null, v === null || v === undefined ? "—" : String(v)); })); })));
+  }
+
+  function GatewayOverview(view) {
+    const svcs = h("div", { class: "gw-services" });
+    const diagram = h("div", { class: "diagram" }, h("div", { class: "muted" }, "Drawing…"));
+    const table = h("div", { class: "gw-models" });
+    const testOut = h("div", { class: "gw-out" });
+    const verifyOut = h("div", { class: "gw-out" });
+    const logOut = h("pre", { class: "code code--small gw-log", hidden: true });
+    const via = h("select", null, h("option", { value: "litellm" }, "through LiteLLM (the normal path)"), h("option", { value: "portkey" }, "straight to Portkey"));
+    const model = h("input", { type: "text", placeholder: "model or tier, e.g. tier-medium", value: "tier-medium" });
+    const prompt = h("input", { type: "text", placeholder: "prompt", value: "Reply with the single word pong" });
+    const testBtn = h("button", { class: "btn", onclick: async function () {
+      testBtn.disabled = true; fill(testOut, h("div", { class: "muted" }, "Asking…"));
+      try { const r = await api("gateway/test", { via: via.value, model: model.value, prompt: prompt.value }); fill(testOut, h("pre", { class: "code code--small" }, JSON.stringify(r, null, 1))); }
+      catch (e) { fill(testOut, h("div", { class: "error" }, e.message)); }
+      testBtn.disabled = false;
+    } }, "Send a test");
+    let verifyTimer = null;
+    async function showVerify() {
+      const v = await api("gateway/verify");
+      fill(verifyOut, h("div", { class: "muted" }, v.running ? "Verifying… " + (v.done || 0) + "/" + (v.total || "?") : v.finished ? "Last verify " + v.finished : "Not verified yet."),
+        v.rows && v.rows.length ? rows(v.rows, [["Model", "model"], ["Provider", "provider"], ["Result", function (r) { return r.ok ? "✓ " + (r.status || "") : "✗ " + (r.status || "") + " " + (r.error || ""); }], ["ms", "latency_ms"]]) : null);
+      if (v.running && !verifyTimer) verifyTimer = setTimeout(function () { verifyTimer = null; showVerify().catch(fail); }, 3000);
+    }
+    const verifyBtn = h("button", { class: "btn", title: "One tool-call round trip to every routed model/provider pair, saved for the overview", onclick: async function () {
+      try { await api("gateway/verify", { include_unavailable: false }); toast("Verify started."); showVerify(); } catch (e) { fail(e); }
+    } }, "Verify every pair");
+    const logPick = h("select", { onchange: async function () {
+      if (!logPick.value) { logOut.hidden = true; return; }
+      try { const l = await api("gateway/log?service=" + logPick.value + "&n=200"); logOut.hidden = false; logOut.textContent = l.text || "(empty)"; logOut.scrollTop = logOut.scrollHeight; } catch (e) { fail(e); }
+    } }, h("option", { value: "" }, "show a log…"), h("option", { value: "litellm" }, "LiteLLM proxy.log"), h("option", { value: "portkey" }, "Portkey gateway.log"));
+    fill(view, svcs, diagram, h("h2", null, "Models by tier, in LiteLLM's order"), table,
+      h("h2", null, "Try it"), h("div", { class: "gw-tools" }, via, model, prompt, testBtn), testOut,
+      h("h2", null, "Verify"), h("div", { class: "gw-tools" }, verifyBtn, logPick), verifyOut, logOut);
+
+    async function load() {
+      const d = await api("gateway/diagram");
+      fill(svcs, Object.keys(d.services || {}).map(function (name) {
+        const s = d.services[name] || {};
+        return h("div", { class: "card svc-card" }, h("strong", null, name), badge(s.healthy ? "up" : "down", s.healthy ? "badge--ok" : "badge--bad"),
+          h("span", { class: "muted" }, (s.host || "127.0.0.1") + ":" + (s.port || d.ports[name]) + (s.launchd && s.launchd.state ? " · launchd " + s.launchd.state : "")),
+          h("button", { class: "btn btn--small", onclick: async function () {
+            try { toast("Restarting " + name + "…"); await api("gateway/restart", { service: name }); toast(name + " restarted."); load(); } catch (e) { fail(e); }
+          } }, "Restart"));
+      }));
+      try {
+        const m = await loadMermaid();
+        const r = await m.render("gwdiag" + Date.now(), d.mermaid);
+        diagram.innerHTML = r.svg;  // the SVG Mermaid drew from text this server generated
+      } catch (e) {
+        fill(diagram, h("pre", { class: "code code--small" }, d.mermaid), h("div", { class: "error" }, "Could not draw it: " + e.message));
+      }
+      const models = d.models.slice().sort(function (a, b) { return (a.tier > b.tier) - (a.tier < b.tier) || (a.order || 99) - (b.order || 99); });
+      fill(table, rows(models, [["Tier", "tier"], ["#", "order"], ["Model", "id"],
+        ["Providers, in order", function (m) { return m.providers.join(" → ") + (m.unavailable.length ? " · off: " + m.unavailable.join(", ") : ""); }],
+        ["Last " + d.hours + "h", function (m) { return m.rate && m.rate.n ? m.rate.ok + "/" + m.rate.n + " ok" + (m.rate.rl ? " · " + m.rate.rl + " rate-limited" : "") : "no calls"; }]]));
+    }
+    showVerify().catch(function () { /* no verify yet */ });
+    const stop = every(60000, function () { return load().catch(fail); });
+    return function () { stop(); clearTimeout(verifyTimer); };
   }
 })();

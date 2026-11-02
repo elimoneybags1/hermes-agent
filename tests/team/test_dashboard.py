@@ -1,4 +1,4 @@
-"""integrations/dashboard/server.py: edits go through build.py, keys stay masked, requests are guarded.
+"""team/gatewayctl.py: edits go through build.py, keys stay masked, the gateway is verified.
 
 Runs against a copy of the real catalog.json and fake .env files under the
 per-test TEAM_STATE; restarts and launchd are stubbed, so nothing running is touched.
@@ -6,28 +6,16 @@ per-test TEAM_STATE; restarts and launchd are stubbed, so nothing running is tou
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import threading
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import pytest
 
+from team import gatewayctl as dash
+
 ROOT = Path(__file__).resolve().parent.parent.parent
-SERVER = ROOT / "integrations" / "dashboard" / "server.py"
 REAL_CATALOG = ROOT / "integrations" / "portkey" / "catalog.json"
-
-
-def _load():
-    spec = importlib.util.spec_from_file_location("team_dashboard", SERVER)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-dash = _load()
 
 
 @pytest.fixture
@@ -144,49 +132,6 @@ def test_overview_carries_no_key(setup):
     body = json.dumps(dash.overview())
     for v in list(setup["keys"].values()) + ["sk-master-abcdefghijklmnop"]:
         assert v not in body
-
-
-@pytest.fixture
-def served(setup):
-    dash.Handler.token = "tok"
-    httpd = dash.ThreadingHTTPServer(("127.0.0.1", 0), dash.Handler)
-    dash.Handler.port = httpd.server_address[1]
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    yield httpd.server_address[1]
-    httpd.shutdown()
-
-
-def _req(port, path, headers=None, body=None):
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode() if body is not None else None,
-        method="POST" if body is not None else "GET", headers=headers or {},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status, r.read().decode()
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode()
-
-
-def test_http_guards_host_origin_and_token(served):
-    port = served
-    status, html = _req(port, "/")
-    assert status == 200 and '"tok"' in html and "__TEAM_TOKEN__" not in html
-    assert _req(port, "/api/overview")[0] == 403
-    assert _req(port, "/api/overview", {"x-team-token": "nope"})[0] == 403
-    assert _req(port, "/api/overview", {"x-team-token": "tok", "host": "evil.example:80"})[0] == 403
-    assert _req(port, "/api/check", {"x-team-token": "tok", "origin": "http://evil.example"}, {"catalog": {}})[0] == 403
-    status, body = _req(port, "/api/overview", {"x-team-token": "tok"})
-    assert status == 200 and json.loads(body)["drift"]["ok"]
-
-
-def test_http_check_reports_refusals_as_400(served, setup):
-    cat = json.loads(setup["path"].read_text())
-    status, body = _req(served, "/api/check", {"x-team-token": "tok", "content-type": "application/json"}, {"catalog": cat})
-    assert status == 200 and json.loads(body)["changes"] == {"added": [], "changed": [], "removed": []}
-    cat["blocked_providers"]["groq"] = "test"
-    status, body = _req(served, "/api/check", {"x-team-token": "tok"}, {"catalog": cat})
-    assert status == 400 and "groq" in json.loads(body)["error"]
 
 
 def test_verify_tests_every_routed_pair_retries_once_and_saves(setup, monkeypatch):

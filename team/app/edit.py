@@ -185,14 +185,12 @@ _gw = None
 
 
 def gateway(root: Path):
-    """integrations/dashboard/server.py, loaded once: build.py's checks, keys, restarts, probes."""
+    """team/gatewayctl.py, loaded once: build.py's checks, keys, restarts, probes, verify."""
     global _gw
     if _gw is None:
-        spec = importlib.util.spec_from_file_location(
-            "team_gateway_dashboard", Path(root) / "integrations" / "dashboard" / "server.py")
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        _gw = mod
+        from team import gatewayctl
+
+        _gw = gatewayctl
     return _gw
 
 

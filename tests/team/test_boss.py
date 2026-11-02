@@ -459,33 +459,6 @@ def test_the_aide_is_a_free_read_only_role_the_lead_never_assigns(team):
     assert "HANDOFF:" in soul
 
 
-def test_the_tab_api(team):
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    spec = importlib.util.spec_from_file_location(
-        "team_plugin_api", REPO / "plugins" / "team" / "dashboard" / "plugin_api.py"
-    )
-    api = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(api)
-    app = FastAPI()
-    app.include_router(api.router, prefix="/api/plugins/team")
-    client = TestClient(app)
-    p = propose(team, draft=False, goals=[{"goal": "a"}, {"goal": "b"}])
-    other = ledger.create_decision(team["conn"], "team", "Retry goal 9?", "ctx", ["yes", "no"], "yes")
-    data = client.get("/api/plugins/team/inbox").json()
-    assert [c["headline"] for c in data["plans"]] == ["Make VALUE two."]
-    assert [d["id"] for d in data["decisions"]] == [other]  # goal cards are in the plan, not here
-    assert client.post(f"/api/plugins/team/plans/{p['id']}/goals/2/skip").status_code == 200
-    assert client.post(f"/api/plugins/team/plans/{p['id']}/approve").json()["goals"] == [1]
-    assert client.post(f"/api/plugins/team/plans/{p['id']}/approve").status_code == 409
-    assert ledger.get_decision(team["conn"], p["goals"][0]["decision_id"])["answer"] == "approve"
-    assert ledger.get_decision(team["conn"], p["goals"][1]["decision_id"])["status"] == "dismissed"
-    client.post(f"/api/plugins/team/decisions/{other}/answer", json={"answer": "no"})
-    assert ledger.get_decision(team["conn"], other)["answer"] == "no"
-    assert json.loads((REPO / "plugins" / "team" / "dashboard" / "manifest.json").read_text())["tab"]["path"] == "/team"
-
-
 def test_flow_moves_each_goal_from_boss_to_landed(team):
     p = propose(team)
     [plan] = boss.flow(team["conn"])

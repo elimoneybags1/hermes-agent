@@ -357,3 +357,30 @@ select { border: 1px solid var(--line); background: var(--panel-2); border-radiu
   .pane--board { height: auto; }
   .cols, .tiles { grid-template-columns: 1fr; }
 }
+
+/* ---------- Agents ---------- */
+.agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); gap: 0.7rem; margin: 0.6rem 0 1.2rem; }
+.agent .spacer { flex: 1; }
+.agent--bad { border-color: var(--bad); }
+.rate { display: flex; gap: 0.4rem; align-items: baseline; font-variant-numeric: tabular-nums; }
+.rate-n { font-weight: 700; font-size: 1.05rem; }
+.agents-waiting:empty { display: none; }
+.pipelines .stage { white-space: nowrap; }
+.table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+.table th, .table td { text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.table th { color: var(--ink-2); font-weight: 600; }
+.propose { gap: 0.6rem; max-width: 60rem; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+.form-grid input, .form-grid select, .propose textarea, .propose input { width: 100%; box-sizing: border-box; }
+.check { display: inline-flex; align-items: center; gap: 0.15rem; font-size: 0.85rem; }
+
+/* ---------- Gateway ---------- */
+.gw-services { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.6rem; }
+.svc-card { flex-direction: row; align-items: center; gap: 0.6rem; }
+.diagram { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 0.6rem; overflow: auto; margin-bottom: 0.8rem; }
+.diagram svg { max-width: 100%; height: auto; }
+.gw-tools { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0.4rem 0; }
+.gw-tools input[type=text] { min-width: 14rem; }
+.gw-out:empty { display: none; }
+.gw-log { max-height: 24rem; overflow: auto; }
+.pick { margin-left: auto; }

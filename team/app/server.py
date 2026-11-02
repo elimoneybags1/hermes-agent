@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 from team import board, boss, catalog, ledger, targets, usage
 from team.app import chat as chat_mod
-from team.app import edit
+from team.app import edit, views
 
 STATIC = Path(__file__).resolve().parent / "static"
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -50,9 +50,10 @@ class App:
         self.token = secrets.token_urlsafe(24)
 
     def get(self, path: str, query: dict) -> dict:
+        target = query.get("target", [""])[0] or None
         if path == "/api/board":
             with _conn() as conn:
-                return board.board(conn, self.root)
+                return board.board(conn, self.root, target=target)
         if path == "/api/inbox":
             return self.inbox()
         if path == "/api/chat":
@@ -61,8 +62,26 @@ class App:
             return edit.roster(self.root, _cat())
         if path == "/api/team/file":
             return edit.read(self.root, query.get("path", [""])[0])
+        if path == "/api/agents":
+            with _conn() as conn:
+                return views.agents(self.root, conn, _cat(), target)
         if path == "/api/gateway":
             return edit.gateway(self.root).overview()
+        if path == "/api/gateway/diagram":
+            gw = edit.gateway(self.root)
+            cat = json.loads(gw.catalog_text())
+            return views.gateway_diagram(cat, gw.service_status(cat))
+        if path == "/api/gateway/recent":
+            gw = edit.gateway(self.root)
+            return {"requests": edit._gw_call(gw.recent, min(int(query.get("n", ["100"])[0]), 1000))}
+        if path == "/api/gateway/log":
+            gw = edit.gateway(self.root)
+            name = query.get("service", [""])[0]
+            if name not in gw.SERVICES:
+                raise edit.EditError("service must be portkey or litellm")
+            return {"service": name, "text": gw.tail_log(name, min(int(query.get("n", ["200"])[0]), 2000))}
+        if path == "/api/gateway/verify":
+            return edit._gw_call(edit.gateway(self.root).verify_status)
         if path == "/api/history":
             return {"changes": edit.history(self.root)}
         if path == "/api/usage":
@@ -93,13 +112,22 @@ class App:
             return edit.gateway_review(self.root, d.get("catalog"))
         if path == "/api/gateway/apply":
             return edit.gateway_apply(self.root, d.get("catalog"), str(d.get("base")))
-        if path in ("/api/gateway/key", "/api/gateway/restart", "/api/gateway/probe"):
+        if path in ("/api/gateway/key", "/api/gateway/restart", "/api/gateway/probe", "/api/gateway/test", "/api/gateway/verify"):
             gw = edit.gateway(self.root)
             if path.endswith("key"):
                 return edit._gw_call(gw.save_key, str(d.get("file", "")), str(d.get("name", "")), str(d.get("value", "")))
             if path.endswith("restart"):
                 return edit._gw_call(gw.restart, str(d.get("service", "")), json.loads(gw.catalog_text()))
+            if path.endswith("test"):
+                return edit._gw_call(
+                    gw.send_test, str(d.get("via", "")), str(d.get("model", "")),
+                    str(d.get("prompt") or gw.PROBE_PROMPT), int(d.get("max_tokens") or 256),
+                )
+            if path.endswith("verify"):
+                return edit._gw_call(gw.start_verify, bool(d.get("include_unavailable")))
             return edit._gw_call(gw.probe, str(d.get("provider", "")))
+        if path == "/api/agents/propose":
+            return self.propose_agent(d)
         if path == "/api/undo":
             return edit.undo(self.root, str(d.get("commit")), _cat())
         raise edit.EditError("not found", 404)
@@ -116,6 +144,29 @@ class App:
             plans = boss.flow(conn, limit=30)
         plans.sort(key=lambda c: (c["status"] != "open", -c["id"]))
         return {"plans": plans, "decisions": decisions, "waiting": boss.waiting()}
+
+    def propose_agent(self, d: dict) -> dict:
+        """Eli proposes an agent from the Agents page: the same path as the boss's tool, so the
+        role goes on a branch, is validated, and lands on trial once he approves the card."""
+        names = [t["name"] for t in targets.list_targets()]
+        target = str(d.get("target") or "") or (names[0] if names else "")
+        if not target:
+            raise edit.EditError("attach a target first")
+        skills = [{"name": str(s.get("name") or ""), "content": str(s.get("content") or "")} for s in d.get("skills") or [] if isinstance(s, dict)]
+        with _conn() as conn:
+            try:
+                r = boss.propose_agent(
+                    self.root, conn, target,
+                    str(d.get("name") or ""), str(d.get("title") or ""), str(d.get("does") or ""),
+                    str(d.get("graded_by") or ""), str(d.get("gate") or ""),
+                    [str(t) for t in d.get("tools") or []], [str(c) for c in d.get("candidates") or []],
+                    str(d.get("soul") or ""), str(d.get("why") or "proposed by Eli from the Agents page"),
+                    skills=skills, extends=str(d.get("extends") or "") or None, cat=_cat(),
+                    log=lambda _m: None,
+                )
+            except boss.BossError as e:
+                raise edit.EditError(str(e)) from None
+        return r
 
     def usage(self, query: dict) -> dict:
         """Return usage breakdown for a target."""
@@ -233,7 +284,7 @@ def handler(app: App, hosts: set[str]):
                 return self._run(lambda: app.get(url.path, parse_qs(url.query)))
             name = "index.html" if url.path in ("/", "/index.html") else url.path.removeprefix("/static/")
             f = (STATIC / name).resolve()
-            if f.parent != STATIC or not f.is_file():
+            if STATIC not in f.parents or not f.is_file():
                 return self._json(404, {"error": "not found"})
             body = f.read_bytes()
             if name == "index.html":
