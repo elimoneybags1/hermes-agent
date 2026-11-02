@@ -65,7 +65,9 @@ BerriAI `main` because the v1.106.4 release line carries 148 commits of
 LiteLLM's own that are not on their `main`, plus Team's one. `TEAM.md` at the
 root of each fork says which files do the handshake. The Rust connection
 layer, `integrations/gateway-rs/`, needs the catalog, LiteLLM's `usage.db` and
-Portkey's `requests.jsonl`, so it lives here and not in either fork.
+Portkey's `requests.jsonl`, so it lives here and not in either fork. It is
+**idle** (2026-11-02): no process, no launchd job, and `build.rs` has drifted
+from `build.py`; `integrations/portkey/build.py` is the generator that runs.
 
 The repository before the fresh start is tag `before-fresh-start`
 (`25b8aca`). `git checkout before-fresh-start` restores the whole old tree.
@@ -101,6 +103,7 @@ lines with `git -C . log --oneline -- <file>` and `grep -n '\[team\]' <file>`.
 | 2026-11-01 | `portkey/` | `src/providers/cohere/chatComplete.ts` | 39-40 | pass the whole message through, so `tool_calls` and `tool_call_id` survive instead of only `content` | same |
 | 2026-11-01 | `portkey/` | `src/types/requestBody.ts` | 273 | `ToolCall.extra_content.google.thought_signature` | same |
 | 2026-11-01 | `portkey/` | `src/providers/toolRoundTrip.test.ts` | new | 4 jest tests for the three provider changes | same |
+| 2026-11-02 | `litellm/` | `litellm/llms/openai/openai.py` (the three `for _ in range(2)` loops in `completion`, `acompletion`, `async_streaming`) | grep `[team]`, 9 lines | a provider 422 that `drop_params` cannot cure was swallowed: the loop fell off and the function returned `None`, which the proxy served as a `null` 200 body or, on stream, a 500 `'NoneType' object has no attribute '__aiter__'` (143 worker calls on 2026-11-02). The last 422 is kept and raised after the loop. Reproduced and verified with a live Mistral request before and after | `[team] LiteLLM: raise an uncurable 422 instead of returning None` |
 
 Run the patch tests with
 `npx --prefix portkey jest --config portkey/jest.config.js --rootDir portkey src/team src/providers/toolRoundTrip`

@@ -742,6 +742,7 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
             if custom_llm_provider is not None and custom_llm_provider != "openai":
                 model_response.model = f"{custom_llm_provider}/{model}"
 
+            unprocessable = None  # [team] the last 422 drop_params could not cure; raised after the loop
             for _ in range(2):  # if call fails due to alternating messages, retry with reformatted message
                 try:
                     max_retries = inference_params.pop("max_retries", 2)
@@ -876,6 +877,7 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
                     ## check if body contains unprocessable params - related issue https://github.com/BerriAI/litellm/issues/4800
                     if litellm.drop_params is True or drop_params is True:
                         inference_params = drop_params_from_unprocessable_entity_error(e, inference_params)
+                        unprocessable = e  # [team]
                     else:
                         raise e
                     # e.message
@@ -907,6 +909,8 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
                         litellm.remove_index_from_tool_calls(messages=messages)
                     else:
                         raise e
+            if unprocessable is not None:  # [team] both tries 422'd: surface it; falling off returned None (a null body, a 500 on stream)
+                raise unprocessable
         except OpenAIError as e:
             raise e
         except Exception as e:
@@ -954,6 +958,7 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
             litellm_params=litellm_params,
             headers=headers or {},
         )
+        unprocessable = None  # [team] the last 422 drop_params could not cure; raised after the loop
         for _ in range(2):  # if call fails due to alternating messages, retry with reformatted message
             try:
                 openai_aclient: AsyncOpenAI = self._get_openai_client(
@@ -1030,6 +1035,7 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
                 ## check if body contains unprocessable params - related issue https://github.com/BerriAI/litellm/issues/4800
                 if litellm.drop_params is True or drop_params is True:
                     data = drop_params_from_unprocessable_entity_error(e, data)
+                    unprocessable = e  # [team]
                 else:
                     raise e
                 # e.message
@@ -1048,6 +1054,8 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
                     headers=error_headers,
                     body=exception_body,
                 )
+        if unprocessable is not None:  # [team] both tries 422'd: surface it; falling off returned None (a null body)
+            raise unprocessable
 
     def streaming(
         self,
@@ -1138,6 +1146,7 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
         )
         data["stream"] = True
         data.update(self.get_stream_options(stream_options=stream_options, api_base=api_base))
+        unprocessable = None  # [team] the last 422 drop_params could not cure; raised after the loop
         for _ in range(2):
             try:
                 openai_aclient: AsyncOpenAI = self._get_openai_client(
@@ -1184,6 +1193,7 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
                 ## check if body contains unprocessable params - related issue https://github.com/BerriAI/litellm/issues/4800
                 if litellm.drop_params is True or drop_params is True:
                     data = drop_params_from_unprocessable_entity_error(e, data)
+                    unprocessable = e  # [team]
                 else:
                     raise e
             except (
@@ -1227,6 +1237,8 @@ class OpenAIChatCompletion(BaseLLM, BaseOpenAILLM):
                             headers=error_headers,
                             body=exception_body,
                         )
+        if unprocessable is not None:  # [team] both tries 422'd: surface it; falling off returned None (a 500 on stream)
+            raise unprocessable
 
     def get_stream_options(self, stream_options: dict | None, api_base: str | None) -> dict:
         """
