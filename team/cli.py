@@ -150,7 +150,9 @@ def cmd_run(args) -> int:
         print(f"team run: {e}", file=sys.stderr)
         return 1
     try:
-        run.run_loop(ROOT, conn, once=args.once, interval=args.interval, only=only, boss_work=boss_work)
+        run.run_loop(
+            ROOT, conn, once=args.once, interval=args.interval, only=only, boss_work=boss_work, pin=args.pin,
+        )
     except KeyboardInterrupt:
         print("team run: stopped", file=sys.stderr)
     return 0
@@ -379,6 +381,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rn.add_argument("--no-boss", action="store_true", help="leave the boss's releases and reviews to another loop")
     rn.add_argument("--boss-only", action="store_true", help="only the boss's releases and reviews, no target")
+    rn.add_argument(
+        "--pin", action="store_true",
+        help="keep running the code this process started with; do not restart when the checkout changes",
+    )
     rn.set_defaults(func=cmd_run)
 
     lg = sub.add_parser("ledger", help="jobs and goals")

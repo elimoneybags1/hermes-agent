@@ -1721,12 +1721,15 @@ def run_loop(
     restart: Callable[[], None] | None = None,
     only: tuple[str, ...] | None = None,
     boss_work: bool = True,
+    pin: bool = False,
 ) -> None:
     """Tick until stopped; the interval is re-read from settings every tick.
 
     ``only`` restricts the loop to those targets (one ``team run --target X`` per target
     keeps a slow check on one from stalling the others); ``boss_work`` off leaves the
-    boss's releases and reviews to another process.
+    boss's releases and reviews to another process; ``pin`` keeps this process on the
+    code it started with instead of restarting when the checkout changes (a measurement
+    run while Team's own code is being edited).
 
     Between ticks nothing of this process is in flight (workers run under
     Hermes's kanban, the lead's draft is synchronous inside a tick), so when
@@ -1742,7 +1745,7 @@ def run_loop(
         loop.tick(only=only, boss_work=boss_work)
         if once:
             return
-        why = gateway.changed_since(root, born, sha)
+        why = None if pin else gateway.changed_since(root, born, sha)
         if why:
             loop.log(f"team run {why}; restarting with the checkout's code")
             (restart or _reexec)()
