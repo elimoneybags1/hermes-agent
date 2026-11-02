@@ -129,7 +129,8 @@ def _chat_stream_choice_text(chunks: Sequence[ModelResponseStream], index: int) 
 
 
 def _chat_stream_texts(chunks: Sequence[ModelResponseStream]) -> ServedTexts | None:
-    choice_count: Final = max((choice.index + 1 for chunk in chunks for choice in chunk.choices), default=0)
+    # [team] an error chunk (OpenRouter's finish_reason "error") carries choice.index None; it is choice 0
+    choice_count: Final = max(((choice.index or 0) + 1 for chunk in chunks for choice in chunk.choices), default=0)
     texts: Final = tuple(_chat_stream_choice_text(chunks, index) for index in range(choice_count))
     return texts if any(text is not None for text in texts) else None
 
