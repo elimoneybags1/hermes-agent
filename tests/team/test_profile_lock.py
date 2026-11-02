@@ -34,7 +34,7 @@ AUX_TASKS = (
 def test_base_config_is_locked():
     cfg = yaml.safe_load(BASE.read_text())
     assert profiles.audit(cfg) == []
-    assert cfg["model"] == {"provider": "litellm", "default": "tier-medium"}
+    assert cfg["model"] == {"provider": "litellm", "default": "tier-medium", "streaming": False}
     assert set(cfg["providers"]) == {"litellm"}
     lite = cfg["providers"]["litellm"]
     assert (

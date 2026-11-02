@@ -12,6 +12,10 @@
 model:
   provider: litellm
   default: tier-medium
+  # Non-streaming: a provider that fails mid-stream cannot be failed over by LiteLLM,
+  # and nobody watches a worker's tokens arrive. 11 of the 23 gateway failures after the
+  # 2026-11-02 restart were OpenRouter streams ending in finish_reason "error".
+  streaming: false
 
 providers:
   litellm:

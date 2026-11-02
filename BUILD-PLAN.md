@@ -213,6 +213,41 @@ schema, so they are finished after it.
 - Fix the Usage page if its `fill()` calls overwrite each other
   (`app.js:1078`).
 
+## Added by Eli during the build (2026-11-02)
+
+Folded into the phases above where they fit; the rest is the layer after this
+build, on the same roster and gate mechanism.
+
+- **Pre-built agents for specific coding work** (UI, backend, bug fixes, and
+  more as repos need them): `team_propose_agent` plus `extends` is the
+  mechanism; the first three are seeded as trial roles once the review stage
+  has numbers (Phase 3 exit). Each is `implement` plus skills and models; a
+  genuinely different gate is a Team code change.
+- **A small-model scout when a repo is attached.** The onboarding worker and
+  the lead's briefing should read a repo through a small model's summary, not
+  by pulling hundreds of thousands of tokens into Claude. `team/review`
+  (chunk → small-model summaries → `read_summary`) already does this for a
+  cloned repo; Phase 4 wires it into `lead.briefing` and the onboarding brief
+  as the first thing read, and records the tokens it saved next to the
+  tokens it cost.
+- **Model routing tuned from the ledger, not guessed.** `role.models.candidates`
+  are tried in order today. Phase 5 adds `models.choose`: per role and target,
+  candidates ranked by pass rate over work attempts (infra left out), with
+  some exploration so a new free model gets real chances, every choice
+  recorded with its reason; pinnable. LiteLLM keeps choosing the deployment
+  inside a tier; Team chooses the tier or model per attempt.
+- **Routines: runner-style watchers that are not GitHub's.** Per target, a
+  recurring goal on an interval ("run the suite and fix what breaks" daily,
+  "security scan the diff since last run", "dependency audit" weekly). The
+  loop reads `$TEAM_STATE/targets/<t>/routines.toml` each tick and starts the
+  goal when due, through the normal pipeline and landing policy. Phase 5.
+- **Business agents** (email triage into a database and a morning summary,
+  drafted replies, sales and marketing work): the layer after this build.
+  They are roles with non-code gates (a draft is done when Eli approves it;
+  a summary is done when every item cites its source), so the gate registry
+  grows before any such role exists. Nothing here changes to make room for
+  it; it is why gates are a registry and roles are files.
+
 ## Critical files
 
 `team/run.py`, `team/grade.py`, `team/lead.py`, `team/roles.py`,
@@ -256,3 +291,27 @@ Appended by the build session, one dated line per phase exit with its number.
   infrastructure) is measured on `team-sandbox` goals in Phase 2; the ledger
   now records `jobs.failure_kind` for it. Backfill over the existing ledger:
   2 of 19 finished failures classified infra.
+- 2026-11-02 Phase 2 engine landed (`5f52b1b62b`): types, stages, verify,
+  acceptance, no-op refusal, risk-based landing, per-target loops and locks;
+  362 tests. `team-sandbox` attached (a clone of Team under
+  `$TEAM_STATE/acceptance/`, check through the main checkout's environment).
+  First sandbox batch (10 goals): 3 of 5 graded attempts died because the
+  lead wrote `pytest …` acceptance commands and `pytest` is not on the
+  worktree's PATH; batch superseded, `test_runner` added to targets and the
+  lead's prompt, bare test tools refused.
+- 2026-11-02 Phase 3 landed (`707c5d0523`): review, test-write, security
+  roles with gates; review active. Second sandbox batch: goal 42 landed
+  through implement → verify → review, the reviewer's second attempt giving
+  a grounded `land` verdict (its first died of the gateway). Of the batch's
+  first 9 graded worker attempts, 4 passed, 0 failed on their work, 5 died
+  of infrastructure (`custom:litellm didn't answer`): OpenRouter mid-stream
+  errors on `north-mini-code` and a bad Cohere fallback. Since the 16:22Z
+  LiteLLM restart the gateway's own failure rate is 23/960 = 2.4%
+  (`usage.db`); the Cohere fallback is now off and a second LiteLLM stream
+  bug patched (`served_output_texts`). Phase 1's exit on *attempts* is still
+  to be read off the next 30 sandbox attempts.
+- 2026-11-02 Phase 4 mechanics (`cf77e0b980`): per-target overlays and the
+  onboarding role whose gate proves the check it proposes. StudyApp itself
+  waits on Eli allowing the path. Phase 5 landed: per-role replay sets,
+  the post-adoption watch, cause tags and the retrospective, agents the
+  boss can propose (397 tests).

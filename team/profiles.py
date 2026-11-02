@@ -79,11 +79,15 @@ def role_config(root: Path, role: dict, cat: dict | None = None) -> dict:
     """The base lock with this role's overrides applied."""
     cfg = copy.deepcopy(base_config(root))
     harness = role.get("runs_on", {}).get("harness", "hermes")
+    # The base's model block carries the lock's request shape (streaming off); a role sets
+    # only who answers.
+    keep = {k: v for k, v in (cfg.get("model") or {}).items() if k not in ("provider", "default")}
     if harness == "hermes":
         spec = roles.candidate(role, 1)
         if spec:
             choice = catalog.resolve(spec, cat) if cat is not None else None
             cfg["model"] = {
+                **keep,
                 "provider": "litellm",
                 "default": choice.model if choice else spec,
             }
@@ -98,7 +102,7 @@ def role_config(root: Path, role: dict, cat: dict | None = None) -> dict:
             "models": [model],
             "session_affinity_header": "x-litellm-session-id",
         }
-        cfg["model"] = {"provider": "team-subscription", "default": model}
+        cfg["model"] = {**keep, "provider": "team-subscription", "default": model}
     tools = list(role.get("tools") or [])
     cfg.setdefault("platform_toolsets", {})["cli"] = sorted(
         set(tools) | (set(LEARNING_TOOLSETS) if harness == "hermes" else set())

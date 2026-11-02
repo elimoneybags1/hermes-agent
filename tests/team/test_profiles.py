@@ -58,7 +58,7 @@ def test_role_config_applies_overrides(root):
         "models": {"candidates": ["nvidia:z-ai/glm-5.3"]},
     }
     cfg = profiles.role_config(root, role, CATALOG)
-    assert cfg["model"] == {"provider": "litellm", "default": "z-ai/glm-5.3"}
+    assert cfg["model"] == {"provider": "litellm", "default": "z-ai/glm-5.3", "streaming": False}
     assert cfg["platform_toolsets"]["cli"] == [
         "file",
         "memory",
@@ -77,7 +77,7 @@ def test_role_config_applies_overrides(root):
         "models": {"candidates": []},
     }
     cfg = profiles.role_config(root, boss)
-    assert cfg["model"] == {"provider": "team-subscription", "default": "claude-opus-5-5"}
+    assert cfg["model"] == {"provider": "team-subscription", "default": "claude-opus-5-5", "streaming": False}
     assert cfg["providers"]["team-subscription"]["key_env"] == "LITELLM_MASTER_KEY"
     assert cfg["providers"]["team-subscription"]["base_url"] == cfg["providers"]["litellm"]["base_url"]
     assert cfg["platform_toolsets"]["cli"] == ["kanban", "team"]
