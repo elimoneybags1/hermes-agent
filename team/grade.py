@@ -354,5 +354,8 @@ def commit_leftovers(
         _must(_git(wt, "add", "--", *mine, runner=runner), "git add failed")
     if _git(wt, "diff", "--cached", "--quiet", runner=runner).returncode == 0:
         return None
-    _must(_git(wt, "commit", "-q", "-m", message, runner=runner), "git commit failed")
+    # --no-verify: the target's commit hooks (lint) must not stop Team's own rescue
+    # commit; the check that follows grades the work, and a lint failure fails the
+    # attempt with the lint's output instead of an error that repeats every tick.
+    _must(_git(wt, "commit", "-q", "--no-verify", "-m", message, runner=runner), "git commit failed")
     return head(wt, runner)

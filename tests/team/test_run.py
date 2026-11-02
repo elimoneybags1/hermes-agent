@@ -805,6 +805,9 @@ def test_commit_leftovers_takes_tracked_edits_and_owned_new_files_only(tmp_path)
     (repo / "app.py").write_text("1\n")
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "base")
+    hook = repo / ".git" / "hooks" / "pre-commit"  # the target's lint hook must not stop the rescue
+    hook.write_text("#!/bin/sh\necho lint failed >&2\nexit 1\n")
+    hook.chmod(0o755)
     assert grade.commit_leftovers(repo, "nothing", ["team/"]) is None
     (repo / "app.py").write_text("2\n")
     (repo / "team").mkdir()
