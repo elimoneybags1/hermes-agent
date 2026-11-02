@@ -133,11 +133,12 @@ def cmd_ledger(args) -> int:
         _print({"jobs": jobs, "goals": goals})
         return 0
     passes, total = ledger.pass_rate(conn, args.target)
-    print(f"pass {passes}/{total}")
+    kinds = ledger.failure_counts(conn, args.target)
+    print(f"pass {passes}/{total}" + (f" · {kinds['infra']} died of infrastructure" if kinds["infra"] else ""))
     rates = ledger.order_rates(conn, args.target)
     print(
         "implement: "
-        + " · ".join(f"{name} {p}/{n}" for name, (p, n) in rates.items())
+        + " · ".join(f"{name} {ledger.rate_line(*r)}" for name, r in rates.items())
     )
     for g in goals:
         state = (

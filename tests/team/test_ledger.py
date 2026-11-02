@@ -45,6 +45,7 @@ def test_init_creates_every_table_with_the_agreed_columns(conn):
         "model_choice",
         "part_id",
         "order_id",
+        "failure_kind",
     ]
     assert cols("orders") == [
         "id",
@@ -401,11 +402,49 @@ def test_orders_version_per_goal_and_rates_split_by_order(conn):
     without = ledger.start_job(conn, "t", "c", "implement", "v")
     ledger.finish_job(conn, with_order, "pass", "check")
     ledger.finish_job(conn, without, "fail", "check")
-    assert ledger.order_rates(conn) == {"with order": (1, 1), "without": (0, 1)}
+    assert ledger.order_rates(conn) == {"with order": (1, 1, 0), "without": (0, 1, 0)}
     ledger.add_diagnosis(conn, goal, without, "no commit", "commit it", "retry")
     assert ledger.list_diagnoses(conn, goal)[0]["action"] == "retry"
     with pytest.raises(ValueError):
         ledger.add_diagnosis(conn, goal, None, "x", "y", "shrug")
+
+
+def test_failures_are_infra_or_work(tmp_path):
+    conn = ledger.connect(tmp_path / "t.db")
+    ledger.init(conn)
+    # A graded check is the work's fault, whatever the detail says.
+    assert ledger.classify_failure("check", "Error code: 500 in the test output", []) == "work"
+    # The grader's detail names the gateway, a quota or the runtime.
+    assert ledger.classify_failure("claude", "claude run failed: usage_limit_reached", []) == "infra"
+    assert ledger.classify_failure("lead", "lead call failed: hermes: no dependency environment", []) == "infra"
+    assert ledger.classify_failure("lead", "lead gave no structured answer", []) == "work"
+    # Or the attempt's own calls do: half or more failed, at least one of them on infrastructure.
+    dead = [{"ok": 0, "error": "{'type': 'InternalServerError', 'message': 'Error code: 500'}"}] * 2
+    alive = [{"ok": 1, "error": None}]
+    assert ledger.classify_failure("kanban", "kanban gave up after timed_out: Iteration budget", dead + alive) == "infra"
+    assert ledger.classify_failure("kanban", "kanban gave up after timed_out: Iteration budget", dead + alive * 3) == "work"
+
+    passed = ledger.start_job(conn, "team", "c", "implement", "v", task_ref="t_ok")
+    work = ledger.start_job(conn, "team", "c", "implement", "v", task_ref="t_work")
+    infra = ledger.start_job(conn, "team", "c", "implement", "v", task_ref="t_dead")
+    for _ in range(2):
+        ledger.record_call(conn, infra, "litellm", "tier-medium", "implement", 10, 0, 5, False,
+                           error="Error code: 502 - bad gateway", task_ref="t_dead")
+    ledger.finish_job(conn, passed, "pass", "check", "ok")
+    ledger.finish_job(conn, work, "fail", "check", "1 failed")
+    ledger.finish_job(conn, infra, "error", "kanban", "kanban gave up after crashed: worker exited")
+    kinds = {j["task_ref"]: j["failure_kind"] for j in ledger.list_jobs(conn)}
+    assert kinds == {"t_ok": None, "t_work": "work", "t_dead": "infra"}
+    assert ledger.failure_counts(conn, "team") == {"infra": 1, "work": 1}
+    assert ledger.pass_rate(conn, "team") == (1, 3)  # the raw count still includes every finished attempt
+    assert ledger.order_rates(conn, "team")["without"] == (1, 2, 1)
+    assert ledger.rate_line(1, 2, 1) == "1/2 (+1 infra)" and ledger.rate_line(3, 3) == "3/3"
+
+    # A ledger written before the column existed is classified once on open.
+    conn.execute("UPDATE jobs SET failure_kind = NULL")
+    conn.commit()
+    assert ledger.backfill_failure_kinds(conn) == 2
+    assert ledger.failure_counts(conn, "team") == {"infra": 1, "work": 1}
 
 
 def test_call_affinity_migration_preserves_existing_history(conn):

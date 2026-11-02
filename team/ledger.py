@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone, UTC
 from pathlib import Path
@@ -281,8 +282,14 @@ def init(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE calls ADD COLUMN goal_id INTEGER REFERENCES goals(id)")
             conn.execute("CREATE INDEX IF NOT EXISTS calls_goal_id ON calls(goal_id)")
 
+        if "failure_kind" not in have:
+            # 'infra' (the gateway, a quota, the runtime) or 'work' (the attempt was wrong);
+            # set by finish_job so a bad gateway day never counts against an agent.
+            conn.execute("ALTER TABLE jobs ADD COLUMN failure_kind TEXT")
+
     # Backfill goal_id for existing calls
     backfill_call_goals(conn)
+    backfill_failure_kinds(conn)
 
 
 def _check(value: str, allowed: tuple[str, ...], what: str) -> None:
@@ -332,6 +339,36 @@ def start_job(
     return cur.lastrowid
 
 
+FAILURE_KINDS = ("infra", "work")
+
+# What the gateway, a provider, a quota or the runtime says when an attempt died of them
+# rather than of its own work. Matched against the grader's detail and the attempt's call errors.
+_INFRA = re.compile(
+    r"Error code: 5\d\d|InternalServerError|ServiceUnavailable|APIConnectionError|Connection error"
+    r"|Error code: 429|RateLimit|rate limit|usage_limit|quota"
+    r"|__aiter__|duplicate field|extra_forbidden|thought_signature|Invalid response received from"
+    r"|no dependency environment|not the loopback gateway|max_retries_exhausted|timed out at|Timeout",
+    re.IGNORECASE,
+)
+
+
+def classify_failure(grader: str | None, detail: str | None, calls: list[dict]) -> str:
+    """'infra' when the attempt died of the gateway, a provider, a quota or the runtime; else 'work'.
+
+    A graded check is always 'work': the code ran and was wrong. Otherwise the grader's
+    detail decides, and failing that the attempt's own calls: half or more failed, and
+    at least one of them with an infrastructure error.
+    """
+    if grader == "check":
+        return "work"
+    if _INFRA.search(detail or ""):
+        return "infra"
+    bad = [c for c in calls if not c.get("ok")]
+    if calls and len(bad) * 2 >= len(calls) and any(_INFRA.search(c.get("error") or "") for c in bad):
+        return "infra"
+    return "work"
+
+
 def finish_job(
     conn: sqlite3.Connection,
     job_id: int,
@@ -339,16 +376,49 @@ def finish_job(
     grader: str,
     grader_detail: str | None = None,
 ) -> None:
-    """Record a job's graded outcome. A job can only be finished once."""
+    """Record a job's graded outcome, and for a failure which kind it was. A job can only be finished once."""
     _check(outcome, OUTCOMES, "outcome")
+    kind = None if outcome == "pass" else classify_failure(grader, grader_detail, calls_for(conn, job_id=job_id))
     with conn:
         cur = conn.execute(
-            "UPDATE jobs SET ended = ?, outcome = ?, grader = ?, grader_detail = ?"
+            "UPDATE jobs SET ended = ?, outcome = ?, grader = ?, grader_detail = ?, failure_kind = ?"
             " WHERE id = ? AND ended IS NULL",
-            (_now(), outcome, grader, grader_detail, job_id),
+            (_now(), outcome, grader, grader_detail, kind, job_id),
         )
     if cur.rowcount != 1:
         raise LookupError(f"no unfinished job with id {job_id}")
+
+
+def backfill_failure_kinds(conn: sqlite3.Connection) -> int:
+    """Classify finished failures written before failure_kind existed; returns how many were set."""
+    rows = conn.execute(
+        "SELECT id, grader, grader_detail FROM jobs"
+        " WHERE ended IS NOT NULL AND outcome != 'pass' AND failure_kind IS NULL"
+    ).fetchall()
+    with conn:
+        for r in rows:
+            kind = classify_failure(r["grader"], r["grader_detail"], calls_for(conn, job_id=r["id"]))
+            conn.execute("UPDATE jobs SET failure_kind = ? WHERE id = ?", (kind, r["id"]))
+    return len(rows)
+
+
+def failure_counts(
+    conn: sqlite3.Connection, target: str | None = None, role: str | None = None
+) -> dict[str, int]:
+    """Finished failures by kind: {'infra': n, 'work': n}."""
+    sql = "SELECT failure_kind, COUNT(*) FROM jobs WHERE ended IS NOT NULL AND outcome != 'pass'"
+    args: list = []
+    if target is not None:
+        sql += " AND target = ?"
+        args.append(target)
+    if role is not None:
+        sql += " AND role = ?"
+        args.append(role)
+    sql += " GROUP BY failure_kind"
+    out = {k: 0 for k in FAILURE_KINDS}
+    for kind, n in conn.execute(sql, args):
+        out[kind or "work"] += int(n)
+    return out
 
 
 def set_task_ref(conn: sqlite3.Connection, job_id: int, task_ref: str) -> None:
@@ -1101,21 +1171,30 @@ def list_diagnoses(conn: sqlite3.Connection, goal_id: int) -> list[dict]:
 
 def order_rates(
     conn: sqlite3.Connection, target: str | None = None, role: str = "implement"
-) -> dict[str, tuple[int, int]]:
-    """(passes, finished) for a role's attempts with a lead's order and without."""
+) -> dict[str, tuple[int, int, int]]:
+    """(passes, work attempts, infra deaths) for a role's attempts with a lead's order and without.
+
+    An attempt that died of infrastructure is counted apart, not as a failed work attempt.
+    """
     out = {}
     for name, cond in (("with order", "order_id IS NOT NULL"), ("without", "order_id IS NULL")):
         sql = (
-            "SELECT COALESCE(SUM(outcome = 'pass'), 0), COUNT(*) FROM jobs"
+            "SELECT COALESCE(SUM(outcome = 'pass'), 0), COUNT(*),"
+            " COALESCE(SUM(failure_kind = 'infra'), 0) FROM jobs"
             f" WHERE role = ? AND outcome IS NOT NULL AND {cond}"
         )
         args: list = [role]
         if target is not None:
             sql += " AND target = ?"
             args.append(target)
-        p, n = conn.execute(sql, args).fetchone()
-        out[name] = (int(p), int(n))
+        p, n, infra = conn.execute(sql, args).fetchone()
+        out[name] = (int(p), int(n) - int(infra), int(infra))
     return out
+
+
+def rate_line(p: int, n: int, infra: int = 0) -> str:
+    """'14/17' or '14/17 (+2 infra)': passes over work attempts, infra deaths beside them."""
+    return f"{p}/{n}" + (f" (+{infra} infra)" if infra else "")
 
 
 # --- harness reviews ----------------------------------------------------------

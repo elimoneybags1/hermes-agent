@@ -768,7 +768,7 @@ def status(conn: sqlite3.Connection, target: str) -> str:
     rates = ledger.order_rates(conn, target)
     out.append(
         "implement attempts passed: "
-        + ", ".join(f"{name} {p}/{n}" for name, (p, n) in rates.items())
+        + ", ".join(f"{name} {ledger.rate_line(*r)}" for name, r in rates.items())
     )
     out += _usage_lines(conn, target)
     return "\n".join(out)
@@ -779,7 +779,11 @@ def findings(conn: sqlite3.Connection, target: str, limit: int = 40) -> str:
     targets.require(target)
     jobs = ledger.list_jobs(conn, target=target, limit=limit)
     failed = [j for j in jobs if j["outcome"] in ("fail", "error", "timeout") and j["role"] != "lead"]
-    out = [f"last {len(jobs)} jobs: {len(failed)} worker attempts failed"]
+    infra = sum(1 for j in failed if j.get("failure_kind") == "infra")
+    out = [
+        f"last {len(jobs)} jobs: {len(failed)} worker attempts failed"
+        f" ({len(failed) - infra} on their work, {infra} of infrastructure: gateway, quota, runtime)"
+    ]
     kinds = Counter(_line(j["grader_detail"], 50) for j in failed)
     out += [f"  {n}x {kind}" for kind, n in kinds.most_common(6)]
     lead_bad = [j for j in jobs if j["role"] == "lead" and j["outcome"] != "pass" and j["outcome"]]

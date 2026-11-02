@@ -88,8 +88,12 @@ def responders(conn, job):
 def findings(conn, jobs):
     groups = defaultdict(lambda: [0, 0])
     bases = defaultdict(lambda: [0, 0])
+    infra = 0
     for job in jobs:
         if job["outcome"] not in ("pass", "fail", "error", "timeout"):
+            continue
+        if job.get("failure_kind") == "infra":
+            infra += 1  # the gateway or a quota killed it: not evidence about the model
             continue
         route = (job.get("model_choice") or {}).get("spec") or "unknown"
         baseline = (job["role"], route)
@@ -103,7 +107,9 @@ def findings(conn, jobs):
             tally[0] += int(job["outcome"] == "pass")
             tally[1] += 1
     out = [
-        "Model outcomes (whole attempts; mixed responders grouped; small samples are not rankings):"
+        "Model outcomes (whole attempts; mixed responders grouped; small samples are not rankings"
+        + (f"; {infra} attempts that died of infrastructure left out" if infra else "")
+        + "):"
     ]
     for (role, route, name), (passed, total) in sorted(groups.items()):
         bp, bn = bases[(role, route)]
