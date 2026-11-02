@@ -285,3 +285,48 @@ def test_answering_the_boss_question_carries_the_answer_back(root, tmp_path, tea
     app.post(f"/api/decisions/{q2}/dismiss", {})
     c.drain()
     assert "dismissed your question" in c.view()["messages"][2]["text"]
+
+
+def test_usage_api_returns_the_breakdown_and_its_total_matches_the_models(root, tmp_path, team_state, monkeypatch):
+    """Test the GET /api/usage endpoint returns usage breakdown and total matches sum of by-model."""
+    # Monkeypatch list_targets to return ["team"]
+    monkeypatch.setattr(server.targets, "list_targets", lambda: [{"name": "team"}])
+    # Track what usage_breakdown is called with
+    recorded_target = None
+
+    def mock_usage_breakdown(conn, target):
+        nonlocal recorded_target
+        recorded_target = target
+        return {
+            "total": {"input": 30, "output": 7, "calls": 3},
+            "by_model": {
+                "a": {"input": 10, "output": 2, "calls": 1},
+                "unknown": {"input": 20, "output": 5, "calls": 2}
+            },
+            "by_role": {"implement": {"input": 30, "output": 7, "calls": 3}},
+            "by_goal": {"1": {"input": 30, "output": 7, "calls": 3}}
+        }
+    # Monkeypatch usage_breakdown
+    monkeypatch.setattr(server.usage, "usage_breakdown", mock_usage_breakdown)
+
+    # Build app
+    c = chat.Chat(tmp_path, popen=popen_with(Proc([])), aide=False)
+    app = server.App(root, chat=c)
+    # Call the endpoint
+    out = app.get("/api/usage", {})
+
+    # Assert the results
+    assert out["target"] == "team"
+    assert out["targets"] == ["team"]
+    assert recorded_target == "team"
+    assert out["total"]["input"] == sum(v["input"] for v in out["by_model"].values())
+    assert out["total"]["output"] == sum(v["output"] for v in out["by_model"].values())
+    assert out["total"]["calls"] == sum(v["calls"] for v in out["by_model"].values())
+
+    # Second case: empty targets list
+    monkeypatch.setattr(server.targets, "list_targets", list)
+
+    out = app.get("/api/usage", {})
+    assert out["target"] is None
+    assert out["targets"] == []
+    assert out["by_model"] == {}
