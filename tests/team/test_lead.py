@@ -141,6 +141,19 @@ GOAL = {
 }
 
 
+def test_a_bare_test_tool_is_refused_when_the_repo_has_a_runner(tree):
+    p = part(acceptance_cmd="pytest tests/test_app.py -q")
+    assert lead.validate_plan({"parts": [p]}, tree, MENU, 6, CATALOG)[1] == []  # no runner known: allowed
+    _, errors = lead.validate_plan({"parts": [p]}, tree, MENU, 6, CATALOG, test_runner="scripts/run_tests.sh {path}")
+    assert any("bare test tool" in e and "scripts/run_tests.sh {path}" in e for e in errors)
+    ok = part(acceptance_cmd="scripts/run_tests.sh tests/test_app.py --file-retries 0")
+    assert lead.validate_plan({"parts": [ok]}, tree, MENU, 6, CATALOG, test_runner="scripts/run_tests.sh {path}")[1] == []
+    grep = part(acceptance_cmd="grep -q 'VALUE = 2' app.py")
+    assert lead.validate_plan({"parts": [grep]}, tree, MENU, 6, CATALOG, test_runner="scripts/run_tests.sh {path}")[1] == []
+    prompt = lead.plan_prompt("g", "./check.sh", MENU, 6, test_runner="scripts/run_tests.sh {path}")
+    assert "scripts/run_tests.sh {path}" in prompt and "bare `pytest" in prompt
+
+
 def test_render_carries_the_order_and_the_code(tree):
     order = lead.validate_plan({"parts": [part()]}, tree, MENU, 6, CATALOG)[0][0]
     body = lead.render(order, GOAL, tree, 24000)

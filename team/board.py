@@ -88,7 +88,7 @@ def configured(root: Path) -> dict[str, dict]:
 
     implement = role("implement")
     rescue = implement.get("escalation", {})
-    return {
+    out = {
         "boss": {"model": role("boss").get("runs_on", {}).get("model")},
         "lead": {"model": role("lead").get("runs_on", {}).get("model")
                  or role("lead").get("runs_on", {}).get("harness")},
@@ -96,7 +96,28 @@ def configured(root: Path) -> dict[str, dict]:
         "implement": {"tiers": implement.get("models", {}).get("candidates", [])},
         "rescue": {"model": rescue.get("model") or rescue.get("harness"),
                    "after_failures": rescue.get("after_failures")},
+        "stations": stations(root),
     }
+    for name in stations(root):
+        if name not in out and name not in ("lead", "rescue"):
+            r = role(name)
+            out[name] = {"tiers": r.get("models", {}).get("candidates", []), "gate": r.get("gate", "check"),
+                         "title": r.get("title", name)}
+    return out
+
+
+# Worker stations in pipeline order (team.gates); only active roles have a column.
+_STATION_ORDER = ("test-write", "implement", "security", "review")
+
+
+def stations(root: Path) -> list[str]:
+    """The board's columns: the planner, every active worker role in pipeline order, the rescue."""
+    active = []
+    for name in _STATION_ORDER:
+        path = root / "team" / "roles" / name / "role.toml"
+        if path.exists() and tomllib.loads(path.read_text()).get("status") == "active":
+            active.append(name)
+    return ["lead", *(active or ["implement"]), "rescue"]
 
 
 def _gateway() -> sqlite3.Connection | None:
@@ -117,10 +138,9 @@ def zone(job: dict | None, profile: str | None) -> str:
         return profile if profile in ("boss", "aide") else "other"
     if job["role"] == "lead":
         return "lead"
-    if job["role"] == "implement":
-        return "rescue" if _spec(job) == "claude" or (job.get("model_choice") or {}).get(
-            "why", ""
-        ).startswith("escalation") else "implement"
+    if job["role"] in _STATION_ORDER:
+        escalated = _spec(job) == "claude" or (job.get("model_choice") or {}).get("why", "").startswith("escalation")
+        return "rescue" if escalated else job["role"]
     return "other"
 
 
@@ -431,7 +451,9 @@ def board(conn: sqlite3.Connection, root: Path, cat: dict | None = None) -> dict
         at = ranks_at(root, cat)
         cards = [goal_card(conn, gw, g, at, cooldown_s) for g in goals]
         waiting = boss.waiting()
-        cols = {z: [c for c in cards if c["station"] == z] for z in ("lead", "implement", "rescue")}
+        cols = {z: [c for c in cards if c["station"] == z] for z in stations(root)}
+        for z in ("lead", "implement", "rescue"):  # the app's fixed columns are always present
+            cols.setdefault(z, [])
         cols["lead"] = planner_queue() + cols["lead"]
         done = [c for c in cards if c["station"] in ("landed", "stopped")][:LANDED_SHOWN]
         return {

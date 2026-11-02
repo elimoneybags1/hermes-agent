@@ -219,10 +219,19 @@ def check_refs(refs: list[dict], tree: Path, where: str) -> tuple[list[dict], li
     return out, errors
 
 
+_BARE_RUNNERS = re.compile(r"^(pytest|python3? -m pytest|node --test|npm test|npx (jest|vitest|mocha)|jest|vitest|mocha|cargo test|go test)\b")
+
+
 def validate_plan(
-    data: Any, tree: Path, roles_menu: dict[str, dict], max_parts: int, cat: dict
+    data: Any, tree: Path, roles_menu: dict[str, dict], max_parts: int, cat: dict,
+    test_runner: str | None = None,
 ) -> tuple[list[dict], list[str]]:
-    """The plan's parts, cleaned, in dependency order; and every reason to refuse it."""
+    """The plan's parts, cleaned, in dependency order; and every reason to refuse it.
+
+    ``test_runner`` is the target's way of running one test file; with it set, an acceptance
+    command that starts with a bare test tool (``pytest …``) is refused, because the
+    worktree's shell has no such tool on PATH and the command would fail for every part.
+    """
     if not isinstance(data, dict) or not isinstance(data.get("parts"), list):
         return [], ["the answer must be an object with a parts list"]
     parts, errors = data["parts"], []
@@ -274,6 +283,11 @@ def validate_plan(
             errors.append(
                 f"{where}: acceptance_cmd must be one shell command that fails before the part "
                 "is built and passes after (usually the new tests)"
+            )
+        elif test_runner and _BARE_RUNNERS.match(acceptance):
+            errors.append(
+                f"{where}: acceptance_cmd {acceptance!r} starts with a bare test tool that is not on "
+                f"the worktree's PATH; run the test file the way this repo does: `{test_runner}`"
             )
         done_when = [str(s).strip() for s in p.get("done_when") or [] if str(s).strip()]
         if not done_when:
@@ -619,6 +633,7 @@ def plan_prompt(
     previous: Any = None,
     plan_context: dict | None = None,
     briefing: str = "",
+    test_runner: str | None = None,
 ) -> str:
     lines = [f"Goal from Eli:\n{goal}"]
     if notes:
@@ -659,11 +674,19 @@ def plan_prompt(
             for t in gates.TYPES
         ) + ". A change to dependencies, lockfiles, migrations, CI, auth, billing or secrets "
         "waits for Eli whatever the type.",
-        "Give every part an `acceptance_cmd`: one shell command, run in the worktree, that "
-        "fails before the part is built and passes after, usually the part's own new tests "
-        "(for example `pytest tests/x_test.py -q` or `node --test tests/x.test.ts`). Team runs "
-        "it after the check; a commit that changes nothing fails it. And `done_when`: the "
-        "observable facts a reviewer verifies, one per line.",
+        "Give every part an `acceptance_cmd`: one shell command, run with /bin/sh in the worktree "
+        "(no virtualenv or node_modules/.bin on PATH), that fails before the part is built and "
+        "passes after, usually the part's own new tests. "
+        + (
+            f"This repo runs one test file with `{test_runner}` (put the file where {{path}} is); "
+            "write the acceptance command in exactly that form, or as a shell test (`grep -q …`, "
+            "`test -f …`) for a fact that is not a test. A bare `pytest …` or `node --test …` is refused. "
+            if test_runner
+            else "Use the repo's own test runner as its instructions describe it, never a bare "
+            "`pytest` or `node` that may not be on PATH. "
+        )
+        + "Team runs it after the check; a commit that changes nothing fails it. And `done_when`: "
+        "the observable facts a reviewer verifies, one per line.",
     ]
     if refused:
         lines += [
@@ -778,7 +801,7 @@ def ask(
 ) -> Any:
     """Ask, validate, and ask once more with the refusals; the validated answer or LeadError."""
     refused, previous = None, None
-    for _ in range(2):
+    for attempt in range(2):
         try:
             result = call(
                 root, cwd, make_prompt(refused, previous), schema, cfg, runner
@@ -786,6 +809,12 @@ def ask(
         except LeadError as exc:
             if on_call and exc.result is not None:
                 on_call(exc.result)
+            if attempt == 0 and exc.result is not None and str(exc).startswith("lead gave no structured answer"):
+                # Prose instead of the object (Sonnet does this now and then): one more ask,
+                # with the prose in front of it, costs far less than a goal that never starts.
+                refused = ["your answer was prose, not the JSON object the schema describes; answer with only the JSON"]
+                previous = str(exc.result.get("result") or "")[:4000]
+                continue
             raise
         if on_call:
             on_call(result)

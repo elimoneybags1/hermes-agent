@@ -1,0 +1,39 @@
+name = "test-write"
+title = "Test writer"
+does = "Writes a part's tests before the builder starts: one test per done_when line, in test files only, failing until the part exists."
+graded_by = "Code (gate tests_only): only test files changed and committed; the part's acceptance command fails on the branch, so the tests are real and not yet satisfied."
+# planned until the engine's review/test-write gates are in and the sandbox run on the
+# current pipeline has finished: an active role joins every goal's pipeline at once.
+status = "planned"
+gate = "tests_only"
+# The pipeline runs this stage; the lead never assigns it.
+assignable = false
+tools = ["terminal", "file", "todo", "skills", "kanban"]
+
+[runs_on]
+harness = "hermes"
+
+[escalation]
+harness = "hermes-subscription"
+model = "claude-sonnet-5-5"
+after_failures = 1
+
+[budget]
+max_turns = 30
+run_budget_s = 600
+
+[models]
+candidates = ["tier-medium", "tier-complex"]
+pinned = ""
+
+[hermes.compression]
+threshold = 0.25
+
+[hermes.tools.tool_search]
+defer = [
+  "session_search", "todo_list", "process_manage", "skill_manage",
+  "kanban_show", "kanban_list", "kanban_complete", "kanban_comment",
+  "kanban_create", "kanban_link", "kanban_schedule", "kanban_unblock",
+  "kanban_heartbeat", "kanban_request_changes",
+  "kanban_attach", "kanban_attach_url", "kanban_attachments",
+]

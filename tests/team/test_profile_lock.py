@@ -44,7 +44,7 @@ def test_base_config_is_locked():
     assert lite["api_key"] == "${LITELLM_MASTER_KEY}"
     assert lite["session_affinity_header"] == "x-litellm-session-id"
     assert cfg["fallback_providers"] == []
-    assert cfg["plugins"]["enabled"] == ["team"]
+    assert cfg["plugins"]["enabled"] == ["team", "security-guidance"]
     assert cfg["auxiliary"]["free_only"] is True
     for task in AUX_TASKS:
         assert cfg["auxiliary"][task]["provider"] == "litellm", task

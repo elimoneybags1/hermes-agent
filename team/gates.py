@@ -74,6 +74,10 @@ LANDING: dict[str, str] = {
 
 TYPES = tuple(PIPELINES)
 DEFAULT_TYPE = "bugfix"
+STAGE_BY_NAME: dict[str, Stage] = {s.name: s for p in PIPELINES.values() for s in p}
+# A gate's detail starting with this sends the goal back to the builder stage instead of
+# retrying the current one: the reviewer said what is wrong, and the builder must fix it.
+SEND_BACK = "REVIEW: fix"
 
 
 class GateError(ValueError):
@@ -96,6 +100,15 @@ def stages_for(kind: str, active_roles: set[str] | frozenset[str]) -> list[Stage
 
 def worker_stages(kind: str, active_roles: set[str] | frozenset[str]) -> list[Stage]:
     return [s for s in stages_for(kind, active_roles) if s.role]
+
+
+def stages_named(names: list[str]) -> list[Stage]:
+    """The stages a goal was created with (stored on the goal, so a roster change never
+    reinterprets a running goal's position)."""
+    try:
+        return [STAGE_BY_NAME[n] for n in names]
+    except KeyError as e:
+        raise GateError(f"unknown stage {e.args[0]!r}") from None
 
 
 # --- risk ---------------------------------------------------------------------------

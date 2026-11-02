@@ -31,7 +31,9 @@ providers:
 fallback_providers: []
 
 plugins:
-  enabled: [team]
+  # security-guidance: Hermes's no-LLM scanner (pickle, eval, shell=True, XSS, CI injection…)
+  # that appends a warning to write_file/patch results; it never blocks.
+  enabled: [team, security-guidance]
 
 agent:
   max_turns: 40

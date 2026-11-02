@@ -57,6 +57,7 @@ from team import (
     profiles,
     roles,
     settings,
+    stages,
     targets,
 )
 
@@ -150,6 +151,11 @@ def terminate(pid: int) -> None:
 
 def _log(msg: str) -> None:
     print(f"team run: {msg}", file=sys.stderr, flush=True)
+
+
+def _out(line: str) -> None:
+    # Flushed: a loop whose stdout is a log file would otherwise show nothing for hours.
+    print(line, flush=True)
 
 
 def _tail(text: str | None, limit: int = FAILURE_CHARS) -> str:
@@ -282,7 +288,7 @@ class Loop:
         log: Callable[[str], None] = _log,
         preflight: Callable[[Path, Runner], list[str]] | None = default_preflight,
         cat: dict | None = None,
-        out: Callable[[str], None] = print,
+        out: Callable[[str], None] = _out,
     ):
         self.root = Path(root)
         self.conn = conn
@@ -569,11 +575,44 @@ class Loop:
         return out
 
     def _stages(self, goal: dict) -> list[gates.Stage]:
+        """The goal's pipeline as fixed when it was created; computed only for goals older than that column."""
+        if goal.get("stages"):
+            return gates.stages_named(json.loads(goal["stages"]))
         return gates.stages_for(goal.get("type") or gates.DEFAULT_TYPE, self._active_roles())
 
     def _stage(self, goal: dict) -> gates.Stage:
-        stages = self._stages(goal)
-        return stages[min(int(goal.get("stage_idx") or 0), len(stages) - 1)]
+        stages_ = self._stages(goal)
+        return stages_[min(int(goal.get("stage_idx") or 0), len(stages_) - 1)]
+
+    def _diff(self, goal: dict) -> str:
+        base = goal.get("base") or "main"
+        return grade._git(self._repo(goal), "diff", f"{base}...{goal['branch']}", runner=self.runner).stdout or ""
+
+    def _branch_head(self, goal: dict) -> str:
+        return grade._must(grade._git(self._repo(goal), "rev-parse", goal["branch"], runner=self.runner), "git rev-parse failed")
+
+    def _brief_for(self, goal: dict, attempt: int, failure: str | None, *, claude: bool = False, answer: str | None = None) -> str:
+        """The task body for the goal's current stage: the builder's order, or the stage's own brief."""
+        stage = self._stage(goal)
+        order = ledger.latest_order(self.conn, goal["id"])
+        o = order["order"] if order else None
+        if stage.gate in ("check", "onboard"):
+            if order is not None:
+                return lead.render(
+                    o, goal, Path(goal["worktree"]), self.cfg["lead.context_bytes"],
+                    failure=failure, attempt=attempt, claude=claude, answer=answer,
+                )
+            return brief(goal, attempt, failure, self._owned(goal), claude=claude, answer=answer)
+        if stage.gate == "tests_only":
+            return stages.tests_brief(goal, o, self._owned(goal), failure=failure, attempt=attempt, claude=claude)
+        diff = self._diff(goal)
+        if stage.gate == "review":
+            prev = ledger.get_job(self.conn, goal["job_id"]) if goal.get("job_id") else None
+            verified = prev["grader_detail"] if prev and prev.get("grader") == "verify" else None
+            return stages.review_brief(goal, o, diff, verified, failure=failure, attempt=attempt, claude=claude)
+        if stage.gate == "security":
+            return stages.security_brief(goal, o, diff, failure=failure, attempt=attempt, claude=claude)
+        raise RunError(f"stage {stage.name!r} has no brief")
 
     def _role_for_stage(self, stage: gates.Stage, order: dict | None) -> str | None:
         """The worker for a stage: the lead's pick when it has the stage's gate, else the default."""
@@ -589,18 +628,71 @@ class Loop:
                 return wanted
         return stage.role
 
-    def gate(self, goal: dict) -> tuple[bool, str]:
-        """Run the current stage's gate on the goal's branch: (passed, what it found)."""
-        return self.run_gate(self._stage(goal).gate, goal)
+    def gate(self, goal: dict, text: str | None = None) -> tuple[bool, str]:
+        """Run the current stage's gate on the goal's branch: (passed, what it found).
 
-    def run_gate(self, name: str, goal: dict) -> tuple[bool, str]:
+        ``text`` is a Claude attempt's final answer; a kanban worker's answer is read from the
+        task instead. A detail starting with ``gates.SEND_BACK`` means: not this stage's
+        fault, the builder must fix what the reviewer found.
+        """
+        return self.run_gate(self._stage(goal).gate, goal, text=text)
+
+    def run_gate(self, name: str, goal: dict, text: str | None = None) -> tuple[bool, str]:
         if name == "check":
             return self.grade(goal)
         if name == "verify":
             return self.verify(goal)
         if name == "tests_only":
             return self.grade_tests_only(goal)
+        if name == "review":
+            return self.grade_review(goal, text)
+        if name == "security":
+            return self.grade_security(goal, text)
         raise RunError(f"gate {name!r} has no code yet; a role may not use it")
+
+    def _unchanged_since_stage(self, goal: dict) -> str | None:
+        """Why a read-only stage's branch is not as it was when the stage began, or None."""
+        repo, wt = self._repo(goal), Path(goal["worktree"])
+        grade.ensure_worktree(repo, wt, goal["branch"], runner=self.runner)
+        if goal.get("stage_sha") and self._branch_head(goal) != goal["stage_sha"]:
+            return "the branch changed during this stage; a review edits nothing"
+        if not grade.is_clean(wt, runner=self.runner):
+            return "uncommitted changes in the worktree; a review edits nothing"
+        return None
+
+    def _answer(self, goal: dict, text: str | None) -> str | None:
+        if text is not None:
+            return text
+        full = self._show(goal)
+        return (full or {}).get("latest_summary")
+
+    def grade_review(self, goal: dict, text: str | None = None) -> tuple[bool, str]:
+        """The review gate: an unchanged branch and a verdict whose findings cite the diff."""
+        bad = self._unchanged_since_stage(goal)
+        if bad:
+            return False, bad
+        verdict, errors = stages.parse_verdict(self._answer(goal, text), self._diff(goal))
+        if verdict is None:
+            return False, "review answer refused: " + "; ".join(errors)
+        if verdict["verdict"] == "fix":
+            return False, gates.SEND_BACK + "\n" + stages.findings_text(verdict["findings"])
+        checked = "\n".join(verdict["checked"]) or "(nothing listed as checked)"
+        return True, "REVIEW: land\n" + checked
+
+    def grade_security(self, goal: dict, text: str | None = None) -> tuple[bool, str]:
+        """The security gate: an unchanged branch and a well-formed report. The report goes to
+        Eli with the land decision; the model decides nothing."""
+        bad = self._unchanged_since_stage(goal)
+        if bad:
+            return False, bad
+        report, errors = stages.parse_report(self._answer(goal, text), self._diff(goal))
+        if report is None:
+            return False, "security answer refused: " + "; ".join(errors)
+        detail = "security report: " + report["summary"] + "\n" + (
+            stages.findings_text(report["findings"]) or "(no findings)"
+        )
+        ledger.update_goal(self.conn, goal["id"], detail=detail)
+        return True, detail
 
     def _run_check(self, worktree: Path, command: str) -> tuple[bool, str]:
         with check_lock():
@@ -677,10 +769,11 @@ class Loop:
         the next worker stage, or land when the pipeline is done. A code-only stage that fails
         sends the goal back to the worker stage before it, as a failed attempt."""
         goal = ledger.get_goal(self.conn, goal["id"])
-        stages = self._stages(goal)
+        stages_ = self._stages(goal)
+        self._save_attempts(goal)
         idx = int(goal.get("stage_idx") or 0) + 1
-        while idx < len(stages) and stages[idx].role is None:
-            stage = stages[idx]
+        while idx < len(stages_) and stages_[idx].role is None:
+            stage = stages_[idx]
             ledger.update_goal(self.conn, goal["id"], stage_idx=idx)
             if goal.get("part_id"):
                 ledger.set_part_stage(self.conn, goal["part_id"], stage.name)
@@ -693,33 +786,51 @@ class Loop:
             ledger.finish_job(self.conn, job, "pass" if ok else "fail", stage.gate, detail)
             ledger.update_goal(self.conn, goal["id"], job_id=job)
             if not ok:
-                back = max(i for i in range(idx) if stages[i].role)
-                order = ledger.latest_order(self.conn, goal["id"])
-                ledger.update_goal(
-                    self.conn, goal["id"], stage_idx=back,
-                    role=self._role_for_stage(stages[back], order),
-                )
-                if goal.get("part_id"):
-                    ledger.set_part_stage(self.conn, goal["part_id"], stages[back].name)
-                self.log(f"goal {goal['id']}: {stage.name} failed, back to {stages[back].name}: {_tail(detail, 200)}")
-                self._next_attempt(ledger.get_goal(self.conn, goal["id"]), detail)
+                self._back_to_builder(ledger.get_goal(self.conn, goal["id"]), idx, detail)
                 return
             self.log(f"goal {goal['id']}: {stage.name} passed")
             idx += 1
-        if idx >= len(stages):
-            ledger.update_goal(self.conn, goal["id"], stage_idx=len(stages) - 1)
+        if idx >= len(stages_):
+            ledger.update_goal(self.conn, goal["id"], stage_idx=len(stages_) - 1)
             self._land_or_ask(ledger.get_goal(self.conn, goal["id"]))
             return
-        stage = stages[idx]
+        goal = self._enter_stage(ledger.get_goal(self.conn, goal["id"]), idx)
+        self.log(f"goal {goal['id']}: stage {stages_[idx].name} ({goal['role']})")
+        self.free_attempt(goal, goal["attempt"] + 1)
+
+    def _save_attempts(self, goal: dict) -> dict[str, int]:
+        """Remember how many attempts the current stage has spent, so coming back to it resumes the count."""
+        counts = json.loads(goal.get("stage_attempts") or "{}")
+        current = self._stage(goal)
+        if current.role is None:  # a code-only stage spends no attempts
+            return counts
+        counts[current.name] = max(int(goal.get("attempt") or 0), int(counts.get(current.name, 0)))
+        ledger.update_goal(self.conn, goal["id"], stage_attempts=json.dumps(counts))
+        return counts
+
+    def _enter_stage(self, goal: dict, idx: int) -> dict:
+        """Move the goal to worker stage ``idx``: its role, its resumed attempt count, a fresh stage_sha."""
+        stage = self._stages(goal)[idx]
+        if stage.role is None:
+            raise RunError(f"stage {stage.name} is Team's own, not a worker's")
+        counts = self._save_attempts(goal)
         order = ledger.latest_order(self.conn, goal["id"])
         ledger.update_goal(
-            self.conn, goal["id"], stage_idx=idx, role=self._role_for_stage(stage, order), attempt=0,
+            self.conn, goal["id"], stage_idx=idx, role=self._role_for_stage(stage, order),
+            attempt=int(counts.get(stage.name, 0)), stage_sha=None,
         )
         if goal.get("part_id"):
             ledger.set_part_stage(self.conn, goal["part_id"], stage.name)
-        goal = ledger.get_goal(self.conn, goal["id"])
-        self.log(f"goal {goal['id']}: stage {stage.name} ({goal['role']})")
-        self.free_attempt(goal, 1)
+        return ledger.get_goal(self.conn, goal["id"])
+
+    def _back_to_builder(self, goal: dict, from_idx: int, detail: str) -> None:
+        """A later stage (verify, review) failed on the builder's work: back to the last builder
+        stage before it, as that stage's next attempt, with what was found."""
+        stages_ = self._stages(goal)
+        back = max(i for i in range(from_idx) if stages_[i].role)
+        goal = self._enter_stage(goal, back)
+        self.log(f"goal {goal['id']}: {stages_[from_idx].name} sends it back to {stages_[back].name}: {_tail(detail, 200)}")
+        self._next_attempt(goal, detail)
 
     def _land_decision(self, goal: dict) -> dict | None:
         found = [
@@ -745,11 +856,13 @@ class Loop:
                 self._land(goal)
                 return
             first = goal["goal"].splitlines()[0][:70]
+            report = goal.get("detail") or ""
+            report = ("\n\n" + report) if report.startswith("security report:") else ""
             did = ledger.create_decision(
                 self.conn,
                 goal["target"],
                 f"Land goal {goal['id']}? {first}",
-                f"{why}. Branch {goal['branch']} passed every gate: {len(changed)} files, {lines} lines changed.",
+                f"{why}. Branch {goal['branch']} passed every gate: {len(changed)} files, {lines} lines changed.{report}",
                 ["land it", "drop it (the branch is kept)"],
                 "land it",
                 goal_id=goal["id"],
@@ -798,24 +911,19 @@ class Loop:
         stage = self._stage(goal)
         if goal.get("part_id"):
             ledger.set_part_stage(self.conn, goal["part_id"], stage.name)
+        if attempt == 1 or not goal.get("stage_sha"):
+            # Where the branch stood when this stage began: a read-only stage must leave it there.
+            ledger.update_goal(self.conn, goal["id"], stage_sha=self._branch_head(goal))
         title = goal["goal"].splitlines()[0][:80]
         if stage.name != "implement":
             title = f"[{stage.name}] {title}"
         if attempt > 1:
             title += f" (attempt {attempt})"
-        if order is not None:
-            body = lead.render(
-                order["order"],
-                goal,
-                Path(goal["worktree"]),
-                self.cfg["lead.context_bytes"],
-                failure=failure,
-                attempt=attempt,
-            )
+        body = self._brief_for(goal, attempt, failure)
+        if order is not None and stage.gate == "check":
             skills = tuple(order["order"]["skills"])
             toolsets = tuple(order["order"]["toolsets"])
         else:
-            body = brief(goal, attempt, failure, self._owned(goal))
             skills, toolsets = tuple(role["skills"]), ()
         task = kanban.create_task(
             goal["target"],
@@ -888,15 +996,17 @@ class Loop:
             self._block(goal, reason)
             ledger.finish_goal(self.conn, goal["id"], "error", reason)
             return
+        stage = self._stage(goal)
         ok, detail = self.gate(goal)
         ledger.finish_job(
-            self.conn, job["id"], "pass" if ok else "fail", "check", detail
+            self.conn, job["id"], "pass" if ok else "fail", stage.gate, detail
         )
-        if ok and status == "review":
+        send_back = not ok and detail.startswith(gates.SEND_BACK)
+        if (ok or send_back) and status == "review":
             kanban.complete(
                 goal["target"],
                 task_id,
-                result=f"passed: {detail[-200:]}",
+                result=(f"passed: {detail[-200:]}" if ok else f"the reviewer sent it back: {detail[-200:]}"),
                 runner=self.runner,
             )
         if goal.get("harness_id"):
@@ -906,6 +1016,9 @@ class Loop:
             return
         if ok:
             self._advance(goal)
+            return
+        if send_back:
+            self._back_to_builder(ledger.get_goal(self.conn, goal["id"]), int(goal["stage_idx"]), detail)
             return
         kanban.comment(
             goal["target"], task_id, f"FAILED: {_tail(detail)}", runner=self.runner
@@ -1018,27 +1131,16 @@ class Loop:
         decision_file.parent.mkdir(parents=True, exist_ok=True)
         decision_file.unlink(missing_ok=True)
         owned = self._owned(goal)
-        order = ledger.latest_order(self.conn, goal["id"])
+        stage = self._stage(goal)
         result = hermes_run.run(
             goal["worktree"],
-            lead.render(
-                order["order"],
-                goal,
-                Path(goal["worktree"]),
-                self.cfg["lead.context_bytes"],
-                failure=failure,
-                attempt=attempt,
-                claude=True,
-                answer=answer,
-            )
-            if order is not None
-            else brief(goal, attempt, failure, owned, claude=True, answer=answer),
+            self._brief_for(goal, attempt, failure, claude=True, answer=answer),
             max_turns=self.cfg["escalation.claude_max_turns"],
             timeout_s=self.cfg["escalation.claude_timeout_s"],
             runner=self.runner,
             role=goal["role"],
             root=self.root,
-            check=goal["check_cmd"],
+            check=goal["check_cmd"] if stage.gate in ("check", "onboard") else None,
             model=model,
             allowed_files=owned,
             decision_file=decision_file,
@@ -1075,17 +1177,20 @@ class Loop:
             ledger.finish_job(self.conn, job, "error", "claude", detail)
             self._give_up(goal, "the Claude attempt failed too", detail)
             return
-        ok, detail = self.gate(goal)
-        ledger.finish_job(self.conn, job, "pass" if ok else "fail", "check", detail)
+        ok, detail = self.gate(goal, text=str(result.get("result") or ""))
+        ledger.finish_job(self.conn, job, "pass" if ok else "fail", stage.gate, detail)
+        send_back = not ok and detail.startswith(gates.SEND_BACK)
+        if (ok or send_back) and goal.get("current_task"):
+            kanban.complete(
+                goal["target"],
+                goal["current_task"],
+                result=(f"claude passed: {detail[-200:]}" if ok else f"claude's review sent it back: {detail[-200:]}"),
+                runner=self.runner,
+            )
         if ok:
-            if goal.get("current_task"):
-                kanban.complete(
-                    goal["target"],
-                    goal["current_task"],
-                    result=f"claude passed: {detail[-200:]}",
-                    runner=self.runner,
-                )
             self._advance(goal)
+        elif send_back:
+            self._back_to_builder(ledger.get_goal(self.conn, goal["id"]), int(goal["stage_idx"]), detail)
         else:
             self._give_up(goal, "the Claude attempt failed too", detail)
 
@@ -1473,7 +1578,8 @@ def start_goal(
     """
     record = targets.require(target)
     loop = Loop(root, conn, runner=runner, cat=cat, log=log, preflight=None)
-    first = next(s for s in gates.stages_for(kind, loop._active_roles()) if s.role)
+    pipeline = gates.stages_for(kind, loop._active_roles())
+    first = next(s for s in pipeline if s.role)
     if role is None:
         role = first.role
     else:
@@ -1496,6 +1602,7 @@ def start_goal(
         base=base,
         kind=kind,
         acceptance_cmd=acceptance,
+        stages=[s.name for s in pipeline],
     )
     try:
         loop.free_attempt(ledger.get_goal(conn, goal_id), 1, parents=parents)
@@ -1567,6 +1674,7 @@ def draft_goal(
         grade._git(repo, "rev-parse", base, runner=runner), "git rev-parse failed"
     )
     lead_job = loop._lead_job(target, commit, "plan")
+    test_runner = record.get("test_runner")
     try:
         with lead.workspace(
             repo, target, f"plan-{lead_job}", base, runner
@@ -1586,9 +1694,10 @@ def draft_goal(
                     previous=previous,
                     plan_context=plan_context,
                     briefing=briefing,
+                    test_runner=test_runner,
                 ),
                 lead.PLAN_SCHEMA,
-                lambda data: _with_summary(data, tree, menu, loop),
+                lambda data: _with_summary(data, tree, menu, loop, test_runner),
                 loop.cfg,
                 runner,
                 on_call=lambda r: loop._lead_call(lead_job, r),
@@ -1648,7 +1757,8 @@ def release_goal(
         )
     parts = draft["parts"]
     kind = draft.get("type") or gates.DEFAULT_TYPE
-    first = next(s for s in gates.stages_for(kind, loop._active_roles()) if s.role)
+    pipeline = gates.stages_for(kind, loop._active_roles())
+    first = next(s for s in pipeline if s.role)
     part_ids: dict[str, int] = {}
     goals = []
     for n, part in enumerate(parts, 1):
@@ -1678,6 +1788,7 @@ def release_goal(
             base=base,
             kind=kind,
             acceptance_cmd=part.get("acceptance_cmd"),
+            stages=[s.name for s in pipeline],
         )
         ledger.create_order(
             conn,
@@ -1699,10 +1810,10 @@ def release_goal(
     return goals
 
 
-def _with_summary(data: Any, tree: Path, menu: dict, loop: Loop) -> tuple:
+def _with_summary(data: Any, tree: Path, menu: dict, loop: Loop, test_runner: str | None = None) -> tuple:
     """``validate_plan`` for ``lead.ask``: ((summary, parts, type), refusals)."""
     parts, errors = lead.validate_plan(
-        data, tree, menu, loop.cfg["lead.max_parts"], loop.cat
+        data, tree, menu, loop.cfg["lead.max_parts"], loop.cat, test_runner=test_runner
     )
     kind, type_errors = lead.plan_type(data)
     summary = str((data or {}).get("summary") or "") if isinstance(data, dict) else ""

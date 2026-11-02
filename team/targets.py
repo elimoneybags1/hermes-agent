@@ -35,6 +35,13 @@ FIELDS: dict[str, tuple[type, object, str]] = {
         "A command the verify stage runs in the worktree after the check and the acceptance "
         "command: the real thing (a browser test, a smoke run). Empty means none.",
     ),
+    "test_runner": (
+        str,
+        None,
+        "How this repo runs one test file, with {path} for the file (`scripts/run_tests.sh {path}`, "
+        "`npm test -- {path}`). Acceptance commands run with /bin/sh in the worktree, where a bare "
+        "`pytest` or `node` is not guaranteed; the lead writes them in this form when set.",
+    ),
     "setup": (
         str,
         None,

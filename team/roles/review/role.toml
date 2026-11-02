@@ -1,0 +1,37 @@
+name = "review"
+title = "Reviewer"
+does = "Reads a part's diff against what the lead said done means and answers land or fix, every finding pointing at a line of the diff. Veto only: it edits nothing and lands nothing."
+graded_by = "Code (gate review): the answer is a JSON verdict, each finding cites a line the diff added or changed, a fix verdict has at least one finding, and the branch is unchanged since the stage began."
+status = "active"
+gate = "review"
+assignable = false
+# read-only is read_file and search_files (plugins/team registers it); no file or terminal.
+tools = ["read-only", "kanban"]
+
+[runs_on]
+harness = "hermes"
+
+[escalation]
+harness = "hermes-subscription"
+model = "claude-sonnet-5-5"
+after_failures = 1
+
+[budget]
+max_turns = 15
+run_budget_s = 600
+
+[models]
+candidates = ["tier-medium", "tier-complex"]
+pinned = ""
+
+[hermes.compression]
+threshold = 0.25
+
+[hermes.tools.tool_search]
+defer = [
+  "session_search", "todo_list", "skill_manage",
+  "kanban_show", "kanban_list", "kanban_complete", "kanban_comment",
+  "kanban_create", "kanban_link", "kanban_schedule", "kanban_unblock",
+  "kanban_heartbeat", "kanban_request_changes",
+  "kanban_attach", "kanban_attach_url", "kanban_attachments",
+]

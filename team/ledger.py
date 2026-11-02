@@ -299,6 +299,12 @@ def init(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE goals ADD COLUMN stage_idx INTEGER NOT NULL DEFAULT 0")
             conn.execute("ALTER TABLE goals ADD COLUMN risk TEXT NOT NULL DEFAULT 'auto'")
             conn.execute("ALTER TABLE goals ADD COLUMN acceptance_cmd TEXT")
+        if "stages" not in goal_columns:
+            # The stage names fixed at creation (JSON list); the branch head when the current
+            # stage began (a review must not change it); attempts spent per stage (JSON).
+            conn.execute("ALTER TABLE goals ADD COLUMN stages TEXT")
+            conn.execute("ALTER TABLE goals ADD COLUMN stage_sha TEXT")
+            conn.execute("ALTER TABLE goals ADD COLUMN stage_attempts TEXT NOT NULL DEFAULT '{}'")
 
     _widen_part_stages(conn)
     # Backfill goal_id for existing calls
@@ -398,17 +404,19 @@ _INFRA = re.compile(
     r"|no dependency environment|not the loopback gateway|max_retries_exhausted|timed out at|Timeout",
     re.IGNORECASE,
 )
+# A check or acceptance command that could not even start: the environment's fault, not the work's.
+_ENV = re.compile(r"command not found|No such file or directory|not activated|ModuleNotFoundError", re.IGNORECASE)
 
 
 def classify_failure(grader: str | None, detail: str | None, calls: list[dict]) -> str:
     """'infra' when the attempt died of the gateway, a provider, a quota or the runtime; else 'work'.
 
-    A graded check is always 'work': the code ran and was wrong. Otherwise the grader's
-    detail decides, and failing that the attempt's own calls: half or more failed, and
-    at least one of them with an infrastructure error.
+    A graded check is 'work' (the code ran and was wrong) unless the command itself could not
+    run. Otherwise the grader's detail decides, and failing that the attempt's own calls: half
+    or more failed, and at least one of them with an infrastructure error.
     """
     if grader == "check":
-        return "work"
+        return "infra" if _ENV.search(detail or "") else "work"
     if _INFRA.search(detail or ""):
         return "infra"
     bad = [c for c in calls if not c.get("ok")]
@@ -712,7 +720,7 @@ def goal_usage(conn: sqlite3.Connection, goal_id: int) -> dict:
 
 GOAL_FIELDS = (
     "attempt", "current_task", "job_id", "detail", "harness_id", "arm",
-    "role", "stage_idx", "risk",  # move along the pipeline (team.gates)
+    "role", "stage_idx", "risk", "stage_sha", "stage_attempts",  # move along the pipeline (team.gates)
 )
 RISKS = ("auto", "ask")
 
@@ -731,18 +739,21 @@ def create_goal(
     kind: str = "bugfix",
     acceptance_cmd: str | None = None,
     risk: str = "auto",
+    stages: list[str] | None = None,
 ) -> int:
     """Start tracking a goal ``team run`` works on; returns its id.
 
-    ``kind`` is the pipeline (``team.gates.PIPELINES``), ``role`` the first stage's worker,
-    ``acceptance_cmd`` the command that fails before the part is built and passes after.
+    ``kind`` is the pipeline (``team.gates.PIPELINES``), ``stages`` its stage names as fixed
+    now (a roster change later never moves a running goal), ``role`` the first stage's
+    worker, ``acceptance_cmd`` the command that fails before the part is built and passes
+    after.
     """
     _check(risk, RISKS, "risk")
     with conn:
         cur = conn.execute(
             "INSERT INTO goals (target, goal, role, branch, worktree, check_cmd, created,"
-            " part_id, base, needs_commits, type, stage_idx, risk, acceptance_cmd)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+            " part_id, base, needs_commits, type, stage_idx, risk, acceptance_cmd, stages)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
             (
                 target,
                 goal,
@@ -757,6 +768,7 @@ def create_goal(
                 kind,
                 risk,
                 acceptance_cmd,
+                json.dumps(list(stages)) if stages is not None else None,
             ),
         )
     return cur.lastrowid

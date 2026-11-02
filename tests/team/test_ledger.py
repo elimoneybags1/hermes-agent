@@ -58,9 +58,9 @@ def test_init_creates_every_table_with_the_agreed_columns(conn):
         "created",
     ]
     assert cols("diagnoses")[-4:] == ["note", "action", "lead_job_id", "created"]
-    assert cols("goals")[-9:] == [
+    assert cols("goals")[-12:] == [
         "part_id", "base", "needs_commits", "harness_id", "arm",
-        "type", "stage_idx", "risk", "acceptance_cmd",
+        "type", "stage_idx", "risk", "acceptance_cmd", "stages", "stage_sha", "stage_attempts",
     ]
     assert cols("decisions") == [
         "id",
@@ -415,8 +415,9 @@ def test_orders_version_per_goal_and_rates_split_by_order(conn):
 def test_failures_are_infra_or_work(tmp_path):
     conn = ledger.connect(tmp_path / "t.db")
     ledger.init(conn)
-    # A graded check is the work's fault, whatever the detail says.
+    # A graded check is the work's fault, whatever the detail says, unless the command could not run.
     assert ledger.classify_failure("check", "Error code: 500 in the test output", []) == "work"
+    assert ledger.classify_failure("check", "acceptance failed (`pytest x`):\n/bin/sh: pytest: command not found", []) == "infra"
     # The grader's detail names the gateway, a quota or the runtime.
     assert ledger.classify_failure("claude", "claude run failed: usage_limit_reached", []) == "infra"
     assert ledger.classify_failure("lead", "lead call failed: hermes: no dependency environment", []) == "infra"

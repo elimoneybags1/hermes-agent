@@ -34,6 +34,7 @@ class FakeHermes:
         self.boards = ["team"]
         self.logs: dict[str, str] = {}
         self.calls: list[list[str]] = []
+        self.summaries: dict[str, str] = {}  # what a worker handed to kanban_request_review
         self.claude_behaviour = None
 
     def __call__(self, cmd, **kwargs):
@@ -95,6 +96,7 @@ class FakeHermes:
                     "task": self.tasks[tid],
                     "runs": self.runs[tid],
                     "events": self.events[tid],
+                    "latest_summary": self.summaries.get(tid),
                 },
             )
         if verb == "list":
@@ -939,6 +941,137 @@ def test_a_goal_type_must_exist_and_the_builder_must_fit_the_stage(world):
         _goal(world, kind="refactor")
     goal = _goal(world, role="implement")  # explicit builder with the right gate
     assert goal["role"] == "implement" and goal["type"] == "bugfix" and goal["stage_idx"] == 0
+
+
+def _add_role(world, name, gate, tools='["read-only"]'):
+    """A pipeline-stage role beside implement, with its profile directory."""
+    text = ROLE.replace('tools = ["terminal", "file"]', f'tools = {tools}\ngate = "{gate}"\nassignable = false')
+    write_role(world["root"], name, text=text)
+    profiles.profile_dir(name).mkdir(parents=True, exist_ok=True)
+
+
+def _review_answers(world, goal, verdict):
+    """The reviewer's stage task, answered with ``verdict`` (a dict) and handed to review."""
+    g = ledger.get_goal(world["conn"], goal["id"])
+    tid = g["current_task"]
+    assert world["hermes"].tasks[tid]["assignee"] == "review" and tid != goal["current_task"]
+    world["hermes"].summaries[tid] = json.dumps(verdict)
+    world["hermes"].tasks[tid]["status"] = "review"
+    return tid
+
+
+def test_a_land_verdict_lets_the_goal_land(world):
+    _add_role(world, "review", "review")
+    goal = _goal(world)
+    assert json.loads(goal["stages"]) == ["implement", "test_verify", "review"]
+    worker_commits(world, goal)
+    world["loop"].tick()  # implement passes, verify passes, the review stage starts
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["stage_idx"] == 2 and g["role"] == "review" and g["attempt"] == 1 and g["outcome"] is None
+    body = world["hermes"].tasks[g["current_task"]]["body"]
+    assert body.startswith("[") is False and "+VALUE = 2" in body and '"verdict": "land" | "fix"' in body
+    assert world["hermes"].tasks[g["current_task"]]["title"].startswith("[review]")
+    assert g["stage_sha"] == git(world["repo"], "rev-parse", goal["branch"]).stdout.strip()
+    tid = _review_answers(world, goal, {"verdict": "land", "checked": ["VALUE is 2: app.py:1"], "findings": []})
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["detail"].startswith("landed")
+    review_job = next(j for j in ledger.list_jobs(world["conn"]) if j["role"] == "review")
+    assert review_job["outcome"] == "pass" and review_job["grader"] == "review" and "REVIEW: land" in review_job["grader_detail"]
+    assert world["hermes"].tasks[tid]["status"] == "done"
+
+
+def test_a_fix_verdict_sends_the_part_back_to_the_builder_with_the_findings(world):
+    _add_role(world, "review", "review")
+    goal = _goal(world)
+    worker_commits(world, goal)
+    world["loop"].tick()
+    tid = _review_answers(world, goal, {"verdict": "fix", "findings": [{"path": "app.py", "line": 2, "says": "drop the round comment"}]})
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] is None and g["stage_idx"] == 0 and g["role"] == "implement" and g["attempt"] == 2
+    assert world["hermes"].tasks[tid]["status"] == "done"  # the review task is finished, not retried
+    new = world["hermes"].tasks[g["current_task"]]
+    assert new["assignee"] == "implement" and "drop the round comment" in new["body"] and "REVIEW: fix" in new["body"]
+    review_job = next(j for j in ledger.list_jobs(world["conn"]) if j["role"] == "review")
+    assert review_job["outcome"] == "fail" and review_job["failure_kind"] == "work"
+    assert json.loads(g["stage_attempts"]) == {"implement": 1, "review": 1}
+    # the builder's second try passes; verify, then a fresh review attempt (its count resumes)
+    worker_commits(world, g, text="VALUE = 2\n")
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["stage_idx"] == 2 and g["attempt"] == 2 and g["role"] == "review"
+
+
+def test_a_prose_review_answer_is_refused_and_the_review_retried(world):
+    _add_role(world, "review", "review")
+    goal = _goal(world)
+    worker_commits(world, goal)
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    tid = g["current_task"]
+    world["hermes"].summaries[tid] = "Looks good to me, ship it."
+    world["hermes"].tasks[tid]["status"] = "review"
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["stage_idx"] == 2 and g["attempt"] == 2 and g["outcome"] is None
+    assert world["hermes"].tasks[tid]["status"] == "ready"  # the same review task, reopened
+    assert world["hermes"].comments[tid][0].startswith("FAILED: review answer refused")
+
+
+def test_the_test_write_stage_runs_first_and_only_test_files_may_change(world):
+    _add_role(world, "test-write", "tests_only", tools='["terminal", "file"]')
+    goal = _goal(world, acceptance="sh tests/accept.sh")
+    assert json.loads(goal["stages"]) == ["test_write", "implement", "test_verify"]
+    assert goal["role"] == "test-write" and goal["stage_idx"] == 0
+    t1 = world["hermes"].tasks[goal["current_task"]]
+    assert t1["assignee"] == "test-write" and "Change only test files" in t1["body"] and "sh tests/accept.sh" in t1["body"]
+    # a test writer that also edits source is refused
+    wt = Path(goal["worktree"])
+    grade.ensure_worktree(world["repo"], wt, goal["branch"])
+    (wt / "tests").mkdir()
+    (wt / "tests" / "accept.sh").write_text("grep -q 'VALUE = 2' app.py\n")
+    (wt / "app.py").write_text("VALUE = 1  # touched\n")
+    git(wt, "add", "-A")
+    git(wt, "commit", "-q", "-m", "tests plus a stray edit")
+    world["hermes"].tasks[goal["current_task"]]["status"] = "review"
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["attempt"] == 2 and g["stage_idx"] == 0
+    assert "changes only test files" in world["hermes"].comments[goal["current_task"]][0]
+    # undo the stray edit: tests only, failing as they should
+    (wt / "app.py").write_text("VALUE = 1\n")
+    git(wt, "commit", "-q", "-am", "tests only")
+    world["hermes"].tasks[goal["current_task"]]["status"] = "review"
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["stage_idx"] == 1 and g["role"] == "implement" and g["attempt"] == 1
+    tw = next(j for j in ledger.list_jobs(world["conn"]) if j["role"] == "test-write" and j["outcome"] == "pass")
+    assert "failing as they should" in tw["grader_detail"]
+    # the builder makes the tests pass; the check and the acceptance pass; verify; land
+    worker_commits(world, g)
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] == "pass" and g["detail"].startswith("landed")
+
+
+def test_a_security_goal_carries_the_report_to_eli(world):
+    _add_role(world, "security", "security")
+    goal = _goal(world, kind="security")
+    assert json.loads(goal["stages"]) == ["implement", "test_verify", "security"]
+    worker_commits(world, goal)
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["role"] == "security" and '"severity"' in world["hermes"].tasks[g["current_task"]]["body"]
+    world["hermes"].summaries[g["current_task"]] = json.dumps(
+        {"summary": "nothing dangerous", "findings": [{"path": "app.py", "line": 1, "severity": "info", "says": "a constant"}]}
+    )
+    world["hermes"].tasks[g["current_task"]]["status"] = "review"
+    world["loop"].tick()
+    g = ledger.get_goal(world["conn"], goal["id"])
+    assert g["outcome"] is None and g["risk"] == "ask"
+    [d] = [d for d in ledger.list_decisions(world["conn"], "team") if d["source"] == "land"]
+    assert "security report: nothing dangerous" in d["context"] and "app.py:1 [info] a constant" in d["context"]
 
 
 def test_one_team_run_per_target(team_state):

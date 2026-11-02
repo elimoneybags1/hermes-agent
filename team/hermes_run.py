@@ -110,6 +110,29 @@ def run(
     )
 
 
+# Tools an isolated run may ever get; the role's toolsets choose among them.
+ALLOWED_TOOLS = ("read_file", "search_files", "write_file", "patch", "terminal", "process_manage")
+READ_ONLY = ("read_file", "search_files")
+
+
+def _tool_names(spec: dict) -> list[str]:
+    """The role's toolsets resolved to tool names, kept to ALLOWED_TOOLS; a role with no
+    building tool (review, security, lead) gets the read-only pair."""
+    wanted: set[str] = set()
+    for ts in spec.get("tools") or []:
+        if ts == "read-only":
+            wanted |= set(READ_ONLY)
+            continue
+        try:
+            from toolsets import resolve_toolset
+
+            wanted |= set(resolve_toolset(ts))
+        except Exception:  # an unknown or plugin toolset adds nothing
+            continue
+    names = [n for n in ALLOWED_TOOLS if n in wanted]
+    return names or list(READ_ONLY)
+
+
 def execute(request: dict, home: Path) -> dict:
     # Set the isolated home before importing Hermes's config/provider modules.
     os.environ["HERMES_HOME"] = str(home)
@@ -133,19 +156,8 @@ def execute(request: dict, home: Path) -> dict:
     from toolsets import create_custom_toolset
     from run_agent import AIAgent
 
-    readonly = request["role"] == "lead"
-    names = (
-        ["read_file", "search_files"]
-        if readonly
-        else [
-            "read_file",
-            "search_files",
-            "write_file",
-            "patch",
-            "terminal",
-            "process_manage",
-        ]
-    )
+    names = _tool_names(spec)
+    readonly = request["role"] == "lead" or not ({"write_file", "patch", "terminal"} & set(names))
     create_custom_toolset("team-worker", "Team's bounded worker tools", names)
     soul = roles.soul(root, request["role"]) or ""
     if not readonly:
