@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS calls (
     ok             INTEGER NOT NULL CHECK (ok IN (0, 1)),
     error          TEXT,
     ts             TEXT NOT NULL,
-    api_calls      INTEGER
+    api_calls      INTEGER,
+    goal_id        INTEGER REFERENCES goals(id)
 );
 
 CREATE TABLE IF NOT EXISTS goals (
@@ -275,6 +276,14 @@ def init(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE goals ADD COLUMN harness_id INTEGER REFERENCES harness_reviews(id)")
             conn.execute("ALTER TABLE goals ADD COLUMN arm TEXT")
 
+        # Column added after the first ledgers were written.
+        if "goal_id" not in call_columns:
+            conn.execute("ALTER TABLE calls ADD COLUMN goal_id INTEGER REFERENCES goals(id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS calls_goal_id ON calls(goal_id)")
+
+    # Backfill goal_id for existing calls
+    backfill_call_goals(conn)
+
 
 def _check(value: str, allowed: tuple[str, ...], what: str) -> None:
     if value not in allowed:
@@ -430,6 +439,7 @@ def record_call(
     response_model: str | None = None,
     base_url: str | None = None,
     gateway_session_id: str | None = None,
+    goal_id: int | None = None,
 ) -> int:
     """Record one model call and return its id.
 
@@ -438,12 +448,15 @@ def record_call(
     ``response_model`` is the model that actually answered (LiteLLM and
     Portkey may route to a different one than was asked for).
     """
+    if goal_id is None:
+        goal_id = _goal_for(conn, job_id, task_ref)
+    
     with conn:
         cur = conn.execute(
             "INSERT INTO calls (job_id, task_ref, session_id, profile, provider, model,"
             " response_model, base_url, task_class, tokens_in, tokens_out, latency_ms,"
-            " ok, error, ts, api_calls, gateway_session_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " ok, error, ts, api_calls, gateway_session_id, goal_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 job_id,
                 task_ref,
@@ -462,9 +475,94 @@ def record_call(
                 _now(),
                 api_calls,
                 gateway_session_id,
+                goal_id,
             ),
         )
     return cur.lastrowid
+
+
+def attach_calls(conn: sqlite3.Connection, task_ref: str, job_id: int) -> int:
+    """Give every unattached call for ``task_ref`` this job id; returns how many."""
+    with conn:
+        cur = conn.execute(
+            "UPDATE calls SET job_id = ? WHERE task_ref = ? AND job_id IS NULL",
+            (job_id, task_ref),
+        )
+    return cur.rowcount
+
+
+def _goal_for(conn: sqlite3.Connection, job_id: int | None, task_ref: str | None) -> int | None:
+    """Return the goal id for a call based on job_id or task_ref.
+
+    Tries these in order and returns the first hit:
+    1. If task_ref is given, SELECT id FROM goals WHERE current_task = ? ORDER BY id DESC LIMIT 1
+    2. If job_id is given, SELECT id FROM goals WHERE job_id = ?
+    3. If job_id is given, SELECT goal_id FROM orders WHERE lead_job_id = ? LIMIT 1
+    4. If job_id is given, SELECT goal_id FROM diagnoses WHERE lead_job_id = ? OR job_id = ? LIMIT 1
+    5. If job_id is given, SELECT o.goal_id FROM jobs j JOIN orders o ON o.id = j.order_id WHERE j.id = ?
+    Returns None if nothing matches.
+    """
+    if task_ref is not None:
+        row = conn.execute(
+            "SELECT id FROM goals WHERE current_task = ? ORDER BY id DESC LIMIT 1",
+            (task_ref,),
+        ).fetchone()
+        if row is not None:
+            return row["id"]
+    
+    if job_id is not None:
+        # Try 2: goal directly linked to job_id
+        row = conn.execute(
+            "SELECT id FROM goals WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if row is not None:
+            return row["id"]
+        
+        # Try 3: from orders where lead_job_id matches
+        row = conn.execute(
+            "SELECT goal_id FROM orders WHERE lead_job_id = ? LIMIT 1",
+            (job_id,),
+        ).fetchone()
+        if row is not None:
+            return row["goal_id"]
+        
+        # Try 4: from diagnoses (either lead_job_id or job_id)
+        row = conn.execute(
+            "SELECT goal_id FROM diagnoses WHERE lead_job_id = ? OR job_id = ? LIMIT 1",
+            (job_id, job_id),
+        ).fetchone()
+        if row is not None:
+            return row["goal_id"]
+        
+        # Try 5: from jobs -> orders join
+        row = conn.execute(
+            "SELECT o.goal_id FROM jobs j JOIN orders o ON o.id = j.order_id WHERE j.id = ?",
+            (job_id,),
+        ).fetchone()
+        if row is not None:
+            return row["goal_id"]
+    
+    return None
+
+
+def backfill_call_goals(conn: sqlite3.Connection) -> int:
+    """Backfill goal_id for existing calls that have job_id or task_ref but no goal_id."""
+    with conn:
+        # Get all calls with goal_id IS NULL AND (job_id IS NOT NULL OR task_ref IS NOT NULL)
+        cursor = conn.execute(
+            "SELECT id, job_id, task_ref FROM calls WHERE goal_id IS NULL AND (job_id IS NOT NULL OR task_ref IS NOT NULL)"
+        )
+        updated = 0
+        for row in cursor:
+            goal_id = _goal_for(conn, row["job_id"], row["task_ref"])
+            if goal_id is not None:
+                conn.execute(
+                    "UPDATE calls SET goal_id = ? WHERE id = ?",
+                    (goal_id, row["id"]),
+                )
+                updated += 1
+        return updated
 
 
 def calls_for(
@@ -482,16 +580,6 @@ def calls_for(
         args.append(task_ref)
     sql = "SELECT * FROM calls WHERE " + " OR ".join(where) + " ORDER BY id"
     return [dict(r) for r in conn.execute(sql, args)]
-
-
-def attach_calls(conn: sqlite3.Connection, task_ref: str, job_id: int) -> int:
-    """Give every unattached call for ``task_ref`` this job id; returns how many."""
-    with conn:
-        cur = conn.execute(
-            "UPDATE calls SET job_id = ? WHERE task_ref = ? AND job_id IS NULL",
-            (job_id, task_ref),
-        )
-    return cur.rowcount
 
 
 # --- goals ------------------------------------------------------------------
