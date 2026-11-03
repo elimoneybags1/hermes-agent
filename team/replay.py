@@ -185,10 +185,25 @@ def results(conn: sqlite3.Connection, review_id: int) -> dict | None:
     return out
 
 
-def verdict(base: dict, branch: dict) -> str:
-    """``adopt`` only when the branch passed more items than the base; a tie, even for fewer
-    tokens, is dismissed (IDEAS.md point 6: a change must beat the base rate)."""
-    return "adopt" if branch["pass"] > base["pass"] else "dismiss"
+TOKEN_WIN = 0.8  # a tie adopted on tokens must cost at most this share of the base's input
+
+
+def verdict(base: dict, branch: dict, *, tie_on_fewer_tokens: bool = False) -> str:
+    """``adopt`` when the branch passed more items than the base (IDEAS.md point 6: a change
+    must beat the base rate). With ``tie_on_fewer_tokens`` (``replay.adopt_tie_on_fewer_tokens``)
+    a tie is also adopted when the branch's worker input tokens are at most ``TOKEN_WIN`` of
+    the base's; otherwise a tie is dismissed whatever it cost."""
+    if branch["pass"] > base["pass"]:
+        return "adopt"
+    if (
+        tie_on_fewer_tokens
+        and branch["pass"] == base["pass"]
+        and branch.get("n", 0) > 0
+        and base.get("tokens", 0) > 0
+        and branch.get("tokens", 0) <= TOKEN_WIN * base["tokens"]
+    ):
+        return "adopt"
+    return "dismiss"
 
 
 def watch_rate(conn: sqlite3.Connection, target: str, role: str, since: str) -> tuple[int, int]:

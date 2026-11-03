@@ -38,6 +38,7 @@ import sys
 import time
 import traceback
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -58,8 +59,10 @@ from team import (
     roles,
     settings,
     stages,
+    sweep,
     targets,
 )
+from team.review import backend
 
 Runner = Callable[..., subprocess.CompletedProcess[Any]]
 
@@ -76,6 +79,9 @@ CLAUDE_LIMIT = "claude usage limit"
 ASKED = "asked Eli: decision "  # a Claude attempt's job detail while the goal waits for Eli's answer
 CLAUDE_LIMIT_PAUSE_S = 3600
 QUOTA_END_CHARS = 2000
+# A sweep attempt's goal detail while it waits for the tick that runs it; the previous
+# attempt's failure follows on the next lines.
+SWEEP_QUEUED = "sweep attempt queued"
 
 
 class RunError(RuntimeError):
@@ -289,6 +295,7 @@ class Loop:
         preflight: Callable[[Path, Runner], list[str]] | None = default_preflight,
         cat: dict | None = None,
         out: Callable[[str], None] = _out,
+        complete: Callable[..., dict] = sweep.complete,
     ):
         self.root = Path(root)
         self.conn = conn
@@ -300,6 +307,7 @@ class Loop:
         self.preflight = preflight
         self._cat = cat
         self.out = out
+        self.complete = complete  # one tool-free gateway call (team.sweep.complete); faked in tests
         self.cfg = settings.load(self.root)
 
     @property
@@ -440,6 +448,9 @@ class Loop:
             ledger.finish_goal(self.conn, goal["id"], "error", "goal has no job")
             return True
         claude = (job["task_ref"] or "").startswith("claude:")
+        swept = (job["task_ref"] or "").startswith(sweep.TASK_REF)
+        if job["ended"] is None and swept:
+            return self._run_sweep(goal, job)
         if job["ended"] is None and claude:
             ledger.finish_job(
                 self.conn,
@@ -467,6 +478,8 @@ class Loop:
                 self._give_up(
                     goal, "the Claude attempt failed too", job["grader_detail"]
                 )
+            elif swept:
+                self._after_failed_sweep(goal, job)
             else:
                 self._next_attempt(goal, job["grader_detail"])
             return True
@@ -966,8 +979,15 @@ class Loop:
         *,
         parents: tuple[str, ...] = (),
     ) -> str:
-        """A kanban task for attempt ``attempt`` on the goal's branch; returns its id."""
+        """A kanban task for attempt ``attempt`` on the goal's branch; returns its id.
+
+        A builder attempt in sweep mode (``_sweep_wanted``) gets no task: its job is queued
+        and the next tick runs it (``_run_sweep``); the returned id is its task_ref.
+        """
         role = self._role(goal["role"], goal["target"])
+        order = ledger.latest_order(self.conn, goal["id"])
+        if self._sweep_wanted(goal, role, order):
+            return self._sweep_queue(goal, attempt, failure, role, order)
         profile = role.get("profile") or goal["role"]  # <role>--<target> when the target overlays it
         if goal.get("harness_id") and goal.get("arm") == "branch":
             profile = profiles.candidate_profile(goal["role"], goal["harness_id"])
@@ -975,7 +995,6 @@ class Loop:
             raise RunError(
                 f"missing Hermes profile {profile}; run `team roles sync` first"
             )
-        order = ledger.latest_order(self.conn, goal["id"])
         if order is not None and attempt == 1:
             choice = catalog.resolve(order["order"]["model"], self.cat)
         else:
@@ -1025,6 +1044,166 @@ class Loop:
             f"goal {goal['id']}: attempt {attempt} on {choice.model} ({choice.why})"
         )
         return task["id"]
+
+    # -- sweep attempts (team.sweep) ----------------------------------------------
+
+    def _sweep_wanted(self, goal: dict, role: dict, order: dict | None) -> bool:
+        """A builder attempt runs as one sweep when the setting is on, the role is a free Hermes
+        builder, the goal owns named files, and the lead did not order ``turns``."""
+        if not self.cfg["sweep.enabled"] or role["runs_on"]["harness"] != "hermes":
+            return False
+        if self._stage(goal).gate != "check" or not self._owned(goal):
+            return False
+        mode = ((order or {}).get("order") or {}).get("mode") or "sweep"
+        return mode != "turns"
+
+    def _sweep_queue(self, goal: dict, attempt: int, failure: str | None, role: dict, order: dict | None) -> str:
+        """The job row for a sweep attempt; the tick runs it so `team goal` returns at once."""
+        if order is not None and attempt == 1:
+            choice = catalog.resolve(order["order"]["model"], self.cat)
+        else:
+            choice = self._choice(role, attempt, goal["target"])
+        grade.ensure_worktree(self._repo(goal), goal["worktree"], goal["branch"], runner=self.runner)
+        stage = self._stage(goal)
+        if goal.get("part_id"):
+            ledger.set_part_stage(self.conn, goal["part_id"], stage.name)
+        if attempt == 1 or not goal.get("stage_sha"):
+            ledger.update_goal(self.conn, goal["id"], stage_sha=self._branch_head(goal))
+        ref = f"{sweep.TASK_REF}{goal['id']}-{attempt}"
+        job = self._start_job(goal, attempt, ref, choice, order["id"] if order else None)
+        detail = SWEEP_QUEUED + (f"\n{_tail(failure)}" if failure else "")
+        ledger.update_goal(self.conn, goal["id"], attempt=attempt, current_task=None, job_id=job, detail=detail)
+        self.log(f"goal {goal['id']}: attempt {attempt} on {choice.model}, one sweep ({choice.why})")
+        return ref
+
+    def _sweep_role(self, goal: dict, role: dict) -> dict:
+        """Whose SOUL and skills the sweep prompt carries: the role's files, or for a harness
+        review's branch arm the profile synced from the branch."""
+        if goal.get("harness_id") and goal.get("arm") == "branch":
+            pdir = profiles.profile_dir(profiles.candidate_profile(goal["role"], goal["harness_id"]))
+            if pdir.exists():
+                return sweep.role_from_profile(goal["role"], pdir)
+        return role
+
+    def _run_sweep(self, goal: dict, job: dict) -> bool:
+        """Run a queued sweep attempt to its end (calls, apply, commit, check), grade the job and
+        move the goal on: advance, the lead and the next attempt, or the replay's record."""
+        self._sweep_rounds(goal, job)
+        goal, job = ledger.get_goal(self.conn, goal["id"]), ledger.get_job(self.conn, job["id"])
+        if goal.get("harness_id"):
+            self._finish_replay(goal, job)
+        elif job["outcome"] == "pass":
+            self._advance(goal)
+        else:
+            self._after_failed_sweep(goal, job)
+        return True
+
+    def _sweep_rounds(self, goal: dict, job: dict) -> None:
+        """The calls of one sweep attempt, each applied and checked, until one passes or the
+        attempt's calls are spent; finishes the job."""
+        role = self._role(goal["role"], goal["target"])
+        owned = self._owned(goal) or []
+        order = ledger.latest_order(self.conn, goal["id"])
+        body = order["order"] if order else None
+        choice = catalog.ModelChoice(**job["model_choice"])
+        repo, wt = self._repo(goal), Path(goal["worktree"])
+        grade.ensure_worktree(repo, wt, goal["branch"], runner=self.runner)
+        detail = goal.get("detail") or ""
+        failure = detail.split("\n", 1)[1] if detail.startswith(SWEEP_QUEUED) and "\n" in detail else None
+        system = sweep.instructions(self._sweep_role(goal, role))
+        attempt = int(goal.get("attempt") or 1)
+        calls_n, samples = self.cfg["sweep.calls_per_attempt"], self.cfg["sweep.samples"]
+        call_failure, grader = None, "sweep"
+        for k in range(1, calls_n + 1):
+            prompt = sweep.packet(
+                body, goal, wt, owned, self.cfg["sweep.packet_bytes"],
+                attempt=attempt, call=k, failure=failure, call_failure=call_failure,
+            )
+            answers = self._sweep_calls(goal, job, choice, system, prompt, samples, k)
+            head = grade.head(wt, runner=self.runner)
+            for i, ans in enumerate(answers):
+                if ans.get("error"):
+                    call_failure, grader = ans["error"], "sweep"
+                    continue
+                changes, refused, cannot = sweep.plan_changes(ans.get("text"), owned, wt)
+                if cannot:
+                    reason = f"the worker says the part cannot be done in its files: {cannot}"
+                    ledger.finish_job(self.conn, job["id"], "fail", "sweep", reason)
+                    self.log(f"goal {goal['id']}: {reason}")
+                    return
+                if changes is None:
+                    call_failure, grader = "answer refused: " + "; ".join(refused), "sweep"
+                    continue
+                if i:  # another sample of the same call starts from where the call began
+                    grade._git(wt, "reset", "--hard", head, runner=self.runner)
+                sweep.apply(wt, changes)
+                grade._git(wt, "add", "-A", runner=self.runner)
+                grade._must(
+                    grade._git(wt, "commit", "-q", "-m", f"team sweep {attempt}.{k}: {sweep.summary_of(ans.get('text'))}", runner=self.runner),
+                    "git commit failed",
+                )
+                ok, result = self.grade(goal)
+                if ok:
+                    ledger.finish_job(self.conn, job["id"], "pass", "check", result)
+                    self.log(f"goal {goal['id']}: sweep attempt {attempt} passed after {k} call(s)")
+                    return
+                call_failure, grader = result, "check"
+        ledger.finish_job(self.conn, job["id"], "fail", grader, call_failure or "no usable answer")
+        self.log(f"goal {goal['id']}: sweep attempt {attempt} failed after {calls_n} call(s): {_tail(call_failure, 200)}")
+
+    def _sweep_calls(self, goal: dict, job: dict, choice: catalog.ModelChoice, system: str, prompt: str, samples: int, k: int) -> list[dict]:
+        """``samples`` completions of one packet in parallel, each a ledger call row."""
+        session = f"sweep-{goal['id']}-{goal.get('attempt') or 1}-{k}"
+        max_tokens = self.cfg["sweep.max_output_tokens"]
+
+        def one(i: int) -> dict:
+            started = time.monotonic()
+            try:
+                r = dict(self.complete(choice.spec, system, prompt, max_tokens=max_tokens, session=f"{session}-{i}"))
+            except backend.ScoutError as e:
+                # Worded so the ledger files the attempt under infra, not the worker's work.
+                r = {"error": f"gateway did not answer: {e}", "usage": e.usage}
+            except (OSError, ValueError) as e:
+                r = {"error": f"gateway did not answer: {type(e).__name__}: {e}"}
+            r["latency_ms"] = int((time.monotonic() - started) * 1000)
+            r["session"] = f"{session}-{i}"
+            return r
+
+        if samples <= 1:
+            results = [one(0)]
+        else:
+            with ThreadPoolExecutor(max_workers=samples) as pool:
+                results = list(pool.map(one, range(samples)))
+        for r in results:  # the connection belongs to this thread
+            usage = r.get("usage") or {}
+            details = usage.get("prompt_tokens_details") or {}
+            ledger.record_call(
+                self.conn, job["id"], "litellm", choice.model, goal["role"],
+                usage.get("prompt_tokens"), usage.get("completion_tokens"), r.get("latency_ms"),
+                not r.get("error"), error=r.get("error"), task_ref=job["task_ref"],
+                session_id=r["session"], profile=goal["role"], response_model=r.get("model"),
+                goal_id=goal["id"], target=goal["target"], cache_read_tokens=details.get("cached_tokens"),
+            )
+        return results
+
+    def _after_failed_sweep(self, goal: dict, job: dict) -> None:
+        """A sweep attempt failed: the lead reads it (as after a kanban worker), then the next
+        attempt, Claude, or Eli."""
+        detail = job["grader_detail"] or ""
+        goal = ledger.get_goal(self.conn, goal["id"])
+        role = self._role(goal["role"], goal["target"])
+        nxt = goal["attempt"] + 1
+        diagnosis = self._diagnose(goal, job, detail) if nxt <= role["escalation"]["after_failures"] else None
+        if diagnosis is not None and diagnosis["action"] == "ask":
+            self._give_up(goal, f"the lead asks Eli: {diagnosis['question']}", diagnosis["cause"])
+            return
+        if diagnosis is not None and diagnosis["action"] == "escalate":
+            if self.cfg["escalation.claude"]:
+                self._claude_attempt(goal, nxt, detail)
+            else:
+                self._give_up(goal, "the lead says a free model cannot do this", detail)
+            return
+        self._next_attempt(goal, detail)
 
     def _watch(self, goal: dict, job: dict, full: dict) -> bool:
         """Kanban neither enforces --max-runtime nor notices a dead worker."""
@@ -1167,7 +1346,15 @@ class Loop:
             return
         role = self._role(goal["role"], goal["target"])
         nxt = goal["attempt"] + 1
-        if nxt <= role["escalation"]["after_failures"]:
+        used = ledger.goal_usage(self.conn, goal["id"])
+        over = []
+        if used["calls"] > self.cfg["worker.max_calls_per_goal"]:
+            over.append(f"{used['calls']} worker calls (limit {self.cfg['worker.max_calls_per_goal']})")
+        if used["tokens_in"] > self.cfg["worker.max_input_tokens_per_goal"]:
+            over.append(f"{used['tokens_in']:,} input tokens (limit {self.cfg['worker.max_input_tokens_per_goal']:,})")
+        if over:
+            self._give_up(goal, "over its budget after " + " and ".join(over), failure)
+        elif nxt <= role["escalation"]["after_failures"]:
             self.free_attempt(goal, nxt, failure)
         elif (
             nxt == role["escalation"]["after_failures"] + 1
@@ -1590,6 +1777,8 @@ class Loop:
                         revised["steps"] = found["steps"]
                     if found["context"]:
                         revised["context"] = found["context"]
+                    if found.get("mode"):
+                        revised["mode"] = found["mode"]
                     ledger.create_order(
                         self.conn, goal["id"], revised, goal.get("part_id"), lead_job
                     )

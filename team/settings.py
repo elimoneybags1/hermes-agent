@@ -34,8 +34,38 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
     ),
     "escalation.claude_max_turns": (int, 60, "Turn limit for a Claude gateway attempt."),
     "escalation.claude_timeout_s": (int, 1800, "Time limit for a Claude gateway attempt."),
-    "worker.max_calls_per_goal": (int, 60, "Most worker model calls one goal may use across all its attempts; past this the goal stops and goes back to the lead. Passing attempts averaged 27 calls, the largest 73 (ledger, 2026-11-02). Trial limit, not yet enforced."),
-    "worker.max_input_tokens_per_goal": (int, 2000000, "Most worker input tokens one goal may use across all its attempts; past this the goal stops and goes back to the lead. Trial limit, not yet enforced."),
+    "worker.max_calls_per_goal": (int, 60, "Most worker model calls one goal may use across all its attempts (lead and code-only jobs not counted); a failed attempt past this stops the goal and asks Eli instead of trying again. Passing turn-based attempts averaged 25 calls, the largest 73 (ledger, 2026-11-02)."),
+    "worker.max_input_tokens_per_goal": (int, 2000000, "Most worker input tokens one goal may use across all its attempts; a failed attempt past this stops the goal and asks Eli instead of trying again. Landed implement goals used 300K to 1.27M (ledger, 2026-11-02)."),
+    "sweep.enabled": (
+        bool,
+        True,
+        "Builder attempts run as one sweep: Team puts the order, the owned files in full and the "
+        "cited code into one tool-free call, applies the answer, commits and runs the check "
+        "(team.sweep). Off, or when the lead orders a part in `turns` mode, the attempt is a "
+        "kanban worker with tools, re-sending its context on every call.",
+    ),
+    "sweep.calls_per_attempt": (
+        int,
+        3,
+        "Most model calls one sweep attempt may make: the first answer, then one per failed check "
+        "with the files as the answer left them and the check's output.",
+    ),
+    "sweep.samples": (
+        int,
+        1,
+        "Answers asked for in parallel per sweep call, each applied and checked in turn until one "
+        "passes (Agentless: sample N, keep the one that passes). Free calls cost quota, not money.",
+    ),
+    "sweep.packet_bytes": (
+        int,
+        160000,
+        "Most bytes of owned files and cited code in one sweep packet (about 40K tokens).",
+    ),
+    "sweep.max_output_tokens": (
+        int,
+        16000,
+        "Output budget for one sweep answer; whole files count, so this is well above a turn's.",
+    ),
     "risk.max_changed_lines": (
         int,
         800,
@@ -85,6 +115,13 @@ FIELDS: dict[str, tuple[type, Any, str]] = {
         "Finished worker orders of one role frozen into the replay set that grades a change to "
         "that role's files; attempts that died of infrastructure are left out. Eight paired items "
         "is a regression guard and a signal, not proof: 5/5 discordant wins is p≈0.03.",
+    ),
+    "replay.adopt_tie_on_fewer_tokens": (
+        bool,
+        False,
+        "Adopt a harness change that passes exactly as many replay items as the base when its "
+        "worker input tokens are at most 80% of the base's. Off: IDEAS.md point 6 as written, a "
+        "change must pass more items; a tie is dismissed whatever it cost.",
     ),
     "replay.watch_attempts": (
         int,

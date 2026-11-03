@@ -135,6 +135,12 @@ def test_replay_results_go_to_eli_and_adopt_merges_the_branch(team):
 def test_a_tie_is_dismissed_even_for_fewer_tokens_and_infra_deaths_are_not_replayed(team):
     assert replay.verdict({"pass": 1, "n": 1, "tokens": 100}, {"pass": 1, "n": 1, "tokens": 10}) == "dismiss"
     assert replay.verdict({"pass": 0, "n": 1, "tokens": 100}, {"pass": 1, "n": 1, "tokens": 900}) == "adopt"
+    # the opt-in (replay.adopt_tie_on_fewer_tokens): a tie at 80% of the base's tokens or less
+    tie = dict(tie_on_fewer_tokens=True)
+    assert replay.verdict({"pass": 1, "n": 1, "tokens": 100}, {"pass": 1, "n": 1, "tokens": 80}, **tie) == "adopt"
+    assert replay.verdict({"pass": 1, "n": 1, "tokens": 100}, {"pass": 1, "n": 1, "tokens": 81}, **tie) == "dismiss"
+    assert replay.verdict({"pass": 0, "n": 1, "tokens": 0}, {"pass": 0, "n": 1, "tokens": 0}, **tie) == "dismiss"
+    assert replay.verdict({"pass": 2, "n": 2, "tokens": 100}, {"pass": 1, "n": 2, "tokens": 10}, **tie) == "dismiss"
     gid = landed_order(team)
     # a second order whose attempt died of infrastructure never enters the set
     goal = ledger.get_goal(team["conn"], gid)

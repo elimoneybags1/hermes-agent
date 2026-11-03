@@ -1092,7 +1092,10 @@ def settle_reviews(
             s["base"] = {**res["base"], "versions": replay.versions(root, r["roles"]), "review": r["id"]}
             replay.save_set(s)
         base = {k: (s.get("base") or {}).get(k, 0) for k in ("pass", "n", "tokens")}
-        rec = replay.verdict(base, res["branch"])
+        rec = replay.verdict(
+            base, res["branch"],
+            tie_on_fewer_tokens=settings.load(root)["replay.adopt_tie_on_fewer_tokens"],
+        )
         line = replay.describe(base, res["branch"])
         context = (
             f"{r['why']}\n\nReplay of {res['branch']['n']} finished orders with the changed "

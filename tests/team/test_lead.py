@@ -128,6 +128,20 @@ def test_diagnosis_validation(tree):
         "action ask needs a question for Eli"
     ]
     assert lead.validate_diagnosis({"action": "shrug"}, tree)[0] is None
+    found, errors = lead.validate_diagnosis({"action": "retry", "cause": "c", "note": "n", "mode": "turns"}, tree)
+    assert errors == [] and found["mode"] == "turns"
+    assert "mode 'loop' must be one of" in lead.validate_diagnosis({"action": "retry", "mode": "loop"}, tree)[1][0]
+
+
+def test_a_part_has_a_mode_sweep_unless_the_lead_says_turns(tree):
+    parts, errors = lead.validate_plan({"parts": [part()]}, tree, MENU, 6, CATALOG)
+    assert errors == [] and parts[0]["mode"] == "sweep"
+    parts, errors = lead.validate_plan({"parts": [part(mode="turns")]}, tree, MENU, 6, CATALOG)
+    assert errors == [] and parts[0]["mode"] == "turns"
+    _, errors = lead.validate_plan({"parts": [part(mode="agent")]}, tree, MENU, 6, CATALOG)
+    assert "mode 'agent' must be one of ['sweep', 'turns']" in errors[0]
+    assert "`mode`" in lead.plan_prompt("g", "./check.sh", MENU, 6)
+    assert "mode was `turns`" in lead.diagnose_prompt(part(mode="turns"), "f", "d", 1)
 
 
 # --- rendering --------------------------------------------------------------------

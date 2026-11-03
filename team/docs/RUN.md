@@ -39,6 +39,43 @@ fails before the part is built and passes after (its own new tests). The
 `check` gate runs it after the target's check, and refuses a commit that
 changes nothing against the base.
 
+## One-sweep attempts
+
+A builder attempt is one sweep unless the lead orders otherwise (`team.sweep`,
+`sweep.enabled`). Team assembles the packet in code: the order, every file the
+part owns in full, the code the order cites, and on a retry what failed. One
+tool-free call through LiteLLM on the attempt's free model answers with a JSON
+object of whole files, exact find/replace edits and deletions, all inside the
+owned paths, or `{"cannot": …}`. Code applies it, commits (`team sweep N.k:
+…`), merges the base and runs the check and the acceptance command like any
+attempt. A failed check sends the files as the answer left them and the
+check's output back for another answer, up to `sweep.calls_per_attempt`
+calls; `sweep.samples` asks for that many answers in parallel and keeps the
+first that passes. The attempt's job has `task_ref = sweep:<goal>-<attempt>`,
+no kanban task, and one `calls` row per model call. When every call is spent
+the attempt has failed like a kanban worker's: the lead diagnoses, the next
+candidate model tries, then Claude, then Eli.
+
+Why: a turn-based worker re-sends its whole context on every tool call. In
+the ledger on 2026-11-02 a passing implement attempt averaged 25 calls at 27K
+input tokens for about 300 output tokens each, 505 reads and 443 terminal
+calls against 257 edits across all implement sessions. The packet replaces the
+reading; the check replaces the running.
+
+The lead sets `mode` per part: `sweep` for a part whose files it can name and
+whose change is clear from reading them; `turns` (the kanban worker with
+tools) for a part that must run or explore things to know what to write. A
+diagnosis may switch the mode for the retry. A goal with no owned files (a
+plain `team goal` without the lead) always runs in turns.
+
+Budgets: `worker.max_calls_per_goal` and `worker.max_input_tokens_per_goal`
+are enforced when an attempt fails; a goal over either stops and asks Eli
+instead of trying again. The replay verdict stays pass-count first;
+`replay.adopt_tie_on_fewer_tokens` (off by default) also adopts a tie that
+costs at most 80% of the base's worker input tokens. Model choice ranks
+candidates by work pass rate and, among those within 0.1 of the leader, by
+input tokens per attempt.
+
 ## Commands
 
 Run from this checkout, using `team/bin/team` (or the installed `team` link).

@@ -102,6 +102,9 @@ PLAN_SCHEMA = {
                     "acceptance_cmd": {"type": "string"},
                     # What a reviewer checks, one observable fact per line.
                     "done_when": _STRS,
+                    # How the builder works (team.sweep.MODES): `sweep`, one tool-free call
+                    # over the owned files, or `turns`, a worker with tools.
+                    "mode": {"type": "string", "enum": ["sweep", "turns"]},
                 },
             },
         },
@@ -131,8 +134,11 @@ DIAGNOSIS_SCHEMA = {
         "steps": _STRS,
         "context": {"type": "array", "items": _REF},
         "question": {"type": "string"},
+        "mode": {"type": "string", "enum": ["sweep", "turns"]},
     },
 }
+
+MODES = ("sweep", "turns")
 
 
 class LeadError(RuntimeError):
@@ -306,6 +312,9 @@ def validate_plan(
         done_when = [str(s).strip() for s in p.get("done_when") or [] if str(s).strip()]
         if not done_when:
             errors.append(f"{where}: done_when needs at least one observable fact")
+        mode = str(p.get("mode") or "sweep").strip().lower()
+        if mode not in MODES:
+            errors.append(f"{where}: mode {mode!r} must be one of {list(MODES)}")
         clean.append(
             {
                 "key": key,
@@ -322,6 +331,7 @@ def validate_plan(
                 "model": model,
                 "acceptance_cmd": acceptance,
                 "done_when": done_when,
+                "mode": mode,
             }
         )
     if errors:
@@ -383,6 +393,9 @@ def validate_diagnosis(data: Any, tree: Path) -> tuple[dict | None, list[str]]:
     tag = str(data.get("cause_tag") or "other").strip().lower()
     if tag not in CAUSE_TAGS:
         errors.append(f"cause_tag {tag!r} must be one of {list(CAUSE_TAGS)}")
+    mode = str(data.get("mode") or "").strip().lower()
+    if mode and mode not in MODES:
+        errors.append(f"mode {mode!r} must be one of {list(MODES)}")
     if errors:
         return None, errors
     return {
@@ -393,6 +406,7 @@ def validate_diagnosis(data: Any, tree: Path) -> tuple[dict | None, list[str]]:
         "steps": [str(s) for s in data.get("steps") or [] if str(s).strip()],
         "context": refs,
         "question": str(data.get("question") or "").strip(),
+        "mode": mode,
     }, []
 
 
@@ -710,6 +724,14 @@ def plan_prompt(
         )
         + "Team runs it after the check; a commit that changes nothing fails it. And `done_when`: "
         "the observable facts a reviewer verifies, one per line.",
+        "Each part has a `mode`. `sweep` (the default) means Team hands the builder the order, "
+        "every file it owns in full and the code you cite in one tool-free call, applies the "
+        "answer, runs the check and, on failure, asks again with the output: cheap, and right "
+        "for a part whose files you can name and whose change is clear from reading them. "
+        "`turns` means a worker with file and terminal tools, re-sending its context every "
+        "call: for a part that must run, inspect or explore things to know what to write. "
+        "Owned paths matter more in sweep mode: name every file the part writes, and keep "
+        "them small enough to read whole.",
     ]
     if refused:
         lines += [
@@ -741,6 +763,9 @@ def diagnose_prompt(
         "(only Eli can decide; give the question).",
         "Tag the cause with one word (`cause_tag`), so Team can count what recurs across "
         "projects: " + "; ".join(f"`{k}`: {v}" for k, v in CAUSE_TAGS.items()) + ".",
+        f"The order's mode was `{order.get('mode') or 'sweep'}`. On retry you may set `mode`: "
+        "`turns` when the worker had to run or explore things it could not see in its packet; "
+        "`sweep` when a tool-using worker wandered and the files it owns say what to do.",
     ]
     if refused:
         lines += ["Team refused your previous answer:", _bullets(refused)]

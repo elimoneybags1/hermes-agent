@@ -183,6 +183,8 @@ def world(tmp_path, team_state, monkeypatch):
         root / "team" / "roles" / "_base" / "config.yaml",
     )
     write_role(root, "implement", skills=("commit-before-done",))
+    # These tests exercise the kanban worker path; tests/team/test_sweep.py turns sweeps on.
+    (root / "team" / "orchestration.toml").write_text("[sweep]\nenabled = false\n")
     git(root, "init", "-q", "-b", "main")
     git(root, "config", "user.name", "T")
     git(root, "config", "user.email", "t@t")
