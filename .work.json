@@ -6,7 +6,7 @@
       "layout": "columns",
       "panes": [
         {"label": "Team", "cwd": "", "claude": true},
-        {"label": "hermes", "cwd": "", "command": "integrations/bin/hermes"},
+        {"label": "hermes", "cwd": "", "command": "integrations/bin/hermes --yolo"},
         {"label": "shell", "cwd": ""}
       ]
     }
