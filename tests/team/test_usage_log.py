@@ -12,6 +12,7 @@ import pytest
 def usage_log(monkeypatch, tmp_path):
     # Only the callback base class is a proxy dependency; exercise the real adapter and DB.
     monkeypatch.setitem(sys.modules, "litellm.integrations.custom_logger", SimpleNamespace(CustomLogger=object))
+    monkeypatch.setitem(sys.modules, "litellm.constants", SimpleNamespace(RETURN_RAW_MODEL_NAME_METADATA_KEY='raw-model-test'))
     path = Path(__file__).resolve().parents[2] / "litellm/team/usage_log.py"
     spec = importlib.util.spec_from_file_location("usage_log_test", path)
     module = importlib.util.module_from_spec(spec)
@@ -53,3 +54,22 @@ def test_existing_history_survives_callback_schema_upgrade(usage_log):
     with usage_log.connect() as conn:
         rows = conn.execute('SELECT model,tokens_in,usage_reported FROM calls ORDER BY id').fetchall()
     assert rows == [('old-model', 42, 0), ('new-model', 10, 1)]
+
+
+def test_response_identity_and_requested_tier_survive_fallback_logging(usage_log):
+    import asyncio
+    original = {'model': 'tier-medium', 'metadata': {'session_id': 'one-call'}, 'messages': []}
+    shaped = asyncio.run(usage_log.logger.async_pre_call_hook(None, None, original, 'completion'))
+    assert shaped['metadata'][usage_log.RETURN_RAW_MODEL_NAME_METADATA_KEY] is True
+    assert shaped['metadata']['team_requested_model'] == 'tier-medium'
+    assert original['metadata'] == {'session_id': 'one-call'} and shaped['messages'] is original['messages']
+    kwargs = {'litellm_params': {'metadata': {**shaped['metadata'], 'deployment_model_name': 'tier-complex'}},
+              'standard_logging_object': {'model_id': 'tier-complex/selected', 'model': 'openai/catalog-model'}}
+    usage_log.logger._write(kwargs, False)
+    usage_log.logger._write(kwargs, True, {'id': 'response-1', 'model': 'provider/actual-model',
+                                          'usage': {'prompt_tokens': 10, 'completion_tokens': 4}})
+    with usage_log.connect() as conn:
+        rows = conn.execute('SELECT "group",tier,routed_group,response_model,response_id,tokens_in,ok '
+                            'FROM calls ORDER BY id').fetchall()
+    assert rows == [('tier-medium', 'medium', 'tier-complex', None, None, None, 0),
+                    ('tier-medium', 'medium', 'tier-complex', 'provider/actual-model', 'response-1', 10, 1)]

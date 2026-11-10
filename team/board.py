@@ -480,7 +480,7 @@ def board(conn: sqlite3.Connection, root: Path, cat: dict | None = None, target:
         return {
             "configured": configured(root),
             "target": target,
-            "targets": [t["name"] for t in targets.list_targets() if t.get("enabled", True)],
+            "targets": [t["name"] for t in targets.list_targets()],
             "waiting": waiting,
             "columns": cols,
             "done": done,

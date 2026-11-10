@@ -1,9 +1,9 @@
 """Outcomes ledger: every job Team runs, every model call, and what Eli decided.
 
 SQLite at ``$TEAM_STATE/team.db``. A job's outcome is written by its grading
-check, never by a model. There is no cost column: the free gate refuses any
-paid model, so every call costs nothing; the ``violations`` table records any
-call that reached something outside the catalog.
+check, never by a model. Call costs stay NULL unless explicitly reported or
+estimated with a recorded basis. The ``violations`` table records calls that
+reached something outside the catalog.
 
 Tables (all present from day one, see PLAN.md Phase 4):
 
@@ -273,6 +273,10 @@ def init(conn: sqlite3.Connection) -> None:
             )
 
         call_columns = {r["name"] for r in conn.execute("PRAGMA table_info(calls)")}
+        for name, kind in {"target": "TEXT", "cache_read_tokens": "INTEGER",
+                           "cost_usd": "REAL", "cost_basis": "TEXT"}.items():
+            if name not in call_columns:
+                conn.execute(f"ALTER TABLE calls ADD COLUMN {name} {kind}")
         if "gateway_session_id" not in call_columns:
             conn.execute("ALTER TABLE calls ADD COLUMN gateway_session_id TEXT")
 
@@ -570,6 +574,10 @@ def record_call(
     base_url: str | None = None,
     gateway_session_id: str | None = None,
     goal_id: int | None = None,
+    target: str | None = None,
+    cache_read_tokens: int | None = None,
+    cost_usd: float | None = None,
+    cost_basis: str | None = None,
 ) -> int:
     """Record one model call and return its id.
 
@@ -585,8 +593,8 @@ def record_call(
         cur = conn.execute(
             "INSERT INTO calls (job_id, task_ref, session_id, profile, provider, model,"
             " response_model, base_url, task_class, tokens_in, tokens_out, latency_ms,"
-            " ok, error, ts, api_calls, gateway_session_id, goal_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " ok, error, ts, api_calls, gateway_session_id, goal_id, target, cache_read_tokens, cost_usd, cost_basis)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 job_id,
                 task_ref,
@@ -606,6 +614,10 @@ def record_call(
                 api_calls,
                 gateway_session_id,
                 goal_id,
+                target,
+                cache_read_tokens,
+                cost_usd,
+                cost_basis,
             ),
         )
     return cur.lastrowid

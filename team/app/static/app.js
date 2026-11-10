@@ -125,9 +125,12 @@
 
   // ---------- routing ----------
 
+  const messenger = window.createTeamMessenger({h, fill, api, prose});
+  const visuals = window.createTeamVisuals({h, fill, api, fmt});
+  const dashboardPages = window.createTeamDashboard({h, fill, api, fmt, badge, messenger, visuals});
   let stopPage = null;
   function route() {
-    const page = (location.hash || "#").slice(1) || "work";
+    const page = (location.hash || "#").slice(1).split("?")[0] || "overview";
     document.querySelectorAll("#nav a").forEach(function (a) {
       a.classList.toggle("on", a.dataset.page === page);
     });
@@ -136,7 +139,7 @@
     const main = document.getElementById("main");
     main.className = "page page--" + page;
     fill(main);
-    const pages = { work: Work, agents: AgentsPage, team: TeamPage, gateway: GatewayPage, litellm: GatewayPage, portkey: GatewayPage, usage: UsagePage };
+    const pages = { work: Work, "agent-settings": AgentsPage, team: TeamPage, gateway: visuals.Gateway, "gateway-settings": GatewayPage, messages: messenger.Page, litellm: GatewayPage, portkey: GatewayPage, usage: UsagePage, ...dashboardPages };
     stopPage = (pages[page] || Work)(main) || null;
   }
   window.addEventListener("hashchange", route);
@@ -154,7 +157,7 @@
 
   // ---------- the sidebar: services, roles, tokens ----------
 
-  let gatewayCache = null, boardCache = null, chatBusy = false, aideBusy = false, chatTools = [];
+  let rosterCache = [], gatewayCache = null, boardCache = null, chatBusy = false, aideBusy = false, chatTools = [];
   async function services() {
     try {
       const o = await api("gateway");
@@ -173,27 +176,16 @@
   function drawSidebar() {
     const b = boardCache;
     if (!b) return;
-    const cfg = b.configured, z = b.tokens.zones;
-    const planning = chatTools.some(function (t) { return t.name === "team_propose" && !t.done; });
-    const roles = [
-      { key: "boss", title: "Boss", sub: cfg.boss.model || "?", working: chatBusy, note: b.waiting.length ? b.waiting.length + " goal" + (b.waiting.length > 1 ? "s" : "") + " for you" : null },
-      { key: "aide", title: "Aide", sub: (cfg.aide && cfg.aide.tiers || []).join(" → ") || "off", working: aideBusy, note: aideBusy ? "answering" : null },
-    ];
-    // one entry per station: the planner, every active worker role in pipeline order, the rescue
-    (cfg.stations || ["lead", "implement", "rescue"]).forEach(function (s) {
-      const n = (b.columns[s] || []).length;
-      if (s === "lead") roles.push({ key: "lead", title: "Planner", sub: cfg.lead.model || "?", working: planning, note: planning ? "drafting" : null });
-      else if (s === "rescue") roles.push({ key: "rescue", title: "Rescue", sub: cfg.rescue.model || "?", working: n > 0, note: n ? n + " rescuing" : null });
-      else {
-        const c = cfg[s] || {};
-        roles.push({ key: s, title: s === "implement" ? "Implementer" : (c.title || s), sub: (c.tiers || []).join(" → "), working: n > 0,
-          note: n ? n + (s === "implement" ? " building" : " working") : null });
-      }
+    const roles = rosterCache.map(function (r) {
+      const count = (b.columns[r.name] || []).length;
+      const working = r.name === "boss" ? chatBusy : r.name === "aide" ? aideBusy : false;
+      return {key: r.name, title: r.title, sub: r.model || (r.candidates || []).join(" → "),
+        working, note: working ? "responding" : count ? count + " open" : r.status};
     });
     fill(document.getElementById("roles"), roles.map(function (r) {
       return h("button", { class: "role" + (r.working ? " role--working" : ""), title: "Open " + r.title + " in Agents", onclick: function () {
         try { sessionStorage.setItem("team-sel", r.key === "rescue" ? "implement" : r.key); } catch (e) { /* private window */ }
-        location.hash = "#team";
+        location.hash = "#agents";
       } },
         h("span", { class: "role-dot" }),
         h("span", { class: "role-text" }, h("span", { class: "role-name" }, r.title), h("span", { class: "role-sub" }, r.sub)),
@@ -208,8 +200,8 @@
   }
   async function pollSidebar() {
     try {
-      const r = await Promise.all([api("board"), api("chat")]);
-      boardCache = r[0]; chatBusy = !!r[1].current; aideBusy = !!r[1].aide_current; chatTools = r[1].current ? r[1].current.tools : [];
+      const r = await Promise.all([api("board"), Promise.resolve(messenger.snapshot()), api("agents")]);
+      boardCache = r[0]; rosterCache = r[2].roles; chatBusy = !!r[1].current; aideBusy = !!r[1].aide_current; chatTools = r[1].current ? r[1].current.tools : [];
       drawSidebar();
     } catch (e) { /* the pages show their own errors */ }
   }
@@ -947,8 +939,9 @@
 
       fill(main, 
         h("div", { class: "gw" },
-          h("div", { class: "gw-head" }, h("h1", null, "LiteLLM"), h("p", { class: "muted" }, "Picks the model inside each tier. Order is LiteLLM's priority: #1 first, the next only while the ones above are failing or cooling down. Tier fallbacks are where a request goes when its whole tier fails."),
+          h("div", { class: "gw-head" }, h("h1", null, "LiteLLM · Models & tiers"), h("p", { class: "muted" }, "New sessions start with the highest-priority eligible model (#1 first). Existing sessions prefer the model that last answered while its pin remains valid. Failures, cooldowns, or context limits can move a call to another model. Tier fallbacks apply when the tier cannot serve the call; context-window fallbacks have their own routing policy below."),
             serviceCard("litellm")),
+          h("p", { class: "muted" }, "Shared gateway settings: changes affect both Team and My Prof. Move models with the tier selector, use ↑ / ↓ to change priority, and list fallback tiers in order. Review changes before applying. Agent policies control which tier a task requests."),
           h("h3", null, "Tiers"),
           h("div", { class: "tier-edit" }, cat.tiers.map(function (t) {
             return h("div", { class: "tier" }, h("div", { class: "tier-name" }, t, h("span", { class: "muted" }, " · " + order[t].length + " models")),
@@ -1228,6 +1221,8 @@
       h("div", { class: "muted" }, "Every call: a Hermes profile → LiteLLM, which chooses the model → Portkey, which chooses the provider → a free provider. Numbers are LiteLLM's log for the last 24 hours.")), tabs, view);
     let selected = (function () { try { return sessionStorage.getItem("gw-sel") || "overview"; } catch (e) { return "overview"; } })(), stop = null;
     const pages = { overview: GatewayOverview, models: LiteLLMPage, providers: PortkeyPage };
+    const requestedTab = new URLSearchParams(location.hash.split("?")[1] || "").get("tab");
+    if (Object.hasOwn(pages, requestedTab)) selected = requestedTab;
     function pick(k) { selected = k; try { sessionStorage.setItem("gw-sel", k); } catch (e) { /* private window */ } drawNav(); draw(); }
     function drawNav() {
       fill(tabs, [["overview", "Overview"], ["models", "Models & tiers"], ["providers", "Providers & keys"]].map(function (p) {
@@ -1304,4 +1299,5 @@
     const stop = every(60000, function () { return load().catch(fail); });
     return function () { stop(); clearTimeout(verifyTimer); };
   }
+  route();
 })();

@@ -107,6 +107,7 @@ def record(**kw: Any) -> None:
         model = kw.get("model")
         response_model = kw.get("response_model")
         tokens_in, tokens_out = _usage(kw.get("usage"))
+        usage = kw.get("usage") if isinstance(kw.get("usage"), dict) else {}
         duration = kw.get("api_duration")
         latency_ms = int(float(duration) * 1000) if duration is not None else None
         try:
@@ -118,7 +119,7 @@ def record(**kw: Any) -> None:
         if error:
             detail = str(error)[:500]
         job = ledger.open_job_for_task(conn, task_ref) if task_ref else None
-        ledger.record_call(
+        call_id = ledger.record_call(
             conn,
             job["id"] if job else None,
             provider or "unknown",
@@ -137,6 +138,13 @@ def record(**kw: Any) -> None:
             base_url=base_url,
             gateway_session_id=resolve_affinity_key(kw.get("session_id")),
         )
+        # Hooks reload independently of a long-running worker's ledger module.
+        # Keep its call contract intact until that process has restarted.
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(calls)")}
+        if "cache_read_tokens" in columns:
+            with conn:
+                conn.execute("UPDATE calls SET cache_read_tokens=? WHERE id=?",
+                             (_int(usage.get("cache_read_tokens")), call_id))
         if kind:
             ledger.record_violation(conn, kind, detail or kind, task_ref=task_ref)
     except Exception as e:  # the hook must never raise into the agent loop

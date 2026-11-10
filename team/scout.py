@@ -12,6 +12,7 @@ from team.ledger import state_dir
 from team.review import local
 from team.review.backend import ScoutError, complete
 from team.review.summarize import merge_notes
+from team.scout_usage import tracked_call
 
 VERSION = 'scout-2'
 
@@ -118,7 +119,7 @@ def _scan(target: str, *, tree: Path | None = None, model: str = 'tier-simple',
                 report['calls'] += 1
                 file_calls += 1
                 try:
-                    result = call(model, prompt)
+                    result = tracked_call(target, 'scout', model, prompt, call)
                     notes = parse_notes(result['text'], f'{rel}:{start}-{end}')
                     if not any(notes.values()):
                         raise ScoutError('model returned no tagged evidence')
@@ -196,7 +197,7 @@ def ideas(target: str, *, model: str = 'tier-reasoning', call=complete) -> dict:
               'and acceptance test. Label this a proposal, never an implemented or verified fix. '
               'Partial or stale evidence limits your conclusions. You cannot read files or execute tools.\n\n'
               + evidence)
-    result = call(model, prompt)
+    result = tracked_call(target, 'ideas', model, prompt, call)
     receipt = {'model': model, 'answered_by': result.get('model'), 'ideas': result['text'],
                'usage': result.get('usage'), 'evidence_chars': len(evidence),
                'evidence_hash': hashlib.sha256(evidence.encode()).hexdigest(), 'head': report['head']}

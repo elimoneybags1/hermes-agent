@@ -97,6 +97,18 @@ def cmd_scout(args) -> int:
     return 1 if report["errors"] else 0
 
 
+def cmd_survey(args) -> int:
+    from team import survey
+    from team.review.backend import ScoutError
+
+    try:
+        _print(survey.run(args.target, max_calls=args.max_calls))
+    except ScoutError as exc:
+        print(f"team survey: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_targets(args) -> int:
     if args.set:
         name, key, raw = args.set
@@ -265,7 +277,13 @@ def cmd_app(args) -> int:
     """Team's own app: the boss chat beside the live chart, and the Team, LiteLLM, Portkey editors."""
     from team.app import server
 
-    server.serve(ROOT, args.port)
+    if args.preview:
+        from team.app.preview import snapshot_state
+
+        with snapshot_state():
+            server.serve(ROOT, args.port, preview=True)
+    else:
+        server.serve(ROOT, args.port)
     return 0
 
 
@@ -389,6 +407,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--max-calls", type=int, default=24)
     s.set_defaults(func=cmd_scout)
 
+    survey = sub.add_parser("survey", help="map all eligible source and propose work from cached area summaries; no edits")
+    survey.add_argument("target")
+    survey.add_argument("--max-calls", type=int, default=1200, help="total new source and reasoning calls allowed")
+    survey.set_defaults(func=cmd_survey)
+
     i = sub.add_parser("ideas", help="ask a reasoning model for proposals from scout summaries only")
     i.add_argument("target")
     i.add_argument("--model", default="tier-reasoning")
@@ -474,6 +497,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ap = sub.add_parser("app", help="the boss chat and live chart in a browser (127.0.0.1)")
     ap.add_argument("--port", type=int, default=8792)
+    ap.add_argument("--preview", action="store_true", help="disposable state snapshot; no worker or configuration actions")
     ap.set_defaults(func=cmd_app)
 
     pl = sub.add_parser("plans", help="the boss's proposals: one line each")

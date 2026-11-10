@@ -3,6 +3,41 @@
 For the planned dashboard expansion, backend gaps, acceptance criteria, and
 independent model comparison brief, see [Dashboard scope](DASHBOARD-SCOPE.md).
 
+The dashboard opens on Overview, with Messages, Orchestration, Ideas, Agents,
+Models, Routines, and Usage beside Work and Gateway. Use the persistent Boss
+button or Messages to share an idea without choosing a project or filling a
+form. The existing boss conversation gathers the specifics. Activity shows
+recorded replies, runs, decisions, and findings, with new-event popups and
+persistent read state. Alerts observe recorded activity; they do not schedule
+new autonomous work.
+
+Usage compares the top ten models/routes by input plus output tokens: red input
+and green output share each bar. Last day/week/month select rolling 1/7/30-day
+windows. A model enters when it overtakes the tenth entry (ties sort by name).
+The chart groups calls by their recorded requested tier, with responding models
+and their usage underneath. Tier totals include every call; the ten most-used
+reported models are visible initially, with additional models expandable.
+Missing responder identities and echoed tier aliases appear as "Actual model
+unreported"; named requests without a tier have their own group. Current catalog
+membership is never used to invent a historical tier or responder.
+The LiteLLM usage callback preserves the provider-reported response model instead
+of rewriting it to the requested tier alias. Gateway attempt records retain the
+original tier, routed fallback group, selected deployment, response model, response
+ID and token counts. Scout calls also retain their gateway session/trace ID on
+success and failure. Historical aliases without that evidence remain unreported.
+An authorized `POST /api/metrics/reset` starts a new dashboard measurement
+period after the latest recorded call. It preserves the ledger and model-quality
+evidence. Usage shows its start time and an "Include earlier history" toggle;
+day/week/month filters still apply. This does not reset provider quotas or bills.
+Gateway shows searchable routes and fallback paths; use Advanced controls for
+the existing service actions and editors.
+
+Run
+`team/bin/team app --preview --port 8793` for an isolated comparison using a
+disposable copy of saved state. Preview idea edits are temporary; execution and
+configuration changes and message sending are disabled. Alert acknowledgements
+are also temporary. The live app remains on port 8792.
+
 Team uses Hermes kanban as its queue. Each goal gets a branch and worktree,
 and a **type** that picks its pipeline (`team/gates.py`): the stages it goes
 through, each a role and a code gate, and whether it lands by itself. Team
@@ -13,6 +48,41 @@ boss and aide), Agents (the roster with its gates and pass rates, the
 pipelines, proposing a new agent), Gateway (the route as a diagram with
 live rates, services, test, verify, logs, the catalog editors) and Usage.
 Hermes's own dashboard with the kanban board is separate (9119).
+
+## Dedicated My Prof workspace
+
+`team/bin/team-workspace myprof app --port 8794` runs the dedicated My Prof
+dashboard. The launcher uses `$HOME/state/team-myprof` for its own conversation,
+memories, profiles, boards, ledger, findings and activity. It shares this Team
+checkout and the existing local model gateway; application updates and base role
+templates are shared. This is state isolation, not an OS security sandbox or an
+independent Git clone. Do not enable another runner against the same target.
+
+The initial setup attaches the existing `$HOME/work/StudyApp` checkout disabled,
+enables scout evidence and provisions the standard profiles with `roles sync`.
+It imports only reusable content-addressed source summaries, with hashes checked
+against the current source. No old conversations, jobs, alerts, proposals or
+usage records are imported. `gate audit` checks the configured model lock.
+The workspace's `litellm/.env` points to the existing local gateway credential;
+provider credentials remain with that gateway. Global gateway controls still
+affect the shared infrastructure.
+
+`team/bin/team-workspace myprof survey myprof --max-calls 1200` performs a
+read-only discovery pass: finish cached source coverage, write the file/area map,
+reason over bounded summaries per area, then prepare a prioritized build shortlist
+with suggested agent responsibilities. The chosen cap covers all new source and
+reasoning calls in that invocation; cache hits consume none. It stops on errors,
+budget exhaustion or changed source before publishing final proposals. Rerunning
+reuses source summaries; area reasoning is currently recomputed.
+
+Overview shows the saved review checkpoint; Usage shows new calls; Ideas receives
+the final proposals. Details live under the workspace's `targets/myprof/scout/`:
+`map.json`, `area-analysis.json`, `review-status.json`, and `ideas.json`. Excluded
+files and bounded summaries limit conclusions. Candidates require narrow source
+verification and tests before implementation. The scout and survey reasoner are
+utilities; the provisioned Boss, aide, lead, onboard, implement, test-write,
+review and security roles support subsequent approved work. Discovery itself
+neither enables the target nor edits its checkout.
 
 ## Pipeline
 

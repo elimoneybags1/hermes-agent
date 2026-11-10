@@ -16,6 +16,22 @@ def script(path, body):
     path.chmod(0o755)
 
 
+def test_workspace_launcher_isolates_state_and_rejects_path_escape(tmp_path):
+    import shutil
+
+    launcher = tmp_path / 'bin/team-workspace'
+    launcher.parent.mkdir()
+    shutil.copy(ROOT / 'team/bin/team-workspace', launcher)
+    script(launcher.parent / 'team', '#!/bin/sh\nprintf "%s\\n" "$TEAM_STATE" "$@"\n')
+    result = subprocess.run([str(launcher), 'myprof', 'app', '--port', '8794'],
+                            env={**os.environ, 'HOME': str(tmp_path), 'TEAM_STATE': '/old-workspace'},
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [str(tmp_path / 'state/team-myprof'), 'app', '--port', '8794']
+    result = subprocess.run([str(launcher), '../escape', 'app'], capture_output=True, text=True, check=False)
+    assert result.returncode == 2 and not result.stdout
+
+
 @pytest.mark.parametrize("test_exit,lint_exit", [(1, 0), (0, 2), (0, 0)])
 def test_check_preserves_test_and_lint_exit_codes(tmp_path, test_exit, lint_exit):
     script(

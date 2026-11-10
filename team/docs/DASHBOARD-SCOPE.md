@@ -1,9 +1,63 @@
 # Team dashboard scope and implementation brief
 
-Status: agreed product direction, with proposed delivery phases. Saved 2026-11-02.
-The expanded dashboard is not implemented. This brief is the shared reference for
+Status: product scope with an initial implementation delivered on 2026-11-02.
+The full autonomous system is not complete. This brief is the shared reference for
 building it and comparing independent implementations. It does not authorize
 changes to live model permissions, paid routes, or autonomous publishing policies.
+
+## Current implementation
+
+The first build adds Overview, Orchestration, Ideas, a new Agents inspector,
+Models, Routines, and historical Usage views while retaining Work, Gateway, and
+the configuration editors. These use saved Team records rather than demo metrics.
+
+- Ideas start with a plain-language boss conversation; no project selection or
+  intake form is required. The boss gathers specifics through the existing
+  conversation and planning flow. Ideas shows conversation proposals, saved AI
+  discoveries, and earlier notes, with context ready to discuss with the boss.
+- A persistent Boss launcher opens compact messages from any page; Messages
+  provides the full saved conversation and activity inbox. Recorded replies,
+  run starts/results, open decisions, reviews, and saved scout ideas create
+  alerts. Read acknowledgements persist. New events show in-app popup cards;
+  opening the app does not replay historical popups. This observes existing
+  work and does not create new autonomous scans or notification services.
+- Gateway uses service cards, searchable model routes, and fallback paths;
+  operational editors and actions remain under Advanced controls.
+- Goals link to recorded attempts, model selection reasons, work orders,
+  verification output, diagnoses, and model calls. Gateway attempt evidence is
+  included only with a recorded session link and matching attempt time.
+- Agent inspection resolves target overlays, instructions, skills, model policy,
+  budgets, static toolset expansion, and recent role versions used by runs.
+- Usage charts show dated input/output/cache counts and recorded cost fields,
+  with project/model/role/time filters and underlying tables. Scout and idea calls
+  now enter the ledger; cache hits do not create model calls. Legacy receipts are
+  visible separately and are not backfilled as invented historical requests.
+- Usage highlights the top ten routes/models by reported input plus output
+  tokens, using red input and green output on the same horizontal bar. Last
+  day/week/month select rolling 1/7/30-day windows. A new model enters when its
+  total overtakes the tenth entry; ties sort by name. There is no fixed minimum
+  token threshold. Route aliases do not establish the actual responder identity.
+- Usage can start a fresh measurement baseline without deleting past calls or
+  model-quality evidence. The current period is the default; earlier history is
+  accessible through a toggle. A reset affects dashboard accounting, not provider
+  invoices or quotas, and is blocked in comparison previews.
+- Disabled projects, scout receipts, saved AI proposals, routine definitions,
+  durable claims, and graded role/task/model outcomes are inspectable.
+- `team/bin/team app --preview --port 8793` creates disposable state for comparison,
+  disables execution/configuration actions and message sending, and allows
+  temporary idea edits and alert read acknowledgements.
+
+Remaining scope includes guided repository attachment, file/document ingestion,
+complete runtime tool and parent/child event capture, historical effective agent
+snapshots, automatic idea-to-investigation dispatch, dedicated GitHub research and
+post-work audit controls, budget enforcement for those new routines, controlled
+routing experiments, and complete cost/provider attribution. An open job is not
+proof of a live process; declared tools are not proof of runtime availability.
+Unknown prices and missing model identities remain explicitly unknown.
+
+Keep comparison baselines frozen before either implementation starts. This first
+build is a contender's implementation, not an equal starting snapshot for another
+contender unless both intentionally receive it.
 
 ## Goal
 

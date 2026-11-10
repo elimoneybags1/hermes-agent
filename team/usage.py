@@ -57,8 +57,8 @@ def usage_breakdown(conn: sqlite3.Connection, target: str) -> dict:
     for row in conn.execute(
         "SELECT c.job_id, c.model, c.response_model, c.task_class,"
         " c.tokens_in, c.tokens_out, j.role AS job_role"
-        " FROM calls c JOIN jobs j ON j.id = c.job_id"
-        " WHERE j.target = ?",
+        " FROM calls c LEFT JOIN jobs j ON j.id = c.job_id"
+        " WHERE COALESCE(c.target, j.target) = ?",
         (target,),
     ):
         task_class = row["task_class"]

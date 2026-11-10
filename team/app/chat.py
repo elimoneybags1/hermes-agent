@@ -124,6 +124,10 @@ class Chat:
 
     def view(self) -> dict:
         self.poll()
+        return self.snapshot()
+
+    def snapshot(self) -> dict:
+        """Read conversation state without consuming notes or starting a worker."""
         with self.lock:
             return {
                 "session": self.data["lanes"]["boss"]["session"],

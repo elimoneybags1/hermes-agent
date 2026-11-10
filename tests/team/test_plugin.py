@@ -101,7 +101,7 @@ def test_record_writes_a_call_and_a_violation(team_state, monkeypatch):
         session_id="s1",
         api_call_count=3,
         api_duration=1.25,
-        usage={"prompt_tokens": 120, "completion_tokens": 8, "total_tokens": 128},
+        usage={"prompt_tokens": 120, "completion_tokens": 8, "total_tokens": 128, "cache_read_tokens": 80},
     )
     [call] = ledger.calls_for(conn, task_ref="t_7")
     assert (
@@ -115,6 +115,7 @@ def test_record_writes_a_call_and_a_violation(team_state, monkeypatch):
         1250,
         1,
     )
+    assert call["cache_read_tokens"] == 80
     assert call["response_model"] == "z-ai/glm-5.3" and call["api_calls"] == 3
     assert ledger.violations_for(conn, "t_7") == []
 

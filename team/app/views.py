@@ -42,7 +42,7 @@ def agents(root: Path, conn: sqlite3.Connection, cat: dict | None, target: str |
     for name in roles.names(root):
         raw = tomllib.loads((roles.roles_dir(root) / name / "role.toml").read_text())
         try:
-            r = roles.load(root, name, cat)
+            r = roles.load(root, name, cat, target=target)
             problem = None
             gate, skills, tools = r.get("gate", "check"), r["skills"], r.get("tools", [])
             cands, harness = r["models"]["candidates"], r["runs_on"]["harness"]

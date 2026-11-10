@@ -10,6 +10,7 @@ other web page can drive it and DNS rebinding cannot reach it.
 from __future__ import annotations
 
 import json
+import html
 import secrets
 import sys
 import threading
@@ -21,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from team import board, boss, catalog, ledger, targets, usage
 from team.app import chat as chat_mod
-from team.app import edit, views
+from team.app import edit, views, insights, metrics, alerts
 
 STATIC = Path(__file__).resolve().parent / "static"
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -44,13 +45,34 @@ def _cat():
 class App:
     """What the handler calls; one per server, so tests can build one without a socket."""
 
-    def __init__(self, root: Path, chat: chat_mod.Chat | None = None):
+    def __init__(self, root: Path, chat: chat_mod.Chat | None = None, *, preview: bool = False):
         self.root = Path(root)
+        self.preview = preview
         self.chat = chat or chat_mod.Chat(self.root)
         self.token = secrets.token_urlsafe(24)
 
     def get(self, path: str, query: dict) -> dict:
         target = query.get("target", [""])[0] or None
+        if path == "/api/alerts":
+            with _conn() as conn:
+                return alerts.collect(conn, self.chat.snapshot())
+        if path == "/api/insights":
+            with _conn() as conn:
+                return insights.snapshot(conn, target)
+        if path == "/api/insights/job":
+            with _conn() as conn:
+                return insights.job_detail(conn, int(query.get("id", ["0"])[0]))
+        if path == "/api/insights/agent":
+            with _conn() as conn:
+                return insights.agent_detail(self.root, conn, query.get("name", [""])[0], target)
+        if path == "/api/metrics":
+            with _conn() as conn:
+                return metrics.history(conn, target, int(query.get("days", ["30"])[0]),
+                                       query.get("model", [None])[0], query.get("role", [None])[0],
+                                       include_history=query.get("include_history", ["0"])[0] == "1")
+        if path == "/api/capabilities":
+            with _conn() as conn:
+                return {"evidence": metrics.capability(conn, target), "routing": metrics.routing(_cat())}
         if path == "/api/board":
             with _conn() as conn:
                 return board.board(conn, self.root, target=target)
@@ -89,7 +111,18 @@ class App:
         raise edit.EditError("not found", 404)
 
     def post(self, path: str, d: dict) -> dict:
+        if self.preview and path not in ("/api/ideas", "/api/ideas/update", "/api/alerts/read"):
+            raise edit.EditError("Preview: execution and configuration changes are disabled", 403)
         parts = path.strip("/").split("/")
+        if path == "/api/metrics/reset":
+            with _conn() as conn:
+                return metrics.reset_baseline(conn)
+        if path == "/api/alerts/read":
+            with _conn() as conn:
+                return alerts.mark_read(conn, d.get("ids"))
+        if path in ("/api/ideas", "/api/ideas/update"):
+            with _conn() as conn:
+                return insights.save_idea(conn, d) if path == "/api/ideas" else insights.update_idea(conn, d)
         if path == "/api/chat":
             lane = self.chat.send(str(d.get("text") or ""), to=str(d.get("to") or "auto"))
             return {"ok": True, "to": lane}
@@ -289,6 +322,10 @@ def handler(app: App, hosts: set[str]):
             body = f.read_bytes()
             if name == "index.html":
                 body = body.replace(b"__TEAM_TOKEN__", app.token.encode())
+                body = body.replace(b"__TEAM_PREVIEW__", b"true" if app.preview else b"false")
+                projects = targets.list_targets()
+                label = 'Team / ' + projects[0]['name'] if len(projects) == 1 else 'Team'
+                body = body.replace(b"__TEAM_NAME__", html.escape(label).encode())
             self._send(200, body, TYPES.get(f.suffix, "application/octet-stream"))
 
         def do_POST(self):
@@ -307,8 +344,8 @@ def handler(app: App, hosts: set[str]):
 POLL_S = 30  # how often the boss gets the loop's notes when no browser is open
 
 
-def serve(root: Path, port: int) -> None:
-    app = App(root)
+def serve(root: Path, port: int, *, preview: bool = False) -> None:
+    app = App(root, preview=preview)
     hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler(app, hosts))
 
@@ -320,6 +357,7 @@ def serve(root: Path, port: int) -> None:
             except Exception:  # the next poll tries again
                 traceback.print_exc(file=sys.stderr)
 
-    threading.Thread(target=poll, daemon=True).start()
+    if not preview:
+        threading.Thread(target=poll, daemon=True).start()
     print(f"Team app on http://127.0.0.1:{port}/", flush=True)
     httpd.serve_forever()
