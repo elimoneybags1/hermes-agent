@@ -35,9 +35,29 @@ into the home, and executes the checkout through `scripts/run-in-hermes-env`
 and Hermes's PM-owned dependency environment. Never bare `hermes`, never
 `~/.hermes`: that is another project's install and holds paid keys.
 
-The default profile's provider is `litellm` at `http://127.0.0.1:4000/v1`,
-with the tiers `tier-simple`, `tier-medium`, `tier-complex`, `tier-reasoning`
-(and `tier-claude`, the subscription bridge) as its models.
+`~/.local/bin/hermes` links to this wrapper, so plain `hermes` works anywhere.
+The old `~/.hermes` launcher is `hermes-home`.
+
+## The Hermes factory: base layer, Team profile, project profiles
+
+- **Locked base** — `integrations/hermes/base/config.yaml`, loaded as Hermes's
+  managed layer (`HERMES_MANAGED_DIR`) on top of every profile: the `litellm`
+  provider at `http://127.0.0.1:4000/v1` with its tiers, empty fallbacks,
+  every auxiliary lane on `litellm`, `free_only`. No profile can change these
+  keys; edit the file here to change them for all.
+- **Team = the `default` profile** — Hermes launched in this repo or any of its
+  worktrees. Its skills (`$HOME/state/team/hermes/skills`) are shared live and
+  read-only with every project through `skills.external_dirs`.
+- **Project profiles** — any other directory maps to a profile named by
+  `integrations/bin/hermes-project` (the git root; under `~/work` the path joined
+  by `-`). The first launch there clones `default` (config, SOUL, memory), empties
+  its skills so the shared ones stay live, and writes `skills.external_dirs`.
+  After that the profile evolves on its own; skills it learns stay local.
+  Promote one to every project by moving it into the default profile's skills.
+- An explicit `-p <name>` or the `profile` subcommand skips the automatic choice.
+- Hermes's background gateway keeps an in-memory profile list: remove a
+  profile with `hermes profile delete <name>`, not `rm`, or it recreates an
+  empty shell.
 
 ## Free-only, fail closed
 

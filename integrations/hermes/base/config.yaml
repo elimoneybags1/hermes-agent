@@ -1,0 +1,65 @@
+# The locked base layer for every Hermes profile on this machine.
+#
+# integrations/bin/hermes points HERMES_MANAGED_DIR at this directory, so Hermes
+# deep-merges these values ON TOP of each profile's own config.yaml, per leaf.
+# A profile can change everything else; it cannot change a key set here.
+# Edit this file from the Team repo, commit it, and every profile picks the
+# change up on its next launch.
+#
+# Keep it to what must be the same everywhere: the gateway connection, the
+# free-only rule, and where the shared skills live. Model choices, toolsets,
+# turn limits and personality belong to each profile.
+
+model:
+  provider: litellm
+
+providers:
+  litellm:
+    api_key: ${LITELLM_MASTER_KEY}
+    api_mode: chat_completions
+    base_url: http://127.0.0.1:4000/v1
+    context_length: 131072
+    key_env: LITELLM_MASTER_KEY
+    models:
+      - tier-simple
+      - tier-medium
+      - tier-complex
+      - tier-reasoning
+      - tier-claude
+    session_affinity_header: x-litellm-session-id
+
+fallback_providers: []
+
+delegation:
+  provider: litellm
+  fallback_providers: []
+
+cron:
+  model_provider: litellm
+
+auxiliary:
+  free_only: true
+  approval: {provider: litellm}
+  background_review: {provider: litellm}
+  compression: {provider: litellm}
+  curator: {provider: litellm}
+  goal_judge: {provider: litellm}
+  kanban_decomposer: {provider: litellm}
+  mcp: {provider: litellm}
+  memory_query_rewrite: {provider: litellm}
+  moa_aggregator: {provider: litellm}
+  moa_reference: {provider: litellm}
+  monitor: {provider: litellm}
+  profile_describer: {provider: litellm}
+  review: {provider: litellm}
+  skills_hub: {provider: litellm}
+  title_generation: {provider: litellm}
+  triage_specifier: {provider: litellm}
+  tts_audio_tags: {provider: litellm}
+  vision: {provider: litellm}
+  voice_chat: {provider: litellm}
+
+# Shared skills are NOT set here: Hermes reads skills.* from each profile's own
+# config.yaml only (agent/skill_utils.py::_skills_cfg), never from this layer.
+# integrations/bin/hermes writes skills.external_dirs into every project profile
+# when it creates it.

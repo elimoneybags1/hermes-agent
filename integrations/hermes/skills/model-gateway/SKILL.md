@@ -143,6 +143,19 @@ curl -s -m 90 http://127.0.0.1:8788/v1/chat/completions \
 A 2xx with a sensible answer is the evidence to put in the catalog row; a
 `402`, `404` or `410` is the evidence for `unavailable`.
 
+## Profiles and the locked base layer
+
+Hermes runs one profile per project. The Team repo itself uses the `default`
+profile; any other project gets its own profile, cloned from `default` the
+first time Hermes is launched there (`integrations/bin/hermes-project` picks
+the name). The gateway connection is locked for every profile by
+`integrations/hermes/base/config.yaml` in the Team repo (Hermes's managed
+layer): `hermes config set` refuses those keys. To change them for every
+project, edit that file in the Team repo and commit it. Everything else, such
+as the model per tier, toolsets and personality, is each profile's own.
+Skills in the `default` profile are shared live and read-only with every
+project; a skill a project learns stays in that project's profile.
+
 ## Hermes's own side
 
 The Hermes provider is `litellm` in `$HERMES_HOME/config.yaml`

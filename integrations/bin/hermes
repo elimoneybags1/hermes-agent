@@ -1,5 +1,6 @@
 #!/bin/sh
-# Run Hermes from this checkout inside its own home, pointed at the local gateway.
+# Run Hermes from this checkout inside its own home, pointed at the local gateway,
+# with one profile per project.
 #
 # HERMES_HOME, the runtime/tool store and the kanban home live under
 # $TEAM_STATE (default $HOME/state/team), never ~/.hermes, which is another
@@ -8,23 +9,31 @@
 # in Portkey's state. The Python environment is provisioned and synced by
 # upstream's PM through scripts/run-in-hermes-env (pinned uv, pinned Python).
 #
-# The gateway skill (integrations/hermes/skills/model-gateway) is linked into
-# the home's skills tree so Hermes can read, change and verify the routing.
+# Layers:
+#   integrations/hermes/base/   locked config merged on top of every profile
+#                               (HERMES_MANAGED_DIR): gateway, free-only, shared skills
+#   default profile             Team: launched from this repo; its skills are shared
+#   project profiles            one per project, made on the first launch there by
+#                               cloning default; picked by integrations/bin/hermes-project
+#
+# An explicit -p/--profile, or the `profile` subcommand, skips the automatic choice.
 set -eu
 SELF="$0"
 while [ -L "$SELF" ]; do
     _target="$(readlink "$SELF")"
     case "$_target" in /*) SELF="$_target" ;; *) SELF="$(dirname "$SELF")/$_target" ;; esac
 done
-REPO="$(cd "$(dirname "$SELF")/../.." && pwd)"
+BIN="$(cd "$(dirname "$SELF")" && pwd)"
+REPO="$(cd "$BIN/../.." && pwd)"
 TEAM_STATE="${TEAM_STATE:-$HOME/state/team}"
 export TEAM_STATE
 export HERMES_HOME="$TEAM_STATE/hermes"
 export HERMES_RUNTIME_DIR="$TEAM_STATE/hermes-runtime"
 export HERMES_KANBAN_HOME="$TEAM_STATE/kanban"
+export HERMES_MANAGED_DIR="$REPO/integrations/hermes/base"
 mkdir -p "$HERMES_HOME" "$HERMES_RUNTIME_DIR" "$HERMES_KANBAN_HOME"
 
-# The gateway skill: a symlink, so an edit in the repo is live in Hermes.
+# The gateway skill: a symlink in the shared (default) skills, so an edit in the repo is live.
 SKILL_LINK="$HERMES_HOME/skills/devops/model-gateway"
 if [ ! -e "$SKILL_LINK" ]; then
     mkdir -p "$(dirname "$SKILL_LINK")"
@@ -44,4 +53,62 @@ unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
       CEREBRAS_API_KEY ZAI_API_KEY MINIMAX_API_KEY DASHSCOPE_API_KEY \
       NOUS_API_KEY 2>/dev/null || true
 
-exec "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" "$@"
+HERMES() { "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" "$@"; }
+
+explicit=no
+for a in "$@"; do
+    case "$a" in -p|--profile|--profile=*|profile) explicit=yes; break ;; esac
+done
+if [ "$explicit" = yes ]; then
+    HERMES "$@"
+    exit $?
+fi
+
+PROFILE="$("$BIN/hermes-project")"
+if [ "$PROFILE" != default ] && [ ! -f "$HERMES_HOME/profiles/$PROFILE/config.yaml" ]; then
+    # First launch in this project: clone the Team (default) profile once. A lock
+    # directory keeps two panes opening at the same moment from both creating it.
+    LOCK="$HERMES_HOME/profiles/.creating-$PROFILE"
+    mkdir -p "$HERMES_HOME/profiles"
+    if mkdir "$LOCK" 2>/dev/null; then
+        trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+        echo "hermes: new project, creating profile '$PROFILE' from the Team profile" >&2
+        HERMES profile create "$PROFILE" --clone-from default --no-alias \
+            --description "Project profile for $(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)" >&2
+        # Shared skills come live from the Team profile through skills.external_dirs
+        # (the base layer); the clone's copies would freeze them, so start empty and
+        # keep `hermes update` from re-seeding bundled skills into this profile.
+        PDIR="$HERMES_HOME/profiles/$PROFILE"
+        rm -rf "$PDIR/skills"
+        mkdir "$PDIR/skills"
+        : > "$PDIR/.no-bundled-skills"
+        rmdir "$LOCK" 2>/dev/null || true
+        trap - EXIT
+    else
+        echo "hermes: profile '$PROFILE' is being created in another pane; waiting" >&2
+        while [ -d "$LOCK" ]; do sleep 1; done
+    fi
+fi
+
+# Every project profile reads the Team profile's skills, live and read-only.
+# Hermes reads skills.* only from the profile's own config.yaml (not the base
+# layer), so make sure it is there; a cheap grep keeps this off the common path.
+PCONF="$HERMES_HOME/profiles/$PROFILE/config.yaml"
+if [ "$PROFILE" != default ] && [ -f "$PCONF" ] && ! grep -qF "$HERMES_HOME/skills" "$PCONF"; then
+    "$REPO/scripts/run-in-hermes-env" python3 -c '
+import sys
+from hermes_yaml import roundtrip_yaml
+path, shared = sys.argv[1], sys.argv[2]
+y = roundtrip_yaml()
+with open(path) as f:
+    cfg = y.load(f) or {}
+skills = cfg.get("skills") or {}
+dirs = [d for d in (skills.get("external_dirs") or []) if d != shared]
+skills["external_dirs"] = [shared] + dirs
+cfg["skills"] = skills
+with open(path, "w") as f:
+    y.dump(cfg, f)
+' "$PCONF" "$HERMES_HOME/skills" >&2
+fi
+
+exec "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" -p "$PROFILE" "$@"

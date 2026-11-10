@@ -1,0 +1,54 @@
+#!/bin/sh
+# Print the Hermes profile name for a directory (default: the current one).
+#
+#   default      the Team repo itself, any of its git worktrees, $HOME, or /
+#   <name>       any other project: its git repository root (the main checkout,
+#                so worktrees share their repo's profile), or the directory
+#                itself when it is not in git. Under $HOME/work the name is the
+#                path below it joined with '-' (work/signal/exp -> signal-exp);
+#                elsewhere it is the folder name.
+#
+# Names are lowercased and reduced to Hermes's profile id rule
+# ([a-z0-9][a-z0-9_-]{0,63}); a name Hermes reserves gets a 'p-' prefix.
+set -eu
+SELF="$0"
+while [ -L "$SELF" ]; do
+    _target="$(readlink "$SELF")"
+    case "$_target" in /*) SELF="$_target" ;; *) SELF="$(dirname "$SELF")/$_target" ;; esac
+done
+REPO="$(cd "$(dirname "$SELF")/../.." && pwd -P)"
+DIR="$(cd "${1:-$PWD}" && pwd -P)"
+
+root="$DIR"
+common="$(git -C "$DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [ -n "$common" ]; then
+    if [ "$(basename "$common")" = ".git" ]; then
+        root="$(dirname "$common")"
+    else
+        root="$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null || echo "$DIR")"
+    fi
+fi
+root="$(cd "$root" && pwd -P)"
+home="$(cd "$HOME" && pwd -P)"
+
+if [ "$root" = "$REPO" ] || [ "$root" = "$home" ] || [ "$root" = "/" ]; then
+    echo default
+    exit 0
+fi
+
+case "$root" in
+    "$home/work/"*) raw="${root#"$home/work/"}" ;;
+    *) raw="$(basename "$root")" ;;
+esac
+
+name="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr '/' '-' \
+        | sed -e 's/[^a-z0-9_-]/-/g' -e 's/--*/-/g' -e 's/^[^a-z0-9]*//' -e 's/-*$//' | cut -c1-64)"
+[ -n "$name" ] || { echo default; exit 0; }
+
+case "$name" in
+    hermes|default|test|tmp|root|sudo|chat|model|gateway|setup|whatsapp|login|logout|status|cron|\
+    doctor|dump|config|pairing|skills|tools|mcp|connectors|sessions|insights|version|update|\
+    uninstall|profile|plugins|honcho|acp)
+        name="$(printf 'p-%s' "$name" | cut -c1-64)" ;;
+esac
+echo "$name"
