@@ -6,19 +6,18 @@
       "layout": "columns",
       "panes": [
         {"label": "Team", "cwd": "", "claude": true},
-        {"label": "boss", "cwd": "", "command": "team/bin/team boss"},
-        {"label": "dashboard", "cwd": "", "web": "http://127.0.0.1:9119/kanban"},
+        {"label": "hermes", "cwd": "", "command": "integrations/bin/hermes"},
         {"label": "shell", "cwd": ""}
       ]
     }
   },
   "gate": {
     "rules": [
-      "Upstream files are never edited in place; Team lives in team/, plugins/team/, integrations/, tests/team/, and marked [team] commits listed in PROVENANCE.md",
+      "Upstream files are never edited in place; this repo's own code lives in integrations/, litellm/team/, portkey/src/team/, tests/team/, and marked [team] commits listed in PROVENANCE.md",
       "Paths derive from $HOME or the script location, never a hardcoded user dir",
-      "Free-only: no paid provider key anywhere under $HOME/state/team; never a paid API key in any environment Team starts",
+      "Free-only: no paid provider key anywhere under $HOME/state/team; never a paid API key in any environment started from here",
       "No empty folders or stub files: a directory appears with its first real file",
-      "pytest tests/team -q passes"
+      "integrations/bin/check passes"
     ]
   }
 }

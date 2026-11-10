@@ -72,16 +72,26 @@ from `build.py`; `integrations/portkey/build.py` is the generator that runs.
 The repository before the fresh start is tag `before-fresh-start`
 (`25b8aca`). `git checkout before-fresh-start` restores the whole old tree.
 
-## What Team owns
+## What this repository owns (the `[team]` layer)
 
-`team/`, `plugins/team/`, `integrations/`, `tests/team/`, `litellm/team/` (LiteLLM's
-half of the gateway handshake, shipped inside the subtree so the litellm fork
-carries it), `TEAM.md` at the root of `portkey/` and `litellm/` (what does the
-handshake, for a reader of either fork), `PROVENANCE.md`,
-`CLAUDE.md`, `.work.json`, `IDEAS.md`, `FRESH-START.md`, `PLAN.md`,
-`HANDOFF-GATEWAY.md`, a `# Team` block appended to `.gitignore`, and three
-lines in `pyproject.toml` (the `team` script, the `team` package include, and
-its package-data).
+`integrations/` (the gateway generator and catalog, the Hermes wrapper and
+check scripts, the Hermes gateway skill, the Claude subscription bridge, the
+idle Rust proxy), `tests/team/`, `litellm/team/` (LiteLLM's half of the
+gateway handshake, shipped inside the subtree so the litellm fork carries
+it), `portkey/src/team/` (Portkey's half), `TEAM.md` at the root of `portkey/`
+and `litellm/` (what does the handshake, for a reader of either fork),
+`PROVENANCE.md`, `CLAUDE.md`, `.work.json`, and a `# Team` block appended to
+`.gitignore`.
+
+**Stripped on 2026-11-09**, tag `before-strip` (`5eefca99`): the boss/worker
+layer `team/` (boss, lead, roles, ledger, replay, gates, review, scout,
+survey, the Team dashboard), the Hermes plugin `plugins/team/`, its tests,
+the design docs `IDEAS.md`, `PLAN.md`, `FRESH-START.md`, `BUILD-PLAN.md`,
+`HANDOFF-GATEWAY.md`, `HANDOFF-DECK.md`, and the four `[team]` lines in
+`pyproject.toml` that registered the `team` package. Its state moved to
+`$HOME/state/team-boss-old/` (ledger, role profiles, worktrees, targets).
+What remains is Hermes with its kanban, the two gateway forks and the
+connection between them, operated from inside Hermes.
 
 ## Marked patches to upstream files
 

@@ -54,8 +54,7 @@ is an upstream test-only escape from that guard.
 With the bridge running, regenerate the proxy configuration with
 `python3 integrations/portkey/build.py`, check it with `--check`, and restart
 LiteLLM using the stack's existing supervisor. Portkey reloads named configs.
-Run `python3 integrations/portkey/build.py --check` and
-`team/bin/team gate audit` before `team/bin/team run --once`. If preflight
+Run `python3 integrations/portkey/build.py --check` afterwards. If the check
 reports a missing `SUBSCRIPTION_TOKEN`, run setup first: catalog registration
 alone does not provision the local credential or start the bridge.
 All four Claude model IDs are explicit LiteLLM model groups; `tier-claude`
@@ -116,10 +115,8 @@ preserved the current role assignments; it did not switch free-tier workers
 to Claude or enable Claude Code's native tools.
 
 
-Planner and rescue now use `team/hermes_run.py`: an isolated Hermes home,
-explicit role instructions and tools, and the same LiteLLM/Portkey route.
-Lead uses the model in its role manifest (Sonnet); implement's escalation
-model is Opus. Neither invokes the full Claude Code agent loop. The bridge
-still uses the native CLI strictly as its inference transport. Plan validation,
-one refusal retry, quota pauses, file-ownership grading and check/commit gates
-remain in Team. Auxiliary requests retain the existing free LiteLLM routes.
+The boss/worker layer that consumed this route was removed on 2026-11-09
+(tag `before-strip`). The bridge is unchanged: a Hermes profile reaches Claude
+by naming `tier-claude` or a `claude-*` catalog id through the `litellm`
+provider, and the bridge uses the native CLI strictly as its inference
+transport.

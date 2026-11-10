@@ -337,4 +337,4 @@ portkey/build/
 portkey/node_modules/
 litellm/.venv/
 /self-evolution/.venv/
-plugins/team/dashboard/node_modules/
+integrations/gateway-rs/target/

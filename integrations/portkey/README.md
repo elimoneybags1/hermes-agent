@@ -4,7 +4,8 @@ Claude now routes through the local subscription bridge, with no Anthropic
 API key. See [subscription setup and verification limits](../subscription/README.md).
 The historical acceptance evidence below describes the earlier gateway setup.
 
-The connection at the heart of Team's model routing (PLAN.md Phase 2):
+The connection at the heart of this machine's model routing. Hermes operates
+it through the skill in `../hermes/skills/model-gateway/`.
 
 ```
 callers ──► LiteLLM 127.0.0.1:4000 ──► Portkey 127.0.0.1:8788 ──► providers
@@ -69,9 +70,9 @@ suites pass inside that run.
 - Fallback (`tryTargetsRecursively`): moves to the next target only when the response status is in `strategy.on_status_codes`. A target timeout is 408, a dead key 401/403, an exhausted trial 402, a model the provider dropped 404, so the default list is `[401, 402, 403, 404, 408, 429, 500, 502, 503, 504, 529]`. In-target `retry` defaults to `attempts 1` on `[500, 502, 503, 504]` only. Both, the per-model `mode` (`fallback` or `loadbalance` by `served_by[].weight`), the default timeout and every LiteLLM router value are in `catalog.json` `policy`, checked by `build.py` (2026-10-29). `gateway-rs build` still hard-codes the old defaults: it matches `build.py` only while `policy` holds them.
 - Provider slugs in `src/providers/index.ts`: `openrouter`, `groq`, `google` (Gemini API, `generativelanguage.googleapis.com`), `mistral-ai`, `cohere`, `cerebras`, `z-ai` (`api.z.ai/api/paas/v4`); NVIDIA is `openai` + `custom_host: https://integrate.api.nvidia.com/v1`.
 - Headers: `x-portkey-trace-id` is echoed back on the response; `x-portkey-metadata` is JSON and is read by the conditional router and by the request log.
-- Port: PLAN.md says 8787, but `127.0.0.1:8787` is held by `com.fullmoney.myprof-gateway` (another project's node gateway, launchd, running since 2026-10-09). The catalog says **8788**; nothing else hardcodes it.
+- Port: the original plan said 8787, but `127.0.0.1:8787` is held by `com.fullmoney.myprof-gateway` (another project's node gateway, launchd, running since 2026-10-09). The catalog says **8788**; nothing else hardcodes it.
 
-## Acceptance evidence (PLAN.md Phase 2, all run on 2026-10-27, times are EDT)
+## Acceptance evidence (all run on 2026-10-27, times are EDT)
 
 Every number below came from the command shown, not from memory. Secrets are
 elided as `<key>`.

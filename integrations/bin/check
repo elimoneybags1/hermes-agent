@@ -1,0 +1,28 @@
+#!/bin/sh
+# The gate for changes to the gateway layer: the generated configs match the
+# catalog, the gateway tests pass, and the two Portkey patch suites pass.
+# Exit code is non-zero if any step fails; every step runs.
+set -u
+SELF="$0"
+while [ -L "$SELF" ]; do
+    _target="$(readlink "$SELF")"
+    case "$_target" in /*) SELF="$_target" ;; *) SELF="$(dirname "$SELF")/$_target" ;; esac
+done
+REPO="$(cd "$(dirname "$SELF")/../.." && pwd)"
+rc=0
+
+echo "== build.py --check"
+python3 -I "$REPO/integrations/portkey/build.py" --check || rc=1
+
+echo "== pytest tests/team"
+"$REPO/scripts/run_tests.sh" tests/team -q || rc=1
+
+if [ -d "$REPO/portkey/node_modules" ]; then
+    echo "== portkey jest (src/team, toolRoundTrip)"
+    npx --prefix "$REPO/portkey" jest --config "$REPO/portkey/jest.config.js" \
+        --rootDir "$REPO/portkey" src/team src/providers/toolRoundTrip || rc=1
+else
+    echo "== portkey jest skipped: no portkey/node_modules (npm --prefix portkey ci)"
+fi
+
+exit $rc
