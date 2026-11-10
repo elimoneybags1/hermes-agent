@@ -21,6 +21,7 @@ providers:
     context_length: 131072
     key_env: LITELLM_MASTER_KEY
     models:
+      - tier-auto
       - tier-simple
       - tier-medium
       - tier-complex

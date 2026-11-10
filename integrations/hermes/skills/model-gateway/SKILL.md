@@ -54,6 +54,24 @@ Hermes profiles name a tier (or a catalog model id) as their model, so a
 "model swap" is either LiteLLM moving to the next deployment in the tier, or a
 tier fallback. Both are visible in the logs below.
 
+**tier-auto (automatic model choice).** Hermes's main model, subagents
+(`delegation.model`) and cron use `tier-auto`. It is one LiteLLM deployment
+running the fork's complexity router
+(`litellm/litellm/router_strategy/complexity_router/`, its `README.md` lists
+every knob). It scores each new human ask locally, with no model call, and
+sends it to `tier-simple`, `tier-medium`, `tier-complex` or `tier-reasoning`;
+the tool-call turns that follow replay that decision (`classification_mode:
+user_turn`) so an agent loop does not switch model mid-task. The chosen tier
+then routes normally. `tier-claude` is never chosen by the router; name it.
+Its settings live in the catalog's `auto` section; build.py writes them into
+the `tier-auto` deployment and refuses bad values. Auxiliary lanes (titles,
+compression, memory and the rest) stay on fixed tiers.
+
+**reasoning_efforts.** A catalog row may list the `reasoning_effort` values its
+model accepts. `litellm/team/effort_clamp.py` moves any other value to the
+nearest allowed one after the deployment is picked. Add the list when a
+provider answers 400 to an effort, with the probe results as its `_why`.
+
 **Providers.** Each model's `served_by` lists the providers that serve it, in
 Portkey failover order. `policy.portkey.on_status_codes` lists the statuses
 that move Portkey to the next provider. `policy.litellm` holds the router
@@ -97,6 +115,21 @@ sqlite3 -header -column "$TEAM_STATE/litellm/usage.db" \
 sqlite3 "$TEAM_STATE/litellm/usage.db" \
   "select count(*), sum(ok=0) from calls where ts > datetime('now','-1 day')"
 ```
+
+What the auto router decided and why, for the last 20 tier-auto calls
+(`route_json` holds the full decision: tier, cause, score, signals, boundaries):
+
+```sh
+sqlite3 -header -column "$TEAM_STATE/litellm/usage.db" \
+  "select ts, routed_group, deployment, ok,
+          json_extract(route_json,'$.tier') tier, json_extract(route_json,'$.cause') cause,
+          json_extract(route_json,'$.score') score
+   from calls where \"group\" = 'tier-auto' order by id desc limit 20"
+```
+
+`cause` is `heuristic_scorer` for a fresh classification and
+`user_turn_continuation` for a replayed one. A response from tier-auto also
+carries the header `x-litellm-complexity-router-tier`.
 
 Always report a rate with its count and next to the base rate.
 
@@ -145,24 +178,25 @@ A 2xx with a sensible answer is the evidence to put in the catalog row; a
 
 ## Profiles and the locked base layer
 
-Hermes runs one profile per project. The Team repo itself uses the `default`
-profile; any other project gets its own profile, cloned from `default` the
-first time Hermes is launched there (`integrations/bin/hermes-project` picks
-the name). The gateway connection is locked for every profile by
+Hermes launched in the Team repo runs on the base home itself, with no
+profile flag. Any other project gets its own profile, cloned from the base
+the first time Hermes is launched there (`integrations/bin/hermes-project`
+picks the name). The gateway connection is locked for every profile by
 `integrations/hermes/base/config.yaml` in the Team repo (Hermes's managed
 layer): `hermes config set` refuses those keys. To change them for every
 project, edit that file in the Team repo and commit it. Everything else, such
-as the model per tier, toolsets and personality, is each profile's own.
-Skills in the `default` profile are shared live and read-only with every
-project; a skill a project learns stays in that project's profile.
+as the model per lane, toolsets and personality, is each profile's own.
+Skills in the base home are shared live and read-only with every project; a
+skill a project learns stays in that project's profile.
 
 ## Hermes's own side
 
 The Hermes provider is `litellm` in `$HERMES_HOME/config.yaml`
 (`base_url http://127.0.0.1:4000/v1`, the master key from the environment, the
-four tiers in `models`, `x-litellm-session-id` as the affinity header so one
-conversation stays on one deployment). Every auxiliary lane in that file is
-pinned to a tier through the same provider. To put a profile on a specific
+tiers in `models`, `x-litellm-session-id` as the affinity header so one
+conversation stays on one deployment). `model.default`, `delegation.model` and
+`cron.model` are `tier-auto`; every auxiliary lane is pinned to a fixed tier
+through the same provider. To put a profile on a specific
 model, name a catalog id (for example `gemini-3.6-flash`) instead of a tier;
 every catalog model with a tier is also its own LiteLLM model group.
 

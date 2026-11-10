@@ -78,6 +78,16 @@ generator refuses anything not free; `build.py --check` runs before either
 proxy starts and refuses drift. A new provider or model is a catalog edit,
 never a config edit.
 
+## Automatic model choice: tier-auto
+
+Hermes's main model, subagents and cron name `tier-auto`: LiteLLM's
+complexity router (in the fork, `litellm/litellm/router_strategy/complexity_router/`)
+scores each new ask locally and sends it to the simple, medium, complex or
+reasoning tier; tool-call turns replay that decision. Its settings are the
+catalog's `auto` section; never `tier-claude`. Each decision is in `usage.db`
+(`route_json`). A catalog row's `reasoning_efforts` lists what its provider
+accepts, and `litellm/team/effort_clamp.py` moves other values into it.
+
 ## Tests and gates
 
 `integrations/bin/check` is the gate: `build.py --check`, then

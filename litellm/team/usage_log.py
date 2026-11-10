@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS calls (
     response_model TEXT,
     response_id TEXT,
     routed_group TEXT,
+    route_json   TEXT,               -- the auto router's decision (tier, cause, score, signals), tier-auto calls only
     tokens_in    INTEGER,
     tokens_out   INTEGER,
     tokens_total INTEGER,
@@ -62,7 +63,8 @@ def connect() -> sqlite3.Connection:
         for name, kind in {"tokens_total": "INTEGER", "cache_read_tokens": "INTEGER",
                            "cache_write_tokens": "INTEGER", "reasoning_tokens": "INTEGER",
                            "usage_reported": "INTEGER NOT NULL DEFAULT 0", "usage_json": "TEXT",
-                           "response_model": "TEXT", "response_id": "TEXT", "routed_group": "TEXT"}.items():
+                           "response_model": "TEXT", "response_id": "TEXT", "routed_group": "TEXT",
+                           "route_json": "TEXT"}.items():
             if name not in columns:
                 conn.execute(f"ALTER TABLE calls ADD COLUMN {name} {kind}")
     return conn
@@ -95,6 +97,14 @@ def usage_fields(response, slo: dict, ok: bool) -> dict:
     }
 
 
+def route_json(slo: dict) -> str | None:
+    """The complexity router's decision for this call, as compact JSON; None for a call by name or tier."""
+    decision = (slo.get("metadata") or {}).get("routing_decision")
+    if not isinstance(decision, dict):
+        return None
+    return json.dumps(dict(decision), separators=(",", ":"), default=str)
+
+
 def row(kwargs: dict, ok: bool, response=None) -> dict:
     slo = kwargs.get("standard_logging_object") or {}
     lp = kwargs.get("litellm_params") or {}
@@ -122,6 +132,7 @@ def row(kwargs: dict, ok: bool, response=None) -> dict:
         "response_model": response.get("model") if isinstance(response, dict) else getattr(response, "model", None),
         "response_id": response.get("id") if isinstance(response, dict) else getattr(response, "id", None),
         "routed_group": routed_group,
+        "route_json": route_json(slo),
         **usage_fields(response, slo, ok),
         "latency_ms": int((slo.get("response_time") or 0) * 1000),
         "ok": int(ok),
@@ -138,6 +149,10 @@ class UsageLog(CustomLogger):
     def _write(self, kwargs: dict, ok: bool, response=None) -> None:
         try:
             r = row(kwargs, ok, response)
+            if not r["group"] and not r["deployment"]:
+                # Not a model call: a request refused before routing, such as Hermes's
+                # pricing probe of GET /v1/models without a key (agent/usage_pricing.py).
+                return
             cols = ", ".join(f'"{c}"' for c in r)
             with connect() as conn:
                 conn.execute(f"INSERT INTO calls ({cols}) VALUES ({', '.join('?' * len(r))})", tuple(r.values()))

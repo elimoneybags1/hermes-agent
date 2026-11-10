@@ -278,3 +278,43 @@ def test_provider_can_preserve_native_tool_replay_fields(catalog, keys):
     provider["strict_open_ai_compliance"] = "false"
     with pytest.raises(SystemExit, match="must be boolean"):
         build.target(catalog, model, served, keys)
+
+
+def _litellm(catalog, keys) -> dict:
+    return build.litellm_config(catalog, build.routed(catalog))
+
+
+def test_tier_auto_is_one_complexity_router_over_catalog_tiers(catalog, keys):
+    auto = [d for d in _litellm(catalog, keys)["model_list"] if d["model_name"] == "tier-auto"]
+    assert len(auto) == 1
+    p = auto[0]["litellm_params"]
+    assert p["model"] == "auto_router/complexity_router"
+    assert p["complexity_router_config"]["tiers"] == {
+        "SIMPLE": "tier-simple", "MEDIUM": "tier-medium", "COMPLEX": "tier-complex", "REASONING": "tier-reasoning"}
+    assert p["complexity_router_config"]["context_compaction"] is False
+    assert p["complexity_router_default_model"] == "tier-medium"
+
+
+def test_tier_auto_never_routes_to_an_allowance_tier(catalog, keys):
+    catalog["auto"]["tiers"]["REASONING"] = "claude"
+    with pytest.raises(build.Refusal, match="allowance"):
+        build.render(catalog, keys)
+
+
+@pytest.mark.parametrize("key, value", [
+    ("tiers", {"SIMPLE": "simple"}), ("default_tier", "claude"), ("classification_mode", "sometimes"),
+    ("group", "tier-medium"), ("context_compaction", "no"), ("session_affinity_ttl_seconds", 0),
+])
+def test_refuses_a_bad_auto_value(catalog, keys, key, value):
+    catalog["auto"][key] = value
+    with pytest.raises(build.Refusal):
+        build.render(catalog, keys)
+
+
+def test_reasoning_efforts_reach_model_info_and_bad_ones_are_refused(catalog, keys):
+    deps = [d for d in _litellm(catalog, keys)["model_list"] if d["model_info"]["id"] == "tier-simple/gpt-oss-120b"]
+    assert deps[0]["model_info"]["team_reasoning_efforts"] == ["low", "medium", "high"]
+    m = next(m for m in catalog["models"] if m["id"] == "gpt-oss-120b")
+    m["reasoning_efforts"] = ["low", "loud"]
+    with pytest.raises(build.Refusal, match="reasoning_efforts"):
+        build.render(catalog, keys)

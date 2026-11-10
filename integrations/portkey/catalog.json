@@ -111,6 +111,25 @@
   ],
   "claude": []
  },
+ "auto": {
+  "about": "The tier-auto model group: LiteLLM's complexity_router (litellm/litellm/router_strategy/complexity_router) scores each request locally, with no model call, and sends it to one of the tiers below. Hermes names tier-auto as its model; the chosen tier then routes as usual (order, fallbacks, session pin). build.py writes this as one auto_router deployment.",
+  "group": "tier-auto",
+  "tiers": {
+   "SIMPLE": "simple",
+   "MEDIUM": "medium",
+   "COMPLEX": "complex",
+   "REASONING": "reasoning"
+  },
+  "tiers_why": "complexity label -> catalog tier. claude is left out: it draws on the Max subscription allowance, so it is chosen by name, never by a classifier",
+  "default_tier": "medium",
+  "default_tier_why": "where a request goes when classification cannot run",
+  "classification_mode": "user_turn",
+  "classification_mode_why": "classify each new human ask and keep that decision for the tool-call turns that follow, so an agent loop does not switch model mid-task; 'every_request' classifies every turn",
+  "context_compaction": false,
+  "context_compaction_why": "Hermes compresses its own context; the router must not rewrite history behind it",
+  "session_affinity_ttl_seconds": 7200,
+  "session_affinity_ttl_why": "how long a held decision lasts with no traffic; matches policy.litellm.session_pin_ttl_s"
+ },
  "policy": {
   "about": "How the gateway behaves, as opposed to what it may call. build.py validates every value and writes it into the Portkey configs and LiteLLM's config.yaml; litellm/team/run.sh reads session_pin_ttl_s. Change a value, run build.py, restart both launchd jobs.",
   "portkey": {
@@ -418,6 +437,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
+   "reasoning_efforts": ["none", "minimal", "high"],
+   "reasoning_efforts_why": "probed 2026-11-10: none, minimal, high 200; low and medium 400 'Thinking level is not supported for this model'",
    "size": "30.7B dense",
    "strength": "LiveCodeBench v6 80.0, SWE-bench Verified 66.6",
    "served_by": [
@@ -450,6 +471,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
+   "reasoning_efforts": ["none"],
+   "reasoning_efforts_why": "Gemini answers 400 'Thinking level is not supported for this model' to low and high; none and no effort answer 200 (probed 2026-11-10)",
    "strength": "price-performance Flash with reasoning",
    "served_by": [
     {
@@ -607,6 +630,8 @@
    "tools": true,
    "vision": false,
    "reasoning": true,
+   "reasoning_efforts": ["low", "medium", "high"],
+   "reasoning_efforts_why": "Groq's 400 says reasoning_effort must be low, medium or high (reproduced 2026-11-10: none and minimal 400, low 200); litellm/team/effort_clamp.py moves other values to the nearest of these",
    "size": "21B / 3.6B active",
    "strength": "SWE-bench Verified 60.7",
    "served_by": [
@@ -632,6 +657,8 @@
    "tools": true,
    "vision": false,
    "reasoning": true,
+   "reasoning_efforts": ["low", "medium", "high"],
+   "reasoning_efforts_why": "Groq's 400 says reasoning_effort must be low, medium or high (reproduced 2026-11-10: none and minimal 400, low 200); litellm/team/effort_clamp.py moves other values to the nearest of these",
    "size": "120B / 5.1B active",
    "strength": "SWE-bench Verified 62.4; small requests only (8K TPM)",
    "served_by": [
@@ -658,6 +685,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
+   "reasoning_efforts": ["none"],
+   "reasoning_efforts_why": "Gemini answers 400 'Thinking level is not supported for this model' to low and high; none and no effort answer 200 (probed 2026-11-10)",
    "strength": "fast, budget Flash",
    "served_by": [
     {
@@ -708,6 +737,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
+   "reasoning_efforts": ["high"],
+   "reasoning_efforts_why": "probed 2026-11-10: high 200; low 400 'Thinking level is not supported for this model'; none 500 'Internal error encountered'",
    "size": "25.2B / 3.8B active",
    "strength": "small Gemma MoE",
    "served_by": [

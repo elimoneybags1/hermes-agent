@@ -73,3 +73,16 @@ def test_response_identity_and_requested_tier_survive_fallback_logging(usage_log
                             'FROM calls ORDER BY id').fetchall()
     assert rows == [('tier-medium', 'medium', 'tier-complex', None, None, None, 0),
                     ('tier-medium', 'medium', 'tier-complex', 'provider/actual-model', 'response-1', 10, 1)]
+
+
+def test_auto_router_decision_is_kept_and_non_model_requests_are_not_rows(usage_log):
+    decision = {"router_type": "complexity", "tier": "SIMPLE", "cause": "heuristic_scorer", "score": -0.1}
+    kwargs = {"litellm_params": {"metadata": {"team_requested_model": "tier-auto", "deployment_model_name": "tier-simple"}},
+              "standard_logging_object": {"model_id": "tier-simple/m", "metadata": {"routing_decision": decision}}}
+    usage_log.logger._write(kwargs, True, {"usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+    # GET /v1/models without a key: refused before routing, no model, no deployment.
+    usage_log.logger._write({"standard_logging_object": {"error_str": "No api key passed in."}}, False)
+    with usage_log.connect() as conn:
+        rows = conn.execute('SELECT "group",routed_group,route_json FROM calls').fetchall()
+    assert len(rows) == 1 and rows[0][:2] == ("tier-auto", "tier-simple")
+    assert json.loads(rows[0][2]) == decision
