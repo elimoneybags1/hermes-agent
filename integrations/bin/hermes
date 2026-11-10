@@ -55,6 +55,19 @@ unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
 
 HERMES() { "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" "$@"; }
 
+# Never let a profile named "default" through: Hermes resolves `-p default` to
+# its native home ~/.hermes (another install, with paid keys), not to this
+# HERMES_HOME. The Team home is used by passing no profile flag at all.
+prev=""
+for a in "$@"; do
+    case "$prev:$a" in
+        -p:default|--profile:default|*:--profile=default)
+            echo "hermes: '-p default' would open ~/.hermes, not the Team home; run plain 'hermes' in the Team repo instead" >&2
+            exit 2 ;;
+    esac
+    prev="$a"
+done
+
 explicit=no
 for a in "$@"; do
     case "$a" in -p|--profile|--profile=*|profile) explicit=yes; break ;; esac
@@ -111,4 +124,8 @@ with open(path, "w") as f:
 ' "$PCONF" "$HERMES_HOME/skills" >&2
 fi
 
+if [ "$PROFILE" = default ]; then
+    # Team: the base home itself, the overall setup. No profile flag.
+    exec "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" "$@"
+fi
 exec "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" -p "$PROFILE" "$@"

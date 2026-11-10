@@ -35,8 +35,15 @@ into the home, and executes the checkout through `scripts/run-in-hermes-env`
 and Hermes's PM-owned dependency environment. Never bare `hermes`, never
 `~/.hermes`: that is another project's install and holds paid keys.
 
-`~/.local/bin/hermes` links to this wrapper, so plain `hermes` works anywhere.
-The old `~/.hermes` launcher is `hermes-home`.
+`~/.local/bin/hermes` is a three-line script that execs
+`$HOME/work/Team/integrations/bin/hermes`, so plain `hermes` works anywhere.
+It must not be a symlink or name this repo's path literally: Hermes's PM
+"repairs" any launcher there that points into the checkout, replacing it with
+`.hermes/bin/hermes`, which runs this code against `~/.hermes` (another
+install). The old `~/.hermes` launcher is `hermes-home`.
+
+Never pass `-p default`: Hermes resolves it to `~/.hermes`, not this home.
+The wrapper refuses it; Team is the base home with no profile flag.
 
 ## The Hermes factory: base layer, Team profile, project profiles
 
@@ -45,7 +52,7 @@ The old `~/.hermes` launcher is `hermes-home`.
   provider at `http://127.0.0.1:4000/v1` with its tiers, empty fallbacks,
   every auxiliary lane on `litellm`, `free_only`. No profile can change these
   keys; edit the file here to change them for all.
-- **Team = the `default` profile** — Hermes launched in this repo or any of its
+- **Team = the base home, no profile** — Hermes launched in this repo or any of its
   worktrees. Its skills (`$HOME/state/team/hermes/skills`) are shared live and
   read-only with every project through `skills.external_dirs`.
 - **Project profiles** — any other directory maps to a profile named by
