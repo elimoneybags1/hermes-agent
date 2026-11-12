@@ -115,12 +115,12 @@
   "about": "The tier-auto model group: LiteLLM's complexity_router (litellm/litellm/router_strategy/complexity_router) scores each request locally, with no model call, and sends it to one of the tiers below. Hermes names tier-auto as its model; the chosen tier then routes as usual (order, fallbacks, session pin). build.py writes this as one auto_router deployment.",
   "group": "tier-auto",
   "tiers": {
-   "SIMPLE": "simple",
+   "SIMPLE": "medium",
    "MEDIUM": "medium",
    "COMPLEX": "complex",
    "REASONING": "reasoning"
   },
-  "tiers_why": "complexity label -> catalog tier. claude is left out: it draws on the Max subscription allowance, so it is chosen by name, never by a classifier",
+  "tiers_why": "complexity label -> catalog tier. SIMPLE goes to medium (at effort low): every Hermes turn carries its tool loop and 48k-55k input tokens (usage.db 2026-11-12), which gpt-oss-120b on Groq cannot take (6k input) and the small simple-tier models answer by talking instead of calling tools; tier-simple stays for Hermes's auxiliary lanes. claude is left out: it draws on the Max subscription allowance, so it is chosen by name, never by a classifier",
   "efforts": {
    "SIMPLE": "low",
    "MEDIUM": "medium",
