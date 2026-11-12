@@ -20,6 +20,10 @@ providers:
     base_url: http://127.0.0.1:4000/v1
     context_length: 131072
     key_env: LITELLM_MASTER_KEY
+    # A list here is an allowlist: Hermes's pickers show only these ids
+    # (hermes_cli/model_switch.py::_models_config_is_allowlist). The Claude
+    # models are listed by name because Claude is chosen by name, never by
+    # tier-auto; each one draws on the Max subscription allowance.
     models:
       - tier-auto
       - tier-simple
@@ -27,6 +31,10 @@ providers:
       - tier-complex
       - tier-reasoning
       - tier-claude
+      - claude-haiku-5-5
+      - claude-sonnet-5-5
+      - claude-opus-5-5
+      - claude-fable-5-1
     session_affinity_header: x-litellm-session-id
 
 fallback_providers: []
