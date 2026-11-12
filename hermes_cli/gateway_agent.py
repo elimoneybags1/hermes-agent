@@ -1314,6 +1314,8 @@ class GatewayAgent:
         if not self._owns(turn):  # taken over during that read: the newer turn's state stays untouched
             return out
         self._session_messages = out["messages"]
+        # [team] The deployment a routing proxy served (x-litellm-model-id), for the status bar.
+        self.last_served_model = stored.get("served_model") or None
         calls = stored.get("api_calls")
         # An interrupted turn's own count includes the attempt Ctrl-C cut off (the agent counts a call
         # before the request goes out). Only a response prices the ask: fall back to the gateway's

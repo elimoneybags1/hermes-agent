@@ -27,3 +27,13 @@ def test_model_is_left_of_the_context_detail():
     text = _cli("tier-medium/north-mini-code")._build_status_bar_text(width=120)
     ctx = next(part.strip() for part in text.split("│") if "/" in part)  # context used/total, e.g. "1K/131.1K"
     assert text.index("north-mini-code") < text.index(ctx)
+
+
+def test_the_gateway_passes_the_served_model_back_to_the_classic_cli():
+    # The live CLI talks to the agent through the gateway (GatewayAgent): served_model must
+    # survive the classic-CLI result projection, or the bar only ever shows the alias.
+    from gateway.session_cli_turn import take_cli_result_fields
+
+    fields = take_cli_result_fields({"final_response": "ok", "served_model": "tier-medium/north-mini-code",
+                                     "requested_model": "tier-auto"})
+    assert fields["served_model"] == "tier-medium/north-mini-code" and fields["requested_model"] == "tier-auto"
