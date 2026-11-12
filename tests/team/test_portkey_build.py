@@ -289,7 +289,8 @@ def test_tier_auto_is_one_complexity_router_over_catalog_tiers(catalog, keys):
     assert len(auto) == 1
     p = auto[0]["litellm_params"]
     assert p["model"] == "auto_router/complexity_router"
-    assert p["complexity_router_config"]["tiers"] == {
+    tiers = p["complexity_router_config"]["tiers"]
+    assert {label: (v["model_name"] if isinstance(v, dict) else v) for label, v in tiers.items()} == {
         "SIMPLE": "tier-simple", "MEDIUM": "tier-medium", "COMPLEX": "tier-complex", "REASONING": "tier-reasoning"}
     assert p["complexity_router_config"]["context_compaction"] is False
     assert p["complexity_router_default_model"] == "tier-medium"
@@ -317,4 +318,14 @@ def test_reasoning_efforts_reach_model_info_and_bad_ones_are_refused(catalog, ke
     m = next(m for m in catalog["models"] if m["id"] == "gpt-oss-120b")
     m["reasoning_efforts"] = ["low", "loud"]
     with pytest.raises(build.Refusal, match="reasoning_efforts"):
+        build.render(catalog, keys)
+
+
+def test_tier_auto_sets_each_tiers_effort_and_refuses_a_bad_one(catalog, keys):
+    auto = next(d for d in _litellm(catalog, keys)["model_list"] if d["model_name"] == "tier-auto")
+    tiers = auto["litellm_params"]["complexity_router_config"]["tiers"]
+    assert tiers["SIMPLE"] == {"model_name": "tier-simple", "litellm_params": {"reasoning_effort": "low"}}
+    assert tiers["REASONING"]["litellm_params"]["reasoning_effort"] == "high"
+    catalog["auto"]["efforts"]["MEDIUM"] = "ultra"
+    with pytest.raises(build.Refusal, match="auto.efforts"):
         build.render(catalog, keys)

@@ -62,7 +62,10 @@ every knob). It scores each new human ask locally, with no model call, and
 sends it to `tier-simple`, `tier-medium`, `tier-complex` or `tier-reasoning`;
 the tool-call turns that follow replay that decision (`classification_mode:
 user_turn`) so an agent loop does not switch model mid-task. The chosen tier
-then routes normally. `tier-claude` is never chosen by the router; name it.
+then routes normally. Effort follows the tier too: the `auto.efforts` map in
+the catalog (SIMPLE low, MEDIUM medium, COMPLEX high, REASONING high) replaces
+whatever `reasoning_effort` the caller sent, and the clamp below fits it to the
+model that answers. `tier-claude` is never chosen by the router; name it.
 Its settings live in the catalog's `auto` section; build.py writes them into
 the `tier-auto` deployment and refuses bad values. Auxiliary lanes (titles,
 compression, memory and the rest) stay on fixed tiers.

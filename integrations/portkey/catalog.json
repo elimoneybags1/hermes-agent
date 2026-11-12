@@ -121,6 +121,13 @@
    "REASONING": "reasoning"
   },
   "tiers_why": "complexity label -> catalog tier. claude is left out: it draws on the Max subscription allowance, so it is chosen by name, never by a classifier",
+  "efforts": {
+   "SIMPLE": "low",
+   "MEDIUM": "medium",
+   "COMPLEX": "high",
+   "REASONING": "high"
+  },
+  "efforts_why": "reasoning_effort set with the tier, replacing whatever the caller sent, so how hard a model thinks follows the classification too; litellm/team/effort_clamp.py then moves it into what the chosen model accepts, and models without reasoning drop it",
   "default_tier": "medium",
   "default_tier_why": "where a request goes when classification cannot run",
   "classification_mode": "user_turn",

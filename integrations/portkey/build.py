@@ -474,6 +474,10 @@ def auto_deployment(catalog: dict) -> dict | None:
             # A tier that only spends an allowance (tier-claude) is chosen by name, never by a classifier.
             # A metered model inside a free tier is still withheld by the spend guard when over.
             refuse(f"auto.tiers.{label}: tier {t} draws only on an allowance; choose it by name, not by classifier")
+    efforts = a.get("efforts") or {}
+    if not isinstance(efforts, dict) or not set(efforts) <= set(AUTO_LABELS) \
+            or any(e not in EFFORTS[:-1] for e in efforts.values()):
+        refuse(f"auto.efforts must map labels from {list(AUTO_LABELS)} to one of {list(EFFORTS[:-1])}")
     if a.get("default_tier") not in mapping.values():
         refuse("auto.default_tier must be one of the tiers in auto.tiers")
     if a.get("classification_mode") not in AUTO_MODES:
@@ -484,7 +488,9 @@ def auto_deployment(catalog: dict) -> dict | None:
     if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 1:
         refuse("auto.session_affinity_ttl_seconds must be an integer >= 1")
     cfg = {
-        "tiers": {label: f"tier-{t}" for label, t in mapping.items()},
+        # A tier with an effort is a model entry whose litellm_params the router lays over the request.
+        "tiers": {label: ({"model_name": f"tier-{t}", "litellm_params": {"reasoning_effort": efforts[label]}}
+                          if label in efforts else f"tier-{t}") for label, t in mapping.items()},
         "classification_mode": a["classification_mode"],
         "session_affinity_ttl_seconds": ttl,
     }
