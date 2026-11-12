@@ -48,11 +48,11 @@ wrapper asks Hermes before letting it through and refuses it if it would ever
 resolve elsewhere, such as `~/.hermes`. Plain `hermes` with no flag is still
 the normal way in.
 
-Hermes Desktop: `hermes desktop`, with `HERMES_DESKTOP_HERMES` set to
-`integrations/bin/hermes` so it runs this checkout through the wrapper (it
-does not recognise `~/.local/bin/hermes`). Never its "Install Hermes
-locally", never "Update" / "Update all instances": both pull stock upstream
-over this fork.
+Hermes Desktop: open it only with `hermes desktop`. The wrapper sets
+`HERMES_DESKTOP_HERMES` to itself so Desktop runs this checkout through it.
+Clicking `Hermes.app` in Finder or the Dock starts it with no Team
+environment, against `~/.hermes`. Never its "Install Hermes locally", never
+"Update" / "Update all instances": both pull stock upstream over this fork.
 
 ## The Hermes factory: base layer, Team profile, project profiles
 

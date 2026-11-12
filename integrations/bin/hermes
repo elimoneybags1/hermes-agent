@@ -31,6 +31,9 @@ export HERMES_HOME="$TEAM_STATE/hermes"
 export HERMES_RUNTIME_DIR="$TEAM_STATE/hermes-runtime"
 export HERMES_KANBAN_HOME="$TEAM_STATE/kanban"
 export HERMES_MANAGED_DIR="$REPO/integrations/hermes/base"
+# Hermes Desktop (`hermes desktop`) runs its backend through this wrapper, not a
+# bare `hermes` it finds, so it gets this home, the base layer and no paid keys.
+export HERMES_DESKTOP_HERMES="$BIN/hermes"
 mkdir -p "$HERMES_HOME" "$HERMES_RUNTIME_DIR" "$HERMES_KANBAN_HOME"
 
 # The gateway skill: a symlink in the shared (default) skills, so an edit in the repo is live.
