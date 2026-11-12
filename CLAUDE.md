@@ -42,8 +42,17 @@ It must not be a symlink or name this repo's path literally: Hermes's PM
 `.hermes/bin/hermes`, which runs this code against `~/.hermes` (another
 install). The old `~/.hermes` launcher is `hermes-home`.
 
-Never pass `-p default`: Hermes resolves it to `~/.hermes`, not this home.
-The wrapper refuses it; Team is the base home with no profile flag.
+`-p default` is the Team home: with the wrapper's `HERMES_HOME`, Hermes
+resolves `default` to it (Desktop sends `gateway ensure -p default`). The
+wrapper asks Hermes before letting it through and refuses it if it would ever
+resolve elsewhere, such as `~/.hermes`. Plain `hermes` with no flag is still
+the normal way in.
+
+Hermes Desktop: `hermes desktop`, with `HERMES_DESKTOP_HERMES` set to
+`integrations/bin/hermes` so it runs this checkout through the wrapper (it
+does not recognise `~/.local/bin/hermes`). Never its "Install Hermes
+locally", never "Update" / "Update all instances": both pull stock upstream
+over this fork.
 
 ## The Hermes factory: base layer, Team profile, project profiles
 

@@ -53,17 +53,32 @@ unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL \
       CEREBRAS_API_KEY ZAI_API_KEY MINIMAX_API_KEY DASHSCOPE_API_KEY \
       NOUS_API_KEY 2>/dev/null || true
 
+# An inherited activation marker is not proof the inherited PATH still leads to
+# Hermes's Python: Desktop's children carry the marker but a login-shell PATH
+# where /usr/bin/python3 (3.9) comes first. Drop it so run-in-hermes-env always
+# applies the environment itself, as it already does from a plain terminal.
+unset __HERMES_ACTIVATED
+
 HERMES() { "$REPO/scripts/run-in-hermes-env" python3 "$REPO/hermes" "$@"; }
 
-# Never let a profile named "default" through: Hermes resolves `-p default` to
-# its native home ~/.hermes (another install, with paid keys), not to this
-# HERMES_HOME. The Team home is used by passing no profile flag at all.
+# `-p default` passes only when Hermes resolves it to this HERMES_HOME. Current
+# Hermes treats a HERMES_HOME outside ~/.hermes as its own root, so it does
+# (Desktop sends `gateway ensure -p default`); older code resolved it to
+# ~/.hermes, another install with paid keys, so ask Hermes rather than assume.
 prev=""
 for a in "$@"; do
     case "$prev:$a" in
         -p:default|--profile:default|*:--profile=default)
-            echo "hermes: '-p default' would open ~/.hermes, not the Team home; run plain 'hermes' in the Team repo instead" >&2
-            exit 2 ;;
+            check_err="$(mktemp)"
+            resolved="$("$REPO/scripts/run-in-hermes-env" python3 -c \
+                'import sys; sys.path.insert(0, sys.argv[1]); from hermes_cli.profiles import get_profile_dir; print(get_profile_dir("default"))' \
+                "$REPO" 2>"$check_err" | tail -1)" || true
+            if [ "$resolved" != "$HERMES_HOME" ]; then
+                echo "hermes: '-p default' resolves to '${resolved:-?}', not the Team home $HERMES_HOME; refusing ($(tail -3 "$check_err" | tr '\n' ' '))" >&2
+                rm -f "$check_err"
+                exit 2
+            fi
+            rm -f "$check_err" ;;
     esac
     prev="$a"
 done
