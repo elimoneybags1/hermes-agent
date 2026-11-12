@@ -1,0 +1,11 @@
+#!/bin/sh
+# Look at and change the model gateway. `gateway show` / `gateway apply`;
+# see integrations/portkey/gateway.py.
+set -eu
+SELF="$0"
+while [ -L "$SELF" ]; do
+    _target="$(readlink "$SELF")"
+    case "$_target" in /*) SELF="$_target" ;; *) SELF="$(dirname "$SELF")/$_target" ;; esac
+done
+REPO="$(cd "$(dirname "$SELF")/../.." && pwd)"
+exec python3 -I "$REPO/integrations/portkey/gateway.py" "$@"

@@ -100,6 +100,18 @@ catalog's `auto` section; never `tier-claude`. Each decision is in `usage.db`
 (`route_json`). A catalog row's `reasoning_efforts` lists what its provider
 accepts, and `litellm/team/effort_clamp.py` moves other values into it.
 
+## Looking at and changing the gateway
+
+`integrations/bin/gateway show` — every tier in routing order, each model's
+published facts (catalog `params_b`, `active_b`, `benchmarks`, each benchmark
+with its source) beside its usage.db record (ok excluding rate limits, tool
+calls on fresh asks, latency) and the tier's base rate; flags weak models.
+`integrations/bin/gateway apply` — after a catalog edit: build, check,
+restart, status, one test call per tier that changed against HEAD. It never
+commits. `integrations/bin/lite` — LiteLLM's CLI with the key loaded; it
+refuses login, the agent launchers (`claude`, `up`, …) and anything that needs
+LiteLLM's database or would add models outside the catalog.
+
 ## Tests and gates
 
 `integrations/bin/check` is the gate: `build.py --check`, then

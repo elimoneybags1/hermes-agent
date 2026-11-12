@@ -1,0 +1,42 @@
+#!/bin/sh
+# LiteLLM's CLI (`lite`) against this repo's proxy, with the master key loaded.
+#
+# Looking works: models list / info / get, model-groups list, chat, http, version.
+# Refused, because they break this setup or need LiteLLM's database, which Team does
+# not run: login/logout (SSO), claude/codex/opencode/pi/up/down/autoroute/configure
+# (they rewrite ~/.claude or other agents' settings to run through the free proxy),
+# keys/teams/users/credentials/encryption, and models add/update/delete/import
+# (models come only from integrations/portkey/catalog.json).
+set -eu
+SELF="$0"
+while [ -L "$SELF" ]; do
+    _target="$(readlink "$SELF")"
+    case "$_target" in /*) SELF="$_target" ;; *) SELF="$(dirname "$SELF")/$_target" ;; esac
+done
+REPO="$(cd "$(dirname "$SELF")/../.." && pwd)"
+TEAM_STATE="${TEAM_STATE:-$HOME/state/team}"
+LITE="$TEAM_STATE/litellm-venv/bin/lite"
+
+refuse() { echo "lite: '$*' is refused here: $REASON" >&2; exit 2; }
+case "${1:-}" in
+    login|logout|auth|whoami)
+        REASON="SSO login needs LiteLLM's database; this wrapper already passes the master key"; refuse "$1" ;;
+    claude|codex|opencode|pi|up|down|autoroute|configure|reconfigure|unconfigure)
+        REASON="it rewrites an agent's settings (e.g. ~/.claude/settings.json) to route through the free proxy"; refuse "$1" ;;
+    keys|teams|users|credentials|encryption|debug)
+        REASON="it needs LiteLLM's database, which Team does not run"; refuse "$1" ;;
+    models)
+        case "${2:-}" in add|update|delete|import)
+            REASON="models come only from integrations/portkey/catalog.json (edit it, then integrations/bin/gateway apply)"
+            refuse "$1 $2" ;;
+        esac ;;
+    "")
+        echo "lite: interactive mode does not filter commands; do not run login, claude, codex, opencode, pi, keys, teams, users or models add/update/delete in it" >&2 ;;
+esac
+
+[ -x "$LITE" ] || { echo "lite: no LiteLLM venv at $TEAM_STATE/litellm-venv (litellm/team/install-venv.sh)" >&2; exit 1; }
+KEY="$(sed -n 's/^LITELLM_MASTER_KEY=//p' "$TEAM_STATE/litellm/.env" 2>/dev/null | tail -1)"
+[ -n "$KEY" ] || { echo "lite: no LITELLM_MASTER_KEY in $TEAM_STATE/litellm/.env" >&2; exit 1; }
+URL="$(python3 -I -c 'import json,sys; l=json.load(open(sys.argv[1]))["litellm"]; print("http://%s:%s" % (l["host"], l["port"]))' \
+    "$REPO/integrations/portkey/catalog.json")"
+LITELLM_PROXY_API_KEY="$KEY" LITELLM_PROXY_URL="$URL" exec "$LITE" "$@"

@@ -291,7 +291,7 @@ def test_tier_auto_is_one_complexity_router_over_catalog_tiers(catalog, keys):
     assert p["model"] == "auto_router/complexity_router"
     tiers = p["complexity_router_config"]["tiers"]
     assert {label: (v["model_name"] if isinstance(v, dict) else v) for label, v in tiers.items()} == {
-        "SIMPLE": "tier-medium", "MEDIUM": "tier-medium", "COMPLEX": "tier-complex", "REASONING": "tier-reasoning"}
+        "SIMPLE": "tier-medium", "MEDIUM": "tier-complex", "COMPLEX": "tier-complex", "REASONING": "tier-complex"}
     assert p["complexity_router_config"]["context_compaction"] is False
     assert p["complexity_router_default_model"] == "tier-medium"
 
@@ -339,4 +339,31 @@ def test_agent_gate_policy_is_written_and_checked(catalog, keys):
     assert cbs.index("agent_gate.gate_hook") < cbs.index("session_pin.pin")
     catalog["policy"]["agent_gate"]["min_ok_pct"] = 150
     with pytest.raises(build.Refusal, match="agent_gate.min_ok_pct"):
+        build.render(catalog, keys)
+
+
+def _model(catalog, mid):
+    return next(m for m in catalog["models"] if m["id"] == mid)
+
+
+def test_published_facts_reach_model_info(catalog, keys):
+    dep = next(d for d in _litellm(catalog, keys)["model_list"]
+               if d["model_info"]["id"] == "tier-complex/nemotron-3-5-super-vl-120b")
+    info = dep["model_info"]
+    assert (info["team_params_b"], info["team_active_b"]) == (120, 12)
+    assert {"name": "SWE-bench Verified", "score": 71.1,
+            "source": "catalog note; source not recorded"} in info["team_benchmarks"]
+
+
+@pytest.mark.parametrize("patch, match", [
+    ({"size": "30B"}, "replaced by params_b"),
+    ({"params_b": 0}, "params_b"),
+    ({"params_b": 10, "active_b": 12}, "active_b"),
+    ({"benchmarks": []}, "benchmarks"),
+    ({"benchmarks": [{"name": "SWE-bench Verified", "score": 70}]}, "source"),
+    ({"benchmarks": [{"name": "SWE-bench Verified", "score": "high", "source": "x"}]}, "score"),
+])
+def test_refuses_malformed_facts(catalog, keys, patch, match):
+    _model(catalog, "north-mini-code").update(patch)
+    with pytest.raises(build.Refusal, match=match):
         build.render(catalog, keys)

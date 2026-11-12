@@ -171,6 +171,7 @@ def routed(catalog: dict) -> list[dict]:
             w = s.get("weight")
             if w is not None and (isinstance(w, bool) or not isinstance(w, (int, float)) or w <= 0):
                 refuse(f"{mid} via {p}: weight must be a number > 0, not {w!r}")
+        check_facts(m)
         eff = m.get("reasoning_efforts")
         if eff is not None and (not isinstance(eff, list) or not eff or any(e not in EFFORTS for e in eff)
                                 or len(set(eff)) != len(eff)):
@@ -216,6 +217,33 @@ def routed(catalog: dict) -> list[dict]:
 
 def number(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def check_facts(m: dict) -> None:
+    """A model's published facts: params_b / active_b in billions, benchmarks with a source.
+
+    They are for people and for `integrations/bin/gateway show`; routing never reads them.
+    """
+    mid = m["id"]
+    if "size" in m:
+        refuse(f"{mid}: 'size' is replaced by params_b / active_b (billions) and size_note")
+    total, active = m.get("params_b"), m.get("active_b")
+    if total is not None and (not number(total) or total <= 0):
+        refuse(f"{mid}: params_b must be a number > 0 (billions)")
+    if active is not None and (not number(active) or active <= 0 or (total is not None and active > total)):
+        refuse(f"{mid}: active_b must be a number > 0 and at most params_b")
+    if "size_note" in m and not (isinstance(m["size_note"], str) and m["size_note"]):
+        refuse(f"{mid}: size_note must be a non-empty string")
+    benches = m.get("benchmarks")
+    if benches is None:
+        return
+    if not isinstance(benches, list) or not benches:
+        refuse(f"{mid}: benchmarks must be a non-empty list")
+    for b in benches:
+        if (not isinstance(b, dict) or not isinstance(b.get("name"), str) or not b["name"]
+                or not number(b.get("score")) or not isinstance(b.get("source"), str) or not b["source"]
+                or set(b) - {"name", "score", "source", "as_of"}):
+            refuse(f"{mid}: each benchmark needs name, score (a number) and source; as_of is optional")
 
 
 def check_allowance(p: str, a) -> None:
@@ -456,6 +484,10 @@ def deployment(catalog: dict, m: dict, group: str, dep_id: str) -> dict:
         info["supports_reasoning"] = bool(m["reasoning"])
     if m.get("reasoning_efforts"):
         info["team_reasoning_efforts"] = m["reasoning_efforts"]  # read by litellm/team/effort_clamp.py
+    # Published facts, shown by `lite models info`; routing never reads them.
+    for key in ("params_b", "active_b", "size_note", "benchmarks"):
+        if m.get(key) is not None:
+            info[f"team_{key}"] = m[key]
     return {"model_name": group, "litellm_params": params, "model_info": info}
 
 

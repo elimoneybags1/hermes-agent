@@ -116,11 +116,11 @@
   "group": "tier-auto",
   "tiers": {
    "SIMPLE": "medium",
-   "MEDIUM": "medium",
+   "MEDIUM": "complex",
    "COMPLEX": "complex",
-   "REASONING": "reasoning"
+   "REASONING": "complex"
   },
-  "tiers_why": "complexity label -> catalog tier. SIMPLE goes to medium (at effort low): every Hermes turn carries its tool loop and 48k-55k input tokens (usage.db 2026-11-12), which gpt-oss-120b on Groq cannot take (6k input) and the small simple-tier models answer by talking instead of calling tools; tier-simple stays for Hermes's auxiliary lanes. claude is left out: it draws on the Max subscription allowance, so it is chosen by name, never by a classifier",
+  "tiers_why": "complexity label -> catalog tier. SIMPLE goes to medium (at effort low): every Hermes turn carries its tool loop and 48k-55k input tokens (usage.db 2026-11-12), which gpt-oss-120b on Groq cannot take (6k input) and the small simple-tier models answer by talking instead of calling tools; tier-simple stays for Hermes's auxiliary lanes. MEDIUM goes to complex (2026-11-12): 40 of 42 fresh asks that day scored SIMPLE or MEDIUM and all ran their whole tool loop on north-mini-code (30B / 3B active), so anything past a simple ask now plans on the complex tier, which gemini-3.8-flash heads. REASONING goes to complex too: moving gemini-3.8-flash there left the reasoning tier only command-a-plus, a Cohere allowance, which a classifier may not choose; tier-reasoning stays callable by name and as a fallback. claude is left out: it draws on the Max subscription allowance, so it is chosen by name, never by a classifier",
   "efforts": {
    "SIMPLE": "low",
    "MEDIUM": "medium",
@@ -198,7 +198,9 @@
    "tools": true,
    "vision": false,
    "reasoning": true,
-   "size": "753B / ~40B active",
+   "params_b": 753,
+   "active_b": 40,
+   "size_note": "approximate",
    "strength": "Z.ai flagship agentic coder",
    "served_by": [
     {
@@ -215,8 +217,10 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "128B dense",
+   "params_b": 128,
+   "active_b": 128,
    "strength": "Medium 3.5; SWE-bench Verified 77.6 (secondary source)",
+   "benchmarks": [{"name": "SWE-bench Verified", "score": 77.6, "source": "secondary source"}],
    "served_by": [
     {
      "provider": "mistral",
@@ -228,14 +232,15 @@
   },
   {
    "id": "gemini-3.8-flash",
-   "tier": "reasoning",
-   "order": 2,
+   "tier": "complex",
+   "order": 1,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
    "vision": true,
    "reasoning": true,
    "strength": "Google's long-horizon SWE Flash; Terminal-Bench 2.1 89.4 (third-party)",
+   "benchmarks": [{"name": "Terminal-Bench 2.1", "score": 89.4, "source": "third-party"}],
    "served_by": [
     {
      "provider": "gemini",
@@ -251,8 +256,10 @@
    "tools": true,
    "vision": false,
    "reasoning": true,
-   "size": "550B / 55B active",
+   "params_b": 550,
+   "active_b": 55,
    "strength": "SWE-bench Verified 71.9",
+   "benchmarks": [{"name": "SWE-bench Verified", "score": 71.9, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -277,7 +284,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "218B / 25B active",
+   "params_b": 218,
+   "active_b": 25,
    "strength": "Cohere's strongest model",
    "served_by": [
     {
@@ -290,13 +298,16 @@
   {
    "id": "muse-glimmer-30b",
    "tier": "complex",
-   "order": 3,
+   "order": 4,
    "context": 131072,
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "~30B dense",
+   "params_b": 30,
+   "active_b": 30,
+   "size_note": "approximate",
    "strength": "SWE-bench Verified 76.0, Terminal-Bench 2.1 51.7",
+   "benchmarks": [{"name": "SWE-bench Verified", "score": 76, "source": "catalog note; source not recorded"}, {"name": "Terminal-Bench 2.1", "score": 51.7, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -308,14 +319,16 @@
   {
    "id": "nemotron-3.5-super-vl-120b",
    "tier": "complex",
-   "order": 1,
+   "order": 2,
    "context": 1000000,
    "max_output": 131072,
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "120B / 12B active",
+   "params_b": 120,
+   "active_b": 12,
    "strength": "SWE-bench Verified 71.1, Terminal-Bench 2.1 60.8",
+   "benchmarks": [{"name": "SWE-bench Verified", "score": 71.1, "source": "catalog note; source not recorded"}, {"name": "Terminal-Bench 2.1", "score": 60.8, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -335,8 +348,11 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "552B / 8-16B active",
+   "params_b": 552,
+   "active_b": null,
+   "size_note": "active 8-16B",
    "strength": "Terminal-Bench 2.1 90.6, DeepSWE v1.1 74.2",
+   "benchmarks": [{"name": "Terminal-Bench 2.1", "score": 90.6, "source": "catalog note; source not recorded"}, {"name": "DeepSWE v1.1", "score": 74.2, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -353,7 +369,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "320B / 18B active",
+   "params_b": 320,
+   "active_b": 18,
    "strength": "fast agentic coder (free on NVIDIA; paid on Z.ai)",
    "served_by": [
     {
@@ -368,7 +385,7 @@
   {
    "id": "gemini-3.6-flash",
    "tier": "complex",
-   "order": 2,
+   "order": 3,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -389,7 +406,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "119B / 6.5B active",
+   "params_b": 119,
+   "active_b": 6.5,
    "strength": "Small 4: instruct + reasoning + coding in one",
    "served_by": [
     {
@@ -409,8 +427,10 @@
    "tools": true,
    "vision": false,
    "reasoning": true,
-   "size": "33B / 3B active",
+   "params_b": 33,
+   "active_b": 3,
    "strength": "SWE-bench Verified 70.9",
+   "benchmarks": [{"name": "SWE-bench Verified", "score": 70.9, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "openrouter",
@@ -431,8 +451,10 @@
    "tools": true,
    "vision": false,
    "reasoning": true,
-   "size": "118B / 8B active",
+   "params_b": 118,
+   "active_b": 8,
    "strength": "Terminal-Bench 2.1 70.2",
+   "benchmarks": [{"name": "Terminal-Bench 2.1", "score": 70.2, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "openrouter",
@@ -453,8 +475,10 @@
    "reasoning": true,
    "reasoning_efforts": ["none", "minimal", "high"],
    "reasoning_efforts_why": "probed 2026-11-10: none, minimal, high 200; low and medium 400 'Thinking level is not supported for this model'",
-   "size": "30.7B dense",
+   "params_b": 30.7,
+   "active_b": 30.7,
    "strength": "LiveCodeBench v6 80.0, SWE-bench Verified 66.6",
+   "benchmarks": [{"name": "LiveCodeBench v6", "score": 80, "source": "catalog note; source not recorded"}, {"name": "SWE-bench Verified", "score": 66.6, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "gemini",
@@ -522,7 +546,9 @@
    "tools": true,
    "vision": true,
    "reasoning": false,
-   "size": "14B",
+   "params_b": 14,
+   "active_b": 14,
+   "size_note": "catalog gave one size; read as dense",
    "strength": "Ministral 3 14B",
    "served_by": [
     {
@@ -559,7 +585,8 @@
    "tools": true,
    "vision": false,
    "reasoning": true,
-   "size": "30B / 3B active",
+   "params_b": 30,
+   "active_b": 3,
    "strength": "agentic coding",
    "served_by": [
     {
@@ -620,8 +647,10 @@
    "tools": true,
    "vision": false,
    "reasoning": true,
-   "size": "30B / 3B active",
+   "params_b": 30,
+   "active_b": 3,
    "strength": "high throughput; SWE-bench Verified 51.6",
+   "benchmarks": [{"name": "SWE-bench Verified", "score": 51.6, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -646,8 +675,10 @@
    "reasoning": true,
    "reasoning_efforts": ["low", "medium", "high"],
    "reasoning_efforts_why": "Groq's 400 says reasoning_effort must be low, medium or high (reproduced 2026-11-10: none and minimal 400, low 200); litellm/team/effort_clamp.py moves other values to the nearest of these",
-   "size": "21B / 3.6B active",
+   "params_b": 21,
+   "active_b": 3.6,
    "strength": "SWE-bench Verified 60.7",
+   "benchmarks": [{"name": "SWE-bench Verified", "score": 60.7, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -673,8 +704,10 @@
    "reasoning": true,
    "reasoning_efforts": ["low", "medium", "high"],
    "reasoning_efforts_why": "Groq's 400 says reasoning_effort must be low, medium or high (reproduced 2026-11-10: none and minimal 400, low 200); litellm/team/effort_clamp.py moves other values to the nearest of these",
-   "size": "120B / 5.1B active",
+   "params_b": 120,
+   "active_b": 5.1,
    "strength": "SWE-bench Verified 62.4; small requests only (8K TPM)",
+   "benchmarks": [{"name": "SWE-bench Verified", "score": 62.4, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "groq",
@@ -718,7 +751,9 @@
    "tools": true,
    "vision": true,
    "reasoning": false,
-   "size": "8B",
+   "params_b": 8,
+   "active_b": 8,
+   "size_note": "catalog gave one size; read as dense",
    "strength": "efficient small model",
    "served_by": [
     {
@@ -753,7 +788,8 @@
    "reasoning": true,
    "reasoning_efforts": ["high"],
    "reasoning_efforts_why": "probed 2026-11-10: high 200; low 400 'Thinking level is not supported for this model'; none 500 'Internal error encountered'",
-   "size": "25.2B / 3.8B active",
+   "params_b": 25.2,
+   "active_b": 3.8,
    "strength": "small Gemma MoE",
    "served_by": [
     {
@@ -777,8 +813,10 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "1T / 32B active",
+   "params_b": 1000,
+   "active_b": 32,
    "strength": "SWE-bench Verified 80.2, SWE-bench Pro 58.6, Terminal-Bench 2.0 66.7",
+   "benchmarks": [{"name": "SWE-bench Verified", "score": 80.2, "source": "catalog note; source not recorded"}, {"name": "SWE-bench Pro", "score": 58.6, "source": "catalog note; source not recorded"}, {"name": "Terminal-Bench 2.0", "score": 66.7, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -798,7 +836,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "975B / 41B active",
+   "params_b": 975,
+   "active_b": 41,
    "strength": "general reasoning, coding, tool use",
    "served_by": [
     {
@@ -818,7 +857,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "276B / 12B active",
+   "params_b": 276,
+   "active_b": 12,
    "strength": "smaller Inkling",
    "served_by": [
     {
@@ -858,8 +898,10 @@
    "tools": true,
    "vision": false,
    "reasoning": true,
-   "size": "120B / 12B active",
+   "params_b": 120,
+   "active_b": 12,
    "strength": "SWE-bench (OpenHands) 60.5",
+   "benchmarks": [{"name": "SWE-bench (OpenHands)", "score": 60.5, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -885,8 +927,10 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "27B dense",
+   "params_b": 27,
+   "active_b": 27,
    "strength": "SWE-bench Pro 61.7 (Groq card), ~1,850 tokens/s",
+   "benchmarks": [{"name": "SWE-bench Pro", "score": 61.7, "source": "Groq card"}],
    "served_by": [
     {
      "provider": "groq",
@@ -911,7 +955,8 @@
    "max_output": 235929,
    "tools": true,
    "reasoning": true,
-   "size": "40B / 2.5B active",
+   "params_b": 40,
+   "active_b": 2.5,
    "strength": "coding-agent model; no benchmark found",
    "served_by": [
     {
@@ -930,7 +975,8 @@
    "max_output": 235929,
    "tools": true,
    "reasoning": true,
-   "size": "29B / 4B active",
+   "params_b": 29,
+   "active_b": 4,
    "strength": "TeleAI; no benchmark found",
    "served_by": [
     {
@@ -950,7 +996,8 @@
    "max_output": 460800,
    "tools": true,
    "reasoning": true,
-   "size": "280B / 16B active",
+   "params_b": 280,
+   "active_b": 16,
    "strength": "preview; no benchmark found",
    "served_by": [
     {
@@ -970,7 +1017,8 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "30B / 3B active",
+   "params_b": 30,
+   "active_b": 3,
    "strength": "omni-modal, not a coder",
    "served_by": [
     {
@@ -994,7 +1042,9 @@
    "max_output": 8192,
    "tools": true,
    "reasoning": true,
-   "size": "2.6B",
+   "params_b": 2.6,
+   "active_b": 2.6,
+   "size_note": "catalog gave one size; read as dense",
    "strength": "Liquid advises against agentic coding",
    "served_by": [
     {
@@ -1013,8 +1063,10 @@
    "context": 1000000,
    "vision": true,
    "reasoning": true,
-   "size": "428B / 23B active",
+   "params_b": 428,
+   "active_b": 23,
    "strength": "DeepSWE v1.1 73.7; off until tool calling is confirmed",
+   "benchmarks": [{"name": "DeepSWE v1.1", "score": 73.7, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -1031,7 +1083,8 @@
    "context": 131072,
    "tools": true,
    "reasoning": true,
-   "size": "253B dense",
+   "params_b": 253,
+   "active_b": 253,
    "strength": "2025 reasoner, superseded",
    "served_by": [
     {
@@ -1050,7 +1103,9 @@
    "context": 65536,
    "tools": true,
    "reasoning": true,
-   "size": "8B / 4B effective",
+   "params_b": 8,
+   "active_b": 4,
+   "size_note": "4B effective, not active",
    "strength": "one tool call per turn",
    "served_by": [
     {
@@ -1069,8 +1124,10 @@
    "tools": true,
    "vision": true,
    "reasoning": true,
-   "size": "25.2B / 3.8B active",
+   "params_b": 25.2,
+   "active_b": 3.8,
    "strength": "text-diffusion, very fast; LiveCodeBench v6 69.1",
+   "benchmarks": [{"name": "LiveCodeBench v6", "score": 69.1, "source": "catalog note; source not recorded"}],
    "served_by": [
     {
      "provider": "nvidia",
@@ -1088,7 +1145,9 @@
    "context": 131072,
    "tools": true,
    "vision": true,
-   "size": "3B",
+   "params_b": 3,
+   "active_b": 3,
+   "size_note": "catalog gave one size; read as dense",
    "strength": "too small for Team's prompts",
    "served_by": [
     {
@@ -1107,7 +1166,9 @@
    "max_output": 32000,
    "tools": true,
    "reasoning": true,
-   "size": "111B",
+   "params_b": 111,
+   "active_b": 111,
+   "size_note": "catalog gave one size; read as dense",
    "strength": "agent reasoning; Cohere calls are capped at 1,000/month",
    "served_by": [
     {

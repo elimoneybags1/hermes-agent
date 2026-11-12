@@ -156,6 +156,13 @@ Always report a rate with its count and next to the base rate.
 
 ## Change the routing
 
+Shortcut: `integrations/bin/gateway show` prints every tier in routing order with
+each model's published facts (`params_b`, `active_b`, `benchmarks`) beside its
+measured record in usage.db and the tier's base rate; `integrations/bin/gateway
+apply` runs steps 2-4 below in one go (build, check, restart, status, one test
+call per changed tier). Steps 1 and 5 stay yours. `integrations/bin/lite` is
+LiteLLM's CLI with the master key loaded, for reading only.
+
 1. Edit `integrations/portkey/catalog.json`. Typical edits: move a model's
    `order` within its tier, change a model's `tier`, reorder a `served_by`
    list, set `tier: null` with an `unrouted` reason to take a model out, add a
