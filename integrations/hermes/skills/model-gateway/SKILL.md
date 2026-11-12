@@ -70,6 +70,24 @@ Its settings live in the catalog's `auto` section; build.py writes them into
 the `tier-auto` deployment and refuses bad values. Auxiliary lanes (titles,
 compression, memory and the rest) stay on fixed tiers.
 
+**Agent gate.** On any `tier-*` call that carries tools (Hermes's agent loop),
+`litellm/team/agent_gate.py` keeps only models whose catalog row has
+`tools: true`, then drops a model whose recent record on tool requests is bad:
+too many failures, or answering fresh asks with prose instead of a tool call.
+The thresholds are `policy.agent_gate` in the catalog (starting values, meant
+to be tuned); the record is `usage.db` columns `had_tools`, `fresh_ask`,
+`tool_call`, `finish_reason`. Every dropped model is logged in
+`$TEAM_STATE/litellm/proxy.log` as `agent_gate: <tier>: <model>: <reason>`.
+A model named directly is never filtered. Per-model record on tool requests:
+
+```sh
+sqlite3 -header -column "$TEAM_STATE/litellm/usage.db" \
+  "select deployment, count(*) n, sum(ok) ok, sum(rate_limited) limited,
+          sum(fresh_ask*ok) fresh, sum(fresh_ask*ok*tool_call) fresh_tool
+   from calls where had_tools = 1 and ts > datetime('now','-3 days')
+   group by deployment order by n desc"
+```
+
 **reasoning_efforts.** A catalog row may list the `reasoning_effort` values its
 model accepts. `litellm/team/effort_clamp.py` moves any other value to the
 nearest allowed one after the deployment is picked. Add the list when a

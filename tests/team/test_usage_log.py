@@ -86,3 +86,17 @@ def test_auto_router_decision_is_kept_and_non_model_requests_are_not_rows(usage_
         rows = conn.execute('SELECT "group",routed_group,route_json FROM calls').fetchall()
     assert len(rows) == 1 and rows[0][:2] == ("tier-auto", "tier-simple")
     assert json.loads(rows[0][2]) == decision
+
+
+def test_tool_shape_of_request_and_answer_is_recorded(usage_log):
+    kwargs = {"tools": [{"type": "function"}], "messages": [{"role": "user", "content": "do it"}],
+              "litellm_params": {"metadata": {"team_requested_model": "tier-medium", "deployment_model_name": "tier-medium"}},
+              "standard_logging_object": {"model_id": "tier-medium/coder"}}
+    answer = {"choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [{"id": "1"}]}}]}
+    usage_log.logger._write(kwargs, True, answer)
+    talk = {**kwargs, "messages": [{"role": "tool", "content": "r"}]}
+    usage_log.logger._write(talk, True, {"choices": [{"finish_reason": "stop", "message": {"content": "done"}}]})
+    usage_log.logger._write(kwargs, False)
+    with usage_log.connect() as conn:
+        rows = conn.execute("SELECT had_tools, fresh_ask, tool_call, finish_reason FROM calls ORDER BY id").fetchall()
+    assert rows == [(1, 1, 1, "tool_calls"), (1, 0, 0, "stop"), (1, 1, None, None)]

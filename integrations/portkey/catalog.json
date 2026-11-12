@@ -182,6 +182,13 @@
    "drop_params_why": "strip request params a provider does not support instead of failing the call",
    "session_pin_ttl_s": 7200,
    "session_pin_ttl_why": "litellm/team/session_pin.py keeps a session on the model that last answered it for this long"
+  },
+  "agent_gate": {
+   "window_hours": 72,
+   "min_samples": 10,
+   "min_ok_pct": 50,
+   "min_fresh_tool_pct": 25,
+   "why": "litellm/team/agent_gate.py, on tier calls that carry tools: only tools:true models, then drop a model whose last window_hours of tool requests (at least min_samples) succeeded under min_ok_pct (rate limits excluded) or answered fresh asks with a tool call under min_fresh_tool_pct. Starting values set 2026-11-12 with no record yet; tune from usage.db (had_tools, fresh_ask, tool_call)"
   }
  },
  "models": [

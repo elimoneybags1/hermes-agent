@@ -329,3 +329,14 @@ def test_tier_auto_sets_each_tiers_effort_and_refuses_a_bad_one(catalog, keys):
     catalog["auto"]["efforts"]["MEDIUM"] = "ultra"
     with pytest.raises(build.Refusal, match="auto.efforts"):
         build.render(catalog, keys)
+
+
+def test_agent_gate_policy_is_written_and_checked(catalog, keys):
+    files = build.render(catalog, keys)
+    assert json.loads(files["litellm/agent_gate.json"]) == {
+        k: catalog["policy"]["agent_gate"][k] for k in ("window_hours", "min_samples", "min_ok_pct", "min_fresh_tool_pct")}
+    cbs = _litellm(catalog, keys)["litellm_settings"]["callbacks"]
+    assert cbs.index("agent_gate.gate_hook") < cbs.index("session_pin.pin")
+    catalog["policy"]["agent_gate"]["min_ok_pct"] = 150
+    with pytest.raises(build.Refusal, match="agent_gate.min_ok_pct"):
+        build.render(catalog, keys)

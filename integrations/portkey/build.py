@@ -284,7 +284,16 @@ def policy(catalog: dict) -> dict:
     for t, to in cwf.items():
         if t not in tiers or not isinstance(to, list) or not to or any(x not in tiers or x == t for x in to):
             refuse(f"policy.litellm.context_window_fallbacks.{t}: must be a known tier -> other known tiers, not {to!r}")
+    ag = pol.get("agent_gate")
+    if not isinstance(ag, dict):
+        refuse("policy.agent_gate must be an object")
+    for key, lo, hi in (("window_hours", 1, 24 * 30), ("min_samples", 1, 10_000),
+                        ("min_ok_pct", 0, 100), ("min_fresh_tool_pct", 0, 100)):
+        v = ag.get(key)
+        if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
+            refuse(f"policy.agent_gate.{key} must be an integer {lo}-{hi}, not {v!r}")
     return {
+        "agent_gate": {k: ag[k] for k in ("window_hours", "min_samples", "min_ok_pct", "min_fresh_tool_pct")},
         "portkey": {
             "mode": pk["mode"],
             "on_status_codes": statuses("on_status_codes"),
@@ -539,7 +548,7 @@ def litellm_config(catalog: dict, models: list[dict]) -> dict:
             "telemetry": False,
             "callbacks": [
                 "reasoning_strip.strip", "effort_clamp.clamp_hook", "spend_guard.guard", "forward_headers.forward",
-                "session_pin.pin", "usage_log.logger",
+                "agent_gate.gate_hook", "session_pin.pin", "usage_log.logger",
             ],
         },
         "general_settings": {
@@ -575,6 +584,7 @@ def render(catalog: dict, keys: dict[str, str]) -> dict[str, str]:
     out["litellm/config.yaml"] = head + yaml_dump(litellm_config(catalog, models))
     names = {p.rsplit("/", 1)[1][:-5] for p in out if p.startswith("portkey/configs/")}
     out["litellm/allowances.json"] = json_dump(allowances(catalog, models, names))
+    out["litellm/agent_gate.json"] = json_dump(policy(catalog)["agent_gate"])  # read by litellm/team/agent_gate.py
     return out
 
 

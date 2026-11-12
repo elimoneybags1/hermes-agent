@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS calls (
     response_id TEXT,
     routed_group TEXT,
     route_json   TEXT,               -- the auto router's decision (tier, cause, score, signals), tier-auto calls only
+    had_tools    INTEGER,            -- the request carried tool definitions (Hermes's agent loop)
+    fresh_ask    INTEGER,            -- the newest message was the user's, not a tool result
+    tool_call    INTEGER,            -- the answer called a tool (NULL when the call failed)
+    finish_reason TEXT,
     tokens_in    INTEGER,
     tokens_out   INTEGER,
     tokens_total INTEGER,
@@ -64,7 +68,8 @@ def connect() -> sqlite3.Connection:
                            "cache_write_tokens": "INTEGER", "reasoning_tokens": "INTEGER",
                            "usage_reported": "INTEGER NOT NULL DEFAULT 0", "usage_json": "TEXT",
                            "response_model": "TEXT", "response_id": "TEXT", "routed_group": "TEXT",
-                           "route_json": "TEXT"}.items():
+                           "route_json": "TEXT", "had_tools": "INTEGER", "fresh_ask": "INTEGER",
+                           "tool_call": "INTEGER", "finish_reason": "TEXT"}.items():
             if name not in columns:
                 conn.execute(f"ALTER TABLE calls ADD COLUMN {name} {kind}")
     return conn
@@ -105,6 +110,35 @@ def route_json(slo: dict) -> str | None:
     return json.dumps(dict(decision), separators=(",", ":"), default=str)
 
 
+def _first_choice(response):
+    choices = response.get("choices") if isinstance(response, dict) else getattr(response, "choices", None)
+    return choices[0] if choices else None
+
+
+def _get(obj, key):
+    return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+
+def request_shape(kwargs: dict) -> tuple[int, int | None]:
+    """(had_tools, fresh_ask) for the request: tools sent, and whether the newest message is the user's."""
+    slo = kwargs.get("standard_logging_object") or {}
+    tools = (kwargs.get("tools") or (kwargs.get("optional_params") or {}).get("tools")
+             or (slo.get("model_parameters") or {}).get("tools"))
+    messages = kwargs.get("messages") or slo.get("messages")
+    last = messages[-1] if isinstance(messages, list) and messages else None
+    fresh = None if not isinstance(last, dict) else int(last.get("role") == "user")
+    return int(bool(tools)), fresh
+
+
+def answer_shape(response, ok: bool) -> tuple[int | None, str | None]:
+    """(tool_call, finish_reason) of the answer; tool_call is NULL when there is no answer."""
+    choice = _first_choice(response) if ok and response is not None else None
+    if choice is None:
+        return None, None
+    message = _get(choice, "message") or {}
+    return int(bool(_get(message, "tool_calls"))), _get(choice, "finish_reason")
+
+
 def row(kwargs: dict, ok: bool, response=None) -> dict:
     slo = kwargs.get("standard_logging_object") or {}
     lp = kwargs.get("litellm_params") or {}
@@ -133,6 +167,8 @@ def row(kwargs: dict, ok: bool, response=None) -> dict:
         "response_id": response.get("id") if isinstance(response, dict) else getattr(response, "id", None),
         "routed_group": routed_group,
         "route_json": route_json(slo),
+        **dict(zip(("had_tools", "fresh_ask"), request_shape(kwargs))),
+        **dict(zip(("tool_call", "finish_reason"), answer_shape(response, ok))),
         **usage_fields(response, slo, ok),
         "latency_ms": int((slo.get("response_time") or 0) * 1000),
         "ok": int(ok),
