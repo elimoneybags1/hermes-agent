@@ -202,14 +202,17 @@ class CLIStatusBarMixin:
             # Shared RID-prefix stripper so this and ModelSwitchResult can't drift.
             from hermes_cli.model_switch import format_model_for_display
             model_short = format_model_for_display(model_short)
-        # [team] Behind a routing proxy (tier-auto), show the deployment that answered the last
-        # call (x-litellm-model-id, e.g. "tier-medium/north-mini-code"), not the alias asked for.
-        served = getattr(agent, "last_served_model", None)
-        if isinstance(served, str) and served and served != model_name and "://" not in served:
-            model_short = served.rsplit("/", 1)[-1]
         model_short = model_short.removesuffix(".gguf")
         if len(model_short) > 26:
             model_short = f"{model_short[:23]}..."
+        # [team] Behind a routing proxy (tier-auto), name the deployment that answered the last
+        # call (x-litellm-model-id, e.g. "tier-medium/north-mini-code") next to the alias asked for.
+        served = getattr(agent, "last_served_model", None)
+        if isinstance(served, str) and served and served != model_name and "://" not in served:
+            served_short = served.rsplit("/", 1)[-1]
+            if len(served_short) > 26:
+                served_short = f"{served_short[:23]}..."
+            model_short = f"{model_short} ({served_short})"
 
         prompt_start = getattr(self, "_prompt_start_time", None)
         turn_live = prompt_start is not None

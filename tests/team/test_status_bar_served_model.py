@@ -1,4 +1,4 @@
-"""[team] hermes_cli/cli_status_bar_mixin.py: the bar names the model that answered, not tier-auto."""
+"""[team] hermes_cli/cli_status_bar_mixin.py: the bar shows tier-auto and, next to it, the model that answered."""
 
 from __future__ import annotations
 
@@ -14,8 +14,13 @@ def _cli(served):
 
 def test_shows_the_served_deployment():
     snap = _cli("tier-medium/north-mini-code")._get_status_bar_snapshot()
-    assert snap["model_short"] == "north-mini-code"
+    assert snap["model_short"] == "tier-auto (north-mini-code)"
     assert snap["model_name"] == "tier-auto"  # cache-hit baselines still key on the asked-for model
+
+
+def test_a_long_served_name_is_cut_on_its_own():
+    snap = _cli("tier-complex/llama-3.1-nemotron-ultra-253b")._get_status_bar_snapshot()
+    assert snap["model_short"] == "tier-auto (llama-3.1-nemotron-ultr...)"
 
 
 def test_falls_back_to_the_alias_without_a_header_or_with_an_api_base():
