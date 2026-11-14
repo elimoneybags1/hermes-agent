@@ -56,20 +56,42 @@ environment, against `~/.hermes`. Never its "Install Hermes locally", never
 
 ## The Hermes factory: base layer, Team profile, project profiles
 
+Main (the default profile) is the overall configuration. Every project
+profile is main plus its own additions, kept live by three mechanisms:
+
 - **Locked base** — `integrations/hermes/base/config.yaml`, loaded as Hermes's
   managed layer (`HERMES_MANAGED_DIR`) on top of every profile: the `litellm`
   provider at `http://127.0.0.1:4000/v1` with its tiers, empty fallbacks,
-  every auxiliary lane on `litellm`, `free_only`. No profile can change these
-  keys; edit the file here to change them for all.
-- **Team = the base home, no profile** — Hermes launched in this repo or any of its
-  worktrees. Its skills (`$HOME/state/team/hermes/skills`) are shared live and
-  read-only with every project through `skills.external_dirs`.
+  `free_only`, and every setting main shares (models, auxiliary lanes,
+  compression, curator, kanban, approvals). No profile can change these keys.
+  To change a shared setting, edit this file, not `/config` in a main session.
+- **Inherited lists and personality** — `integrations/hermes/inherit.py`, run by
+  the launcher before every project-profile start, automatic or `-p <name>`
+  (a stamp skips it when nothing changed). It unions main's `plugins.enabled`
+  and `command_allowlist` into the profile's, puts main's skills
+  (`$HOME/state/team/hermes/skills`) first in `skills.external_dirs`, and
+  rebuilds the profile's `SOUL.md` as main's `SOUL.md` plus the profile's
+  `SOUL.project.md`. Edit `SOUL.project.md`; a hand-edited `SOUL.md` is saved
+  aside as `SOUL.md.edited-<time>` and replaced.
+- **Project additions** — the profile's own `config.yaml` keys outside the base
+  (`terminal.cwd`, `mcp_servers`, ...), its `SOUL.project.md`, its memory, and
+  skills it learns, which stay local. Promote a skill to every project by
+  moving it into main's skills.
+
+- **Main = the base home, no profile** — Hermes launched in this repo, any of
+  its worktrees, or `~`.
 - **Project profiles** — any other directory maps to a profile named by
   `integrations/bin/hermes-project` (the git root; under `~/work` the path joined
-  by `-`). The first launch there clones `default` (config, SOUL, memory), empties
-  its skills so the shared ones stay live, and writes `skills.external_dirs`.
-  After that the profile evolves on its own; skills it learns stay local.
-  Promote one to every project by moving it into the default profile's skills.
+  by `-`). The first launch there clones `default`, empties its skills (and
+  marks `.no-bundled-skills`) so the shared ones stay live.
+- **GitHub per profile** — a profile with a `gh` login in
+  `profiles/<name>/gh/` gets `GH_CONFIG_DIR` pointed there, so `gh` and `git`
+  (through gh's credential helper) use that login and no other profile has it.
+  Hermes strips `GH_TOKEN` from every terminal, so a token in `.env` would not
+  work. Create one with `GH_CONFIG_DIR=$HOME/state/team/hermes/profiles/<name>/gh gh auth login`.
+- **signalexp** — works on the Signal team's `Signal-EXP/hermes-agent` at
+  `~/work/SignalEXP`, by pull request only; its brief is its `SOUL.project.md`.
+  Nothing from this repo goes into theirs.
 - An explicit `-p <name>` or the `profile` subcommand skips the automatic choice.
 - Hermes's background gateway keeps an in-memory profile list: remove a
   profile with `hermes profile delete <name>`, not `rm`, or it recreates an

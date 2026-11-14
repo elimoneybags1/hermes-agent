@@ -6,15 +6,26 @@
 # Edit this file from the Team repo, commit it, and every profile picks the
 # change up on its next launch.
 #
-# Keep it to what must be the same everywhere: the gateway connection, the
-# free-only rule, and where the shared skills live. Model choices, toolsets,
-# turn limits and personality belong to each profile.
+# Main (the default profile) is the overall configuration and every project
+# profile is main plus its own additions. This file is how main's settings reach
+# every profile: the gateway connection, the free-only rule, and every setting
+# main shares. A project adds keys of its own (terminal.cwd, mcp_servers, ...)
+# in its profile's config.yaml; it cannot change one set here. To change a
+# shared setting, change it here, not with /config in a main session.
+#
+# Lists are not set here: a list in this layer replaces a profile's list whole,
+# so a project could not add to it. integrations/hermes/inherit.py unions main's
+# lists (plugins.enabled, command_allowlist, skills.external_dirs) into each
+# project profile instead, and builds its SOUL.md from main's.
 
 model:
   provider: litellm
+  default: tier-auto
+  streaming: false
 
 providers:
   litellm:
+    model: tier-auto
     api_key: ${LITELLM_MASTER_KEY}
     api_mode: chat_completions
     base_url: http://127.0.0.1:4000/v1
@@ -41,34 +52,57 @@ fallback_providers: []
 
 delegation:
   provider: litellm
+  model: tier-auto
   fallback_providers: []
 
 cron:
   model_provider: litellm
+  model: tier-auto
 
+# Every helper lane runs on the gateway's simple tier.
 auxiliary:
   free_only: true
-  approval: {provider: litellm}
-  background_review: {provider: litellm}
-  compression: {provider: litellm}
-  curator: {provider: litellm}
-  goal_judge: {provider: litellm}
-  kanban_decomposer: {provider: litellm}
-  mcp: {provider: litellm}
-  memory_query_rewrite: {provider: litellm}
-  moa_aggregator: {provider: litellm}
-  moa_reference: {provider: litellm}
-  monitor: {provider: litellm}
-  profile_describer: {provider: litellm}
-  review: {provider: litellm}
-  skills_hub: {provider: litellm}
-  title_generation: {provider: litellm}
-  triage_specifier: {provider: litellm}
-  tts_audio_tags: {provider: litellm}
-  vision: {provider: litellm}
-  voice_chat: {provider: litellm}
+  approval: {provider: litellm, model: tier-simple}
+  background_review: {provider: litellm, model: tier-simple, enabled: false}
+  compression: {provider: litellm, model: tier-simple}
+  curator: {provider: litellm, model: tier-simple}
+  goal_judge: {provider: litellm, model: tier-simple}
+  kanban_decomposer: {provider: litellm, model: tier-simple}
+  mcp: {provider: litellm, model: tier-simple}
+  memory_query_rewrite: {provider: litellm, model: tier-simple}
+  moa_aggregator: {provider: litellm, model: tier-simple}
+  moa_reference: {provider: litellm, model: tier-simple}
+  monitor: {provider: litellm, model: tier-simple}
+  profile_describer: {provider: litellm, model: tier-simple}
+  review: {provider: litellm, model: tier-simple}
+  skills_hub: {provider: litellm, model: tier-simple}
+  title_generation: {provider: litellm, model: tier-simple}
+  triage_specifier: {provider: litellm, model: tier-simple}
+  tts_audio_tags: {provider: litellm, model: tier-simple}
+  vision: {provider: litellm, model: tier-simple}
+  voice_chat: {provider: litellm, model: tier-simple}
 
-# Shared skills are NOT set here: Hermes reads skills.* from each profile's own
-# config.yaml only (agent/skill_utils.py::_skills_cfg), never from this layer.
-# integrations/bin/hermes writes skills.external_dirs into every project profile
-# when it creates it.
+compression:
+  enabled: true
+  threshold: 0.5
+
+curator:
+  enabled: false
+
+# One kanban board, orchestrated by main.
+kanban:
+  auto_decompose: false
+  default_assignee: default
+  dispatch_in_gateway: false
+  failure_limit: 2
+  max_in_progress: 3
+  orchestrator_profile: default
+  review_dispatch: false
+
+approvals:
+  mode: "off"
+  destructive_slash_confirm: false
+
+# Per-profile, never here: terminal.cwd (the project's folder), gateway.* (main
+# hosts the gateway), telemetry, onboarding and moa state (Hermes writes those
+# itself), _config_version, and the lists above.

@@ -12,9 +12,12 @@
 # Layers:
 #   integrations/hermes/base/   locked config merged on top of every profile
 #                               (HERMES_MANAGED_DIR): gateway, free-only, shared skills
-#   default profile             Team: launched from this repo; its skills are shared
-#   project profiles            one per project, made on the first launch there by
-#                               cloning default; picked by integrations/bin/hermes-project
+#   default profile             main: the overall configuration, launched from this repo
+#   project profiles            main plus project additions; one per project, made on
+#                               the first launch there by cloning default; picked by
+#                               integrations/bin/hermes-project. Every launch, automatic
+#                               or -p <name>, brings it up to date with main
+#                               (integrations/hermes/inherit.py).
 #
 # An explicit -p/--profile, or the `profile` subcommand, skips the automatic choice.
 set -eu
@@ -86,11 +89,49 @@ for a in "$@"; do
     prev="$a"
 done
 
+# Bring a project profile up to date with main (default): shared lists, shared
+# skills, SOUL.md = main's + SOUL.project.md. See integrations/hermes/inherit.py.
+# A stamp keeps it off the common path: it runs only when one of its inputs changed.
+inherit_from_main() {
+    PDIR="$HERMES_HOME/profiles/$1"
+    [ "$1" != default ] && [ -f "$PDIR/config.yaml" ] || return 0
+    STAMP="$PDIR/.inherited"
+    if [ -f "$STAMP" ] && [ -z "$(find "$HERMES_HOME/config.yaml" "$HERMES_HOME/SOUL.md" \
+            "$PDIR/config.yaml" "$PDIR/SOUL.md" "$PDIR/SOUL.project.md" -newer "$STAMP" 2>/dev/null)" ]; then
+        return 0
+    fi
+    if "$REPO/scripts/run-in-hermes-env" python3 "$REPO/integrations/hermes/inherit.py" "$HERMES_HOME" "$1" >&2; then
+        touch "$STAMP"
+    else
+        echo "hermes: could not bring profile '$1' up to date with main; starting it as it is" >&2
+    fi
+}
+
+# A profile with its own gh login ($PDIR/gh) is the only one holding that
+# credential: gh, and git through gh's credential helper, use it. Hermes strips
+# GH_TOKEN from every terminal, so a config directory is the way to scope it.
+scope_github() {
+    if [ "$1" != default ] && [ -d "$HERMES_HOME/profiles/$1/gh" ]; then
+        export GH_CONFIG_DIR="$HERMES_HOME/profiles/$1/gh"
+    fi
+}
+
 explicit=no
+EXPLICIT_PROFILE=""
+prev=""
 for a in "$@"; do
-    case "$a" in -p|--profile|--profile=*|profile) explicit=yes; break ;; esac
+    case "$prev" in -p|--profile) EXPLICIT_PROFILE="$a" ;; esac
+    case "$a" in
+        --profile=*) explicit=yes; EXPLICIT_PROFILE="${a#--profile=}" ;;
+        -p|--profile|profile) explicit=yes ;;
+    esac
+    prev="$a"
 done
 if [ "$explicit" = yes ]; then
+    if [ -n "$EXPLICIT_PROFILE" ]; then
+        inherit_from_main "$EXPLICIT_PROFILE"
+        scope_github "$EXPLICIT_PROFILE"
+    fi
     HERMES "$@"
     exit $?
 fi
@@ -121,26 +162,8 @@ if [ "$PROFILE" != default ] && [ ! -f "$HERMES_HOME/profiles/$PROFILE/config.ya
     fi
 fi
 
-# Every project profile reads the Team profile's skills, live and read-only.
-# Hermes reads skills.* only from the profile's own config.yaml (not the base
-# layer), so make sure it is there; a cheap grep keeps this off the common path.
-PCONF="$HERMES_HOME/profiles/$PROFILE/config.yaml"
-if [ "$PROFILE" != default ] && [ -f "$PCONF" ] && ! grep -qF "$HERMES_HOME/skills" "$PCONF"; then
-    "$REPO/scripts/run-in-hermes-env" python3 -c '
-import sys
-from hermes_yaml import roundtrip_yaml
-path, shared = sys.argv[1], sys.argv[2]
-y = roundtrip_yaml()
-with open(path) as f:
-    cfg = y.load(f) or {}
-skills = cfg.get("skills") or {}
-dirs = [d for d in (skills.get("external_dirs") or []) if d != shared]
-skills["external_dirs"] = [shared] + dirs
-cfg["skills"] = skills
-with open(path, "w") as f:
-    y.dump(cfg, f)
-' "$PCONF" "$HERMES_HOME/skills" >&2
-fi
+inherit_from_main "$PROFILE"
+scope_github "$PROFILE"
 
 if [ "$PROFILE" = default ]; then
     # Team: the base home itself, the overall setup. No profile flag.
