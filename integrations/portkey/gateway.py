@@ -10,7 +10,7 @@
       After editing catalog.json: build.py, build.py --check, restart LiteLLM (and
       Portkey when policy.portkey changed), wait for health, run both status
       scripts, then one real call to every tier whose models, order or providers
-      changed against HEAD (tier-auto when the auto section changed), printing the
+      changed against HEAD (each router whose auto entry changed), printing the
       deployment that answered. It never commits.
 
 Stdlib only and Python 3.9, like build.py; run with `python3 -I`.
@@ -160,12 +160,15 @@ def show(argv: list[str]) -> int:
             return 2
     catalog = json.loads(CATALOG.read_text())
     stats = model_stats(usage_db(), hours)
-    auto = catalog.get("auto") or {}
     print(f"usage.db window: last {hours:g} h   (ok excludes rate-limited calls; 'fresh→tool' = new asks answered with a tool call)")
-    if auto and not only:
-        mapping = ", ".join(f"{label}→{t} ({(auto.get('efforts') or {}).get(label, '-')})"
-                            for label, t in auto["tiers"].items())
-        print(f"tier-auto: {mapping}")
+    if not only:
+        for auto in routers(catalog):
+            mapping = ", ".join(f"{label}→{t} ({(auto.get('efforts') or {}).get(label, '-')})"
+                                for label, t in auto["tiers"].items())
+            print(f"{auto.get('group')}: {mapping}")
+        for mid, to in (catalog.get("model_fallbacks") or {}).items():
+            if isinstance(to, list):
+                print(f"fallback: {mid} → {', '.join(to)}")
     print()
     for t in catalog["tiers"]:
         if only and t != only:
@@ -189,14 +192,24 @@ def tier_shape(catalog: dict) -> dict[str, list]:
     return {t: sorted(v) for t, v in out.items()}
 
 
+def routers(catalog: dict) -> list[dict]:
+    """The catalog's complexity routers: 'auto' is one router object or a list of them."""
+    a = catalog.get("auto")
+    return [a] if isinstance(a, dict) else [r for r in (a or []) if isinstance(r, dict)]
+
+
 def changed(old: dict | None, new: dict) -> tuple[list[str], bool]:
     """(model groups worth a test call, whether Portkey must restart) between two catalogs."""
     if old is None:
-        return [f"tier-{t}" for t in new["tiers"]] + (["tier-auto"] if new.get("auto") else []), True
+        return [f"tier-{t}" for t in new["tiers"]] + [r.get("group", "tier-auto") for r in routers(new)], True
     a, b = tier_shape(old), tier_shape(new)
     groups = [f"tier-{t}" for t in new["tiers"] if a.get(t) != b.get(t)]
-    if old.get("auto") != new.get("auto") and new.get("auto"):
-        groups.append("tier-auto")
+    before = {r.get("group", "tier-auto"): r for r in routers(old)}
+    fallbacks_moved = old.get("model_fallbacks") != new.get("model_fallbacks")
+    for r in routers(new):
+        g = r.get("group", "tier-auto")
+        if before.get(g) != r or fallbacks_moved:
+            groups.append(g)
     portkey = ((old.get("policy") or {}).get("portkey") != (new.get("policy") or {}).get("portkey")
                or old.get("gateway") != new.get("gateway") or old.get("providers") != new.get("providers"))
     return groups, portkey

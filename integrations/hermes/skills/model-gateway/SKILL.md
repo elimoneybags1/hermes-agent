@@ -54,21 +54,32 @@ Hermes profiles name a tier (or a catalog model id) as their model, so a
 "model swap" is either LiteLLM moving to the next deployment in the tier, or a
 tier fallback. Both are visible in the logs below.
 
-**tier-auto (automatic model choice).** Hermes's main model, subagents
-(`delegation.model`) and cron use `tier-auto`. It is one LiteLLM deployment
-running the fork's complexity router
+**Two routers: tier-auto (the conversation) and tier-work (the work).** Both
+are LiteLLM deployments running the fork's complexity router
 (`litellm/litellm/router_strategy/complexity_router/`, its `README.md` lists
-every knob). It scores each new human ask locally, with no model call, and
-sends it to `tier-simple`, `tier-medium`, `tier-complex` or `tier-reasoning`;
-the tool-call turns that follow replay that decision (`classification_mode:
-user_turn`) so an agent loop does not switch model mid-task. The chosen tier
-then routes normally. Effort follows the tier too: the `auto.efforts` map in
-the catalog (SIMPLE low, MEDIUM medium, COMPLEX high, REASONING high) replaces
-whatever `reasoning_effort` the caller sent, and the clamp below fits it to the
-model that answers. `tier-claude` is never chosen by the router; name it.
-Its settings live in the catalog's `auto` section; build.py writes them into
-the `tier-auto` deployment and refuses bad values. Auxiliary lanes (titles,
-compression, memory and the rest) stay on fixed tiers.
+every knob), defined in the catalog's `auto` list. Each scores a new human ask
+locally, with no model call, and sends it to a target; the tool-call turns that
+follow replay that decision (`classification_mode: user_turn`) so a loop does
+not switch model mid-task. Effort follows the label (`efforts` per router),
+replacing whatever `reasoning_effort` the caller sent.
+
+- `tier-auto` is Hermes's main model, the conversation with Eli. Its targets are
+  Claude models by name, on the Max subscription allowance: SIMPLE and MEDIUM to
+  `claude-sonnet-5-5`, COMPLEX and REASONING to `claude-opus-5-5`. Both fall back
+  to `claude-haiku-5-5` (the catalog's `model_fallbacks`). A router may target an
+  allowance-only model only because it says `allowance: true` with an
+  `allowance_why`; build.py refuses it otherwise.
+- `tier-work` is the subagents' model (`delegation.model`) and cron's. Its
+  targets are the free tiers (SIMPLE to `tier-medium` at effort low, the rest to
+  `tier-complex`), which then route normally (order, fallbacks, session pin).
+
+The conversation hands the work itself to subagents (`delegate_task`), which is
+what keeps the allowance spent on talking and deciding, not on tool loops; that
+instruction is in main's `SOUL.md`. Auxiliary lanes (titles, compression, memory
+and the rest) stay on fixed free tiers. To change any of this (which Claude model
+takes which label, the fallback, the free targets), edit the catalog's `auto` or
+`model_fallbacks` and run `integrations/bin/gateway apply`; never
+`$TEAM_STATE/litellm/config.yaml`.
 
 **Agent gate.** On any `tier-*` call that carries tools (Hermes's agent loop),
 `litellm/team/agent_gate.py` keeps only models whose catalog row has
@@ -137,7 +148,7 @@ sqlite3 "$TEAM_STATE/litellm/usage.db" \
   "select count(*), sum(ok=0) from calls where ts > datetime('now','-1 day')"
 ```
 
-What the auto router decided and why, for the last 20 tier-auto calls
+What a router decided and why, for the last 20 tier-auto calls (use 'tier-work' for subagents)
 (`route_json` holds the full decision: tier, cause, score, signals, boundaries):
 
 ```sh
@@ -222,8 +233,9 @@ skill a project learns stays in that project's profile.
 The Hermes provider is `litellm` in `$HERMES_HOME/config.yaml`
 (`base_url http://127.0.0.1:4000/v1`, the master key from the environment, the
 tiers in `models`, `x-litellm-session-id` as the affinity header so one
-conversation stays on one deployment). `model.default`, `delegation.model` and
-`cron.model` are `tier-auto`; every auxiliary lane is pinned to a fixed tier
+conversation stays on one deployment). `delegation.model` and
+`cron.model` are `tier-work`, and `model.default` is `tier-auto` (all three are
+locked in `integrations/hermes/base/config.yaml`); every auxiliary lane is pinned to a fixed tier
 through the same provider. To put a profile on a specific
 model, name a catalog id (for example `gemini-3.6-flash`) instead of a tier;
 every catalog model with a tier is also its own LiteLLM model group.

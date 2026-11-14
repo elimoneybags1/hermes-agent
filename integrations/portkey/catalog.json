@@ -111,31 +111,57 @@
   ],
   "claude": []
  },
- "auto": {
-  "about": "The tier-auto model group: LiteLLM's complexity_router (litellm/litellm/router_strategy/complexity_router) scores each request locally, with no model call, and sends it to one of the tiers below. Hermes names tier-auto as its model; the chosen tier then routes as usual (order, fallbacks, session pin). build.py writes this as one auto_router deployment.",
-  "group": "tier-auto",
-  "tiers": {
-   "SIMPLE": "medium",
-   "MEDIUM": "complex",
-   "COMPLEX": "complex",
-   "REASONING": "complex"
-  },
-  "tiers_why": "complexity label -> catalog tier. SIMPLE goes to medium (at effort low): every Hermes turn carries its tool loop and 48k-55k input tokens (usage.db 2026-11-12), which gpt-oss-120b on Groq cannot take (6k input) and the small simple-tier models answer by talking instead of calling tools; tier-simple stays for Hermes's auxiliary lanes. MEDIUM goes to complex (2026-11-12): 40 of 42 fresh asks that day scored SIMPLE or MEDIUM and all ran their whole tool loop on north-mini-code (30B / 3B active), so anything past a simple ask now plans on the complex tier, which gemini-3.8-flash heads. REASONING goes to complex too: moving gemini-3.8-flash there left the reasoning tier only command-a-plus, a Cohere allowance, which a classifier may not choose; tier-reasoning stays callable by name and as a fallback. claude is left out: it draws on the Max subscription allowance, so it is chosen by name, never by a classifier",
-  "efforts": {
-   "SIMPLE": "low",
-   "MEDIUM": "medium",
-   "COMPLEX": "high",
-   "REASONING": "high"
-  },
-  "efforts_why": "reasoning_effort set with the tier, replacing whatever the caller sent, so how hard a model thinks follows the classification too; litellm/team/effort_clamp.py then moves it into what the chosen model accepts, and models without reasoning drop it",
-  "default_tier": "medium",
-  "default_tier_why": "where a request goes when classification cannot run",
-  "classification_mode": "user_turn",
-  "classification_mode_why": "classify each new human ask and keep that decision for the tool-call turns that follow, so an agent loop does not switch model mid-task; 'every_request' classifies every turn",
-  "context_compaction": false,
-  "context_compaction_why": "Hermes compresses its own context; the router must not rewrite history behind it",
-  "session_affinity_ttl_seconds": 7200,
-  "session_affinity_ttl_why": "how long a held decision lasts with no traffic; matches policy.litellm.session_pin_ttl_s"
+ "auto": [
+   {
+    "about": "tier-auto, the conversation router: Hermes's main model. The same complexity_router scores each new human ask and sends the conversation to Sonnet 5.5 or Opus 5.5 by name; both fall back to Haiku 5.5 (model_fallbacks). The work itself goes to subagents on tier-work. Eli asked for this on 2026-11-14: Claude for the conversation, the free models for subagent work.",
+    "group": "tier-auto",
+    "allowance": true,
+    "allowance_why": "Eli, 2026-11-14: the conversation runs on Sonnet 5.5 or Opus 5.5 through the Max subscription bridge (free: allowance), never an API key; subagents and cron stay on the free tier-work",
+    "tiers": {"SIMPLE": "claude-sonnet-5-5", "MEDIUM": "claude-sonnet-5-5", "COMPLEX": "claude-opus-5-5", "REASONING": "claude-opus-5-5"},
+    "tiers_why": "complexity label -> catalog model. Of 163 fresh asks the router classified through 2026-11-14 (usage.db, the old tier-auto), 134 scored SIMPLE, 25 MEDIUM, 4 COMPLEX, 0 REASONING, so Sonnet takes most of the conversation and Opus the asks that score COMPLEX or REASONING. To give Opus more of it, map MEDIUM to claude-opus-5-5.",
+    "efforts": {"SIMPLE": "low", "MEDIUM": "medium", "COMPLEX": "high", "REASONING": "high"},
+    "efforts_why": "reasoning_effort set with the model, replacing whatever the caller sent; the subscription bridge passes it on as the Claude reasoning effort",
+    "default_tier": "claude-sonnet-5-5",
+    "default_tier_why": "where a request goes when classification cannot run",
+    "classification_mode": "user_turn",
+    "classification_mode_why": "classify each new human ask and keep that decision for the tool-call turns that follow, so the conversation does not switch model mid-task",
+    "context_compaction": false,
+    "context_compaction_why": "Hermes compresses its own context; the router must not rewrite history behind it",
+    "session_affinity_ttl_seconds": 7200,
+    "session_affinity_ttl_why": "how long a held decision lasts with no traffic; matches policy.litellm.session_pin_ttl_s"
+   },
+   {
+    "about": "tier-work, the work router: LiteLLM's complexity_router (litellm/litellm/router_strategy/complexity_router) scores each request locally, with no model call, and sends it to one of the free tiers below. Hermes's subagents (delegation.model) and cron name tier-work; the conversation itself is tier-auto, the router above. The chosen tier then routes as usual (order, fallbacks, session pin). build.py writes each router as one auto_router deployment.",
+    "group": "tier-work",
+    "tiers": {
+     "SIMPLE": "medium",
+     "MEDIUM": "complex",
+     "COMPLEX": "complex",
+     "REASONING": "complex"
+    },
+    "tiers_why": "complexity label -> catalog tier. SIMPLE goes to medium (at effort low): every Hermes turn carries its tool loop and 48k-55k input tokens (usage.db 2026-11-12), which gpt-oss-120b on Groq cannot take (6k input) and the small simple-tier models answer by talking instead of calling tools; tier-simple stays for Hermes's auxiliary lanes. MEDIUM goes to complex (2026-11-12): 40 of 42 fresh asks that day scored SIMPLE or MEDIUM and all ran their whole tool loop on north-mini-code (30B / 3B active), so anything past a simple ask now plans on the complex tier, which nemotron-3.5-super-vl-120b heads since 2026-11-14 (gemini-3.8-flash: ok 1 of 14, 6 rate-limited, 69.8 s, moved last). REASONING goes to complex too: moving gemini-3.8-flash there left the reasoning tier only command-a-plus, a Cohere allowance, which a classifier may not choose; tier-reasoning stays callable by name and as a fallback. claude is left out: this router does the work, and that stays on free models; the conversation's router, tier-auto, is the one that spends the Max allowance",
+    "efforts": {
+     "SIMPLE": "low",
+     "MEDIUM": "medium",
+     "COMPLEX": "high",
+     "REASONING": "high"
+    },
+    "efforts_why": "reasoning_effort set with the tier, replacing whatever the caller sent, so how hard a model thinks follows the classification too; litellm/team/effort_clamp.py then moves it into what the chosen model accepts, and models without reasoning drop it",
+    "default_tier": "medium",
+    "default_tier_why": "where a request goes when classification cannot run",
+    "classification_mode": "user_turn",
+    "classification_mode_why": "classify each new human ask and keep that decision for the tool-call turns that follow, so an agent loop does not switch model mid-task; 'every_request' classifies every turn",
+    "context_compaction": false,
+    "context_compaction_why": "Hermes compresses its own context; the router must not rewrite history behind it",
+    "session_affinity_ttl_seconds": 7200,
+    "session_affinity_ttl_why": "how long a held decision lasts with no traffic; matches policy.litellm.session_pin_ttl_s"
+   }
+ ],
+ "model_fallbacks": {
+  "about": "routed model -> the models to try, in order, when it fails or is cooling down (LiteLLM router fallbacks, like tier_fallbacks but by model id). The conversation (tier-auto) names Sonnet and Opus by model, so this is their fallback.",
+  "claude-opus-5-5": ["claude-haiku-5-5"],
+  "claude-sonnet-5-5": ["claude-haiku-5-5"],
+  "claude_why": "Eli, 2026-11-14: the conversation is Opus or Sonnet 5.5 with a fallback to Haiku 5.5"
  },
  "policy": {
   "about": "How the gateway behaves, as opposed to what it may call. build.py validates every value and writes it into the Portkey configs and LiteLLM's config.yaml; litellm/team/run.sh reads session_pin_ttl_s. Change a value, run build.py, restart both launchd jobs.",
@@ -233,7 +259,7 @@
   {
    "id": "gemini-3.8-flash",
    "tier": "complex",
-   "order": 1,
+   "order": 4,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,
@@ -298,7 +324,7 @@
   {
    "id": "muse-glimmer-30b",
    "tier": "complex",
-   "order": 4,
+   "order": 3,
    "context": 131072,
    "tools": true,
    "vision": true,
@@ -319,7 +345,7 @@
   {
    "id": "nemotron-3.5-super-vl-120b",
    "tier": "complex",
-   "order": 2,
+   "order": 1,
    "context": 1000000,
    "max_output": 131072,
    "tools": true,
@@ -385,7 +411,7 @@
   {
    "id": "gemini-3.6-flash",
    "tier": "complex",
-   "order": 3,
+   "order": 2,
    "context": 1048576,
    "max_output": 65536,
    "tools": true,

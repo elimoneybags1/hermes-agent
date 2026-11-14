@@ -80,8 +80,10 @@ def test_changed_names_only_the_tiers_that_moved(catalog):
     complex_models = [m for m in new["models"] if m.get("tier") == "complex"]
     complex_models[0]["order"], complex_models[1]["order"] = complex_models[1]["order"], complex_models[0]["order"]
     assert gw.changed(catalog, new) == (["tier-complex"], False)
-    new["auto"]["efforts"]["SIMPLE"] = "medium"
-    assert gw.changed(catalog, new)[0] == ["tier-complex", "tier-auto"]
+    next(r for r in new["auto"] if r["group"] == "tier-work")["efforts"]["SIMPLE"] = "medium"
+    assert gw.changed(catalog, new)[0] == ["tier-complex", "tier-work"]
+    new["model_fallbacks"]["claude-opus-5-5"] = ["claude-sonnet-5-5", "claude-haiku-5-5"]
+    assert gw.changed(catalog, new)[0] == ["tier-complex", "tier-auto", "tier-work"]
     new["policy"]["portkey"]["retry_attempts"] = 2
     assert gw.changed(catalog, new)[1] is True
 

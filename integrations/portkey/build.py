@@ -495,32 +495,72 @@ AUTO_LABELS = ("SIMPLE", "MEDIUM", "COMPLEX", "REASONING")  # complexity_router'
 AUTO_MODES = {"user_turn", "every_request"}
 
 
-def auto_deployment(catalog: dict) -> dict | None:
-    """The tier-auto group: one complexity_router deployment over catalog tiers; None without an 'auto' section."""
+def auto_routers(catalog: dict) -> list[dict]:
+    """The catalog's complexity routers: 'auto' is one router object or a list of them."""
     a = catalog.get("auto")
     if a is None:
-        return None
+        return []
+    if isinstance(a, dict):
+        return [a]
+    if not isinstance(a, list) or not a or not all(isinstance(r, dict) for r in a):
+        refuse("auto must be a router object or a non-empty list of them")
+    return a
+
+
+def _target_rows(catalog: dict, target: str) -> list[dict] | None:
+    """served_by rows behind a router target (a catalog tier or a routed model id); None if unknown."""
+    if target in catalog["tiers"]:
+        return [s for m in catalog["models"] if m.get("tier") == target for s in m["served_by"]]
+    for m in catalog["models"]:
+        if m["id"] == target and m.get("tier") is not None:
+            return m["served_by"]
+    return None
+
+
+def _target_group(catalog: dict, target: str) -> str:
+    return f"tier-{target}" if target in catalog["tiers"] else target
+
+
+def auto_deployment(catalog: dict, a: dict | None = None) -> dict | None:
+    """One complexity_router deployment over catalog tiers or routed models; None without an 'auto' section.
+
+    A target that only spends an allowance (the Claude models) is refused unless the router
+    says so itself: allowance: true and a non-empty allowance_why.
+    """
+    if a is None:
+        routers = auto_routers(catalog)
+        if not routers:
+            return None
+        a = routers[0]
     tiers = catalog["tiers"]
     group = a.get("group")
-    if not isinstance(group, str) or not NAME.match(group) or group in {f"tier-{t}" for t in tiers}:
+    taken = {f"tier-{t}" for t in tiers} | {m["id"] for m in catalog["models"]}
+    if not isinstance(group, str) or not NAME.match(group) or group in taken:
         refuse(f"auto.group must be a new config-name-shaped group, not {group!r}")
+    allowance_ok = a.get("allowance", False)
+    if not isinstance(allowance_ok, bool):
+        refuse(f"auto {group}: allowance must be true or false")
+    if allowance_ok and not (isinstance(a.get("allowance_why"), str) and a["allowance_why"].strip()):
+        refuse(f"auto {group}: allowance: true needs allowance_why")
     mapping = a.get("tiers")
     if not isinstance(mapping, dict) or set(mapping) != set(AUTO_LABELS):
-        refuse(f"auto.tiers must map exactly {list(AUTO_LABELS)} to catalog tiers")
+        refuse(f"auto.tiers must map exactly {list(AUTO_LABELS)} to catalog tiers or routed models")
     for label, t in mapping.items():
-        if t not in tiers:
-            refuse(f"auto.tiers.{label}: unknown tier {t!r}")
-        rows = [s for m in catalog["models"] if m.get("tier") == t for s in m["served_by"]]
-        if rows and all(s.get("free") == "allowance" for s in rows):
-            # A tier that only spends an allowance (tier-claude) is chosen by name, never by a classifier.
-            # A metered model inside a free tier is still withheld by the spend guard when over.
-            refuse(f"auto.tiers.{label}: tier {t} draws only on an allowance; choose it by name, not by classifier")
+        rows = _target_rows(catalog, t) if isinstance(t, str) else None
+        if rows is None:
+            refuse(f"auto.tiers.{label}: unknown tier or routed model {t!r}")
+        if rows and all(s.get("free") == "allowance" for s in rows) and not allowance_ok:
+            # A target that only spends an allowance (tier-claude) is chosen by name, never by a
+            # classifier, unless the router opts in. A metered model inside a free tier is still
+            # withheld by the spend guard when over.
+            refuse(f"auto.tiers.{label}: {t} draws only on an allowance; choose it by name, not by classifier "
+                   f"(or set allowance: true with allowance_why on this router)")
     efforts = a.get("efforts") or {}
     if not isinstance(efforts, dict) or not set(efforts) <= set(AUTO_LABELS) \
             or any(e not in EFFORTS[:-1] for e in efforts.values()):
         refuse(f"auto.efforts must map labels from {list(AUTO_LABELS)} to one of {list(EFFORTS[:-1])}")
     if a.get("default_tier") not in mapping.values():
-        refuse("auto.default_tier must be one of the tiers in auto.tiers")
+        refuse("auto.default_tier must be one of the targets in auto.tiers")
     if a.get("classification_mode") not in AUTO_MODES:
         refuse(f"auto.classification_mode must be one of {sorted(AUTO_MODES)}")
     if not isinstance(a.get("context_compaction"), bool):
@@ -529,9 +569,9 @@ def auto_deployment(catalog: dict) -> dict | None:
     if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 1:
         refuse("auto.session_affinity_ttl_seconds must be an integer >= 1")
     cfg = {
-        # A tier with an effort is a model entry whose litellm_params the router lays over the request.
-        "tiers": {label: ({"model_name": f"tier-{t}", "litellm_params": {"reasoning_effort": efforts[label]}}
-                          if label in efforts else f"tier-{t}") for label, t in mapping.items()},
+        # A target with an effort is a model entry whose litellm_params the router lays over the request.
+        "tiers": {label: ({"model_name": _target_group(catalog, t), "litellm_params": {"reasoning_effort": efforts[label]}}
+                          if label in efforts else _target_group(catalog, t)) for label, t in mapping.items()},
         "classification_mode": a["classification_mode"],
         "session_affinity_ttl_seconds": ttl,
     }
@@ -542,10 +582,27 @@ def auto_deployment(catalog: dict) -> dict | None:
         "litellm_params": {
             "model": "auto_router/complexity_router",
             "complexity_router_config": cfg,
-            "complexity_router_default_model": f"tier-{a['default_tier']}",
+            "complexity_router_default_model": _target_group(catalog, a["default_tier"]),
         },
         "model_info": {"id": group, "input_cost_per_token": 0, "output_cost_per_token": 0},
     }
+
+
+def model_fallbacks(catalog: dict, models: list[dict]) -> list[dict]:
+    """catalog model_fallbacks (routed model id -> routed model ids) as LiteLLM fallback entries."""
+    fb = catalog.get("model_fallbacks") or {}
+    if not isinstance(fb, dict):
+        refuse("model_fallbacks must be an object of model id -> [model ids]")
+    ids = {m["id"] for m in models}
+    out = []
+    for mid, to in fb.items():
+        if mid == "about" or mid.endswith("_why"):  # notes, not fallbacks
+            continue
+        if mid not in ids or not isinstance(to, list) or not to or len(set(to)) != len(to) \
+                or any(t not in ids or t == mid for t in to):
+            refuse(f"model_fallbacks.{mid}: must be a routed model -> other distinct routed models, not {to!r}")
+        out.append({mid: list(to)})
+    return out
 
 
 def litellm_config(catalog: dict, models: list[dict]) -> dict:
@@ -555,8 +612,12 @@ def litellm_config(catalog: dict, models: list[dict]) -> dict:
         for m in tier_models(models, t):
             model_list.append(deployment(catalog, m, m["id"], m["slug"]))
             model_list.append(deployment(catalog, m, f"tier-{t}", f"tier-{t}/{m['slug']}"))
-    auto = auto_deployment(catalog)
-    if auto:
+    groups = set()
+    for a in auto_routers(catalog):
+        auto = auto_deployment(catalog, a)
+        if auto["model_name"] in groups:
+            refuse(f"auto: two routers share the group {auto['model_name']}")
+        groups.add(auto["model_name"])
         model_list.append(auto)
     fb = catalog["tier_fallbacks"]
     ll = policy(catalog)["litellm"]
@@ -567,7 +628,7 @@ def litellm_config(catalog: dict, models: list[dict]) -> dict:
         "max_fallbacks": ll["max_fallbacks"],
         "allowed_fails": ll["allowed_fails"],
         "cooldown_time": ll["cooldown_time"],
-        "fallbacks": [{f"tier-{t}": [f"tier-{f}" for f in fb[t]]} for t in tiers],
+        "fallbacks": [{f"tier-{t}": [f"tier-{f}" for f in fb[t]]} for t in tiers] + model_fallbacks(catalog, models),
         "context_window_fallbacks": [
             {f"tier-{t}": [f"tier-{f}" for f in to]} for t, to in ll["context_window_fallbacks"].items()
         ],

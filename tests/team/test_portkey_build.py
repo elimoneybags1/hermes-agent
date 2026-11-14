@@ -284,30 +284,89 @@ def _litellm(catalog, keys) -> dict:
     return build.litellm_config(catalog, build.routed(catalog))
 
 
-def test_tier_auto_is_one_complexity_router_over_catalog_tiers(catalog, keys):
-    auto = [d for d in _litellm(catalog, keys)["model_list"] if d["model_name"] == "tier-auto"]
-    assert len(auto) == 1
-    p = auto[0]["litellm_params"]
+def _router(catalog, group):
+    return next(r for r in catalog["auto"] if r["group"] == group)
+
+
+def _deployment(catalog, keys, group):
+    deps = [d for d in _litellm(catalog, keys)["model_list"] if d["model_name"] == group]
+    assert len(deps) == 1
+    return deps[0]
+
+
+def _targets(dep):
+    tiers = dep["litellm_params"]["complexity_router_config"]["tiers"]
+    return {label: (v["model_name"] if isinstance(v, dict) else v) for label, v in tiers.items()}
+
+
+def test_tier_work_is_one_complexity_router_over_free_tiers(catalog, keys):
+    p = _deployment(catalog, keys, "tier-work")["litellm_params"]
     assert p["model"] == "auto_router/complexity_router"
-    tiers = p["complexity_router_config"]["tiers"]
-    assert {label: (v["model_name"] if isinstance(v, dict) else v) for label, v in tiers.items()} == {
+    assert _targets(_deployment(catalog, keys, "tier-work")) == {
         "SIMPLE": "tier-medium", "MEDIUM": "tier-complex", "COMPLEX": "tier-complex", "REASONING": "tier-complex"}
     assert p["complexity_router_config"]["context_compaction"] is False
     assert p["complexity_router_default_model"] == "tier-medium"
 
 
-def test_tier_auto_never_routes_to_an_allowance_tier(catalog, keys):
-    catalog["auto"]["tiers"]["REASONING"] = "claude"
+def test_tier_auto_is_the_conversation_on_sonnet_or_opus_falling_back_to_haiku(catalog, keys):
+    cfg = _litellm(catalog, keys)
+    dep = _deployment(catalog, keys, "tier-auto")
+    assert _targets(dep) == {"SIMPLE": "claude-sonnet-5-5", "MEDIUM": "claude-sonnet-5-5",
+                             "COMPLEX": "claude-opus-5-5", "REASONING": "claude-opus-5-5"}
+    assert dep["litellm_params"]["complexity_router_default_model"] == "claude-sonnet-5-5"
+    fallbacks = cfg["router_settings"]["fallbacks"]
+    assert {"claude-opus-5-5": ["claude-haiku-5-5"]} in fallbacks
+    assert {"claude-sonnet-5-5": ["claude-haiku-5-5"]} in fallbacks
+    names = {d["model_name"] for d in cfg["model_list"]}
+    assert {"claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"} <= names
+
+
+def test_a_router_reaches_an_allowance_only_by_opting_in(catalog, keys):
+    work = _router(catalog, "tier-work")
+    work["tiers"]["REASONING"] = "claude"
     with pytest.raises(build.Refusal, match="allowance"):
         build.render(catalog, keys)
+    work["tiers"]["REASONING"] = "claude-opus-5-5"
+    with pytest.raises(build.Refusal, match="allowance"):
+        build.render(catalog, keys)
+    work["allowance"] = True
+    with pytest.raises(build.Refusal, match="allowance_why"):
+        build.render(catalog, keys)
+    work["allowance_why"] = "test"
+    build.render(catalog, keys)
+
+
+def test_a_router_target_must_be_a_tier_or_a_routed_model(catalog, keys):
+    _router(catalog, "tier-auto")["tiers"]["SIMPLE"] = "kimi-k2.6"  # in the catalog, not routed
+    with pytest.raises(build.Refusal, match="unknown tier or routed model"):
+        build.render(catalog, keys)
+
+
+def test_two_routers_may_not_share_a_group(catalog, keys):
+    _router(catalog, "tier-work")["group"] = "tier-auto"
+    with pytest.raises(build.Refusal, match="share the group"):
+        build.render(catalog, keys)
+
+
+@pytest.mark.parametrize("value", [["claude-sonnet-5-5"], [], ["kimi-k2.6"], "claude-haiku-5-5"])
+def test_refuses_a_bad_model_fallback(catalog, keys, value):
+    catalog["model_fallbacks"]["claude-sonnet-5-5"] = value
+    with pytest.raises(build.Refusal, match="model_fallbacks"):
+        build.render(catalog, keys)
+
+
+def test_a_single_router_object_is_still_accepted(catalog, keys):
+    catalog["auto"] = _router(catalog, "tier-work")
+    assert _targets(_deployment(catalog, keys, "tier-work"))["SIMPLE"] == "tier-medium"
 
 
 @pytest.mark.parametrize("key, value", [
     ("tiers", {"SIMPLE": "simple"}), ("default_tier", "claude"), ("classification_mode", "sometimes"),
-    ("group", "tier-medium"), ("context_compaction", "no"), ("session_affinity_ttl_seconds", 0),
+    ("group", "tier-medium"), ("group", "claude-opus-5-5"), ("context_compaction", "no"),
+    ("session_affinity_ttl_seconds", 0), ("allowance", "yes"),
 ])
 def test_refuses_a_bad_auto_value(catalog, keys, key, value):
-    catalog["auto"][key] = value
+    _router(catalog, "tier-work")[key] = value
     with pytest.raises(build.Refusal):
         build.render(catalog, keys)
 
@@ -321,12 +380,13 @@ def test_reasoning_efforts_reach_model_info_and_bad_ones_are_refused(catalog, ke
         build.render(catalog, keys)
 
 
-def test_tier_auto_sets_each_tiers_effort_and_refuses_a_bad_one(catalog, keys):
-    auto = next(d for d in _litellm(catalog, keys)["model_list"] if d["model_name"] == "tier-auto")
-    tiers = auto["litellm_params"]["complexity_router_config"]["tiers"]
+def test_each_router_sets_its_effort_and_refuses_a_bad_one(catalog, keys):
+    tiers = _deployment(catalog, keys, "tier-work")["litellm_params"]["complexity_router_config"]["tiers"]
     assert tiers["SIMPLE"] == {"model_name": "tier-medium", "litellm_params": {"reasoning_effort": "low"}}
     assert tiers["REASONING"]["litellm_params"]["reasoning_effort"] == "high"
-    catalog["auto"]["efforts"]["MEDIUM"] = "ultra"
+    chat = _deployment(catalog, keys, "tier-auto")["litellm_params"]["complexity_router_config"]["tiers"]
+    assert chat["COMPLEX"] == {"model_name": "claude-opus-5-5", "litellm_params": {"reasoning_effort": "high"}}
+    _router(catalog, "tier-work")["efforts"]["MEDIUM"] = "ultra"
     with pytest.raises(build.Refusal, match="auto.efforts"):
         build.render(catalog, keys)
 

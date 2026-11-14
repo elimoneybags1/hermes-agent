@@ -18,6 +18,10 @@
 # lists (plugins.enabled, command_allowlist, skills.external_dirs) into each
 # project profile instead, and builds its SOUL.md from main's.
 
+# The conversation is tier-auto: LiteLLM picks Sonnet 5.5 or Opus 5.5 per ask, both
+# falling back to Haiku 5.5, on the Max subscription allowance. The work goes to
+# subagents (delegation) and cron on tier-work, LiteLLM's router over the free tiers.
+# Both routers are in integrations/portkey/catalog.json ("auto").
 model:
   provider: litellm
   default: tier-auto
@@ -32,11 +36,12 @@ providers:
     context_length: 131072
     key_env: LITELLM_MASTER_KEY
     # A list here is an allowlist: Hermes's pickers show only these ids
-    # (hermes_cli/model_switch.py::_models_config_is_allowlist). The Claude
-    # models are listed by name because Claude is chosen by name, never by
-    # tier-auto; each one draws on the Max subscription allowance.
+    # (hermes_cli/model_switch.py::_models_config_is_allowlist). tier-auto (the
+    # conversation) and the Claude models by name draw on the Max subscription
+    # allowance; tier-work and the tier-<t> groups are the free models.
     models:
       - tier-auto
+      - tier-work
       - tier-simple
       - tier-medium
       - tier-complex
@@ -52,12 +57,12 @@ fallback_providers: []
 
 delegation:
   provider: litellm
-  model: tier-auto
+  model: tier-work
   fallback_providers: []
 
 cron:
   model_provider: litellm
-  model: tier-auto
+  model: tier-work
 
 # Every helper lane runs on the gateway's simple tier.
 auxiliary:

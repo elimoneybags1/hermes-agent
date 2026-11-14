@@ -119,18 +119,32 @@ generator refuses anything not free; `build.py --check` runs before either
 proxy starts and refuses drift. A new provider or model is a catalog edit,
 never a config edit.
 
-## Automatic model choice: tier-auto
+## Automatic model choice: tier-auto (conversation) and tier-work (work)
 
-Hermes's main model, subagents and cron name `tier-auto`: LiteLLM's
-complexity router (in the fork, `litellm/litellm/router_strategy/complexity_router/`)
-scores each new ask locally and sends it to the simple, medium, complex or
-reasoning tier, with a reasoning effort per tier (`auto.efforts`); tool-call
-turns replay that decision. On any tier call carrying tools,
-`litellm/team/agent_gate.py` keeps only tool-capable models and drops those
-with a bad recent record on tool requests (`policy.agent_gate`, `usage.db`). Its settings are the
-catalog's `auto` section; never `tier-claude`. Each decision is in `usage.db`
-(`route_json`). A catalog row's `reasoning_efforts` lists what its provider
-accepts, and `litellm/team/effort_clamp.py` moves other values into it.
+Two LiteLLM complexity routers (in the fork,
+`litellm/litellm/router_strategy/complexity_router/`), both in the catalog's
+`auto` list, score each new ask locally and replay that decision for its
+tool-call turns, with a reasoning effort per label (`efforts`):
+
+- `tier-auto` is Hermes's main model, the conversation: SIMPLE and MEDIUM asks
+  go to `claude-sonnet-5-5`, COMPLEX and REASONING to `claude-opus-5-5`, both
+  falling back to `claude-haiku-5-5` (`model_fallbacks`). This is the one place
+  a classifier spends the Max allowance: build.py allows an allowance-only
+  target only on a router with `allowance: true` and an `allowance_why`
+  (Eli, 2026-11-14: everything free plus the Claude subscription).
+- `tier-work` is subagents' (`delegation.model`) and cron's model: the free
+  tiers, SIMPLE to `tier-medium` and the rest to `tier-complex`.
+
+Main's `SOUL.md` tells the conversation to hand the work (reading, code,
+commands, research) to subagents with `delegate_task`. On any tier call
+carrying tools, `litellm/team/agent_gate.py` keeps only tool-capable models and
+drops those with a bad recent record on tool requests (`policy.agent_gate`,
+`usage.db`). Each router decision is in `usage.db` (`route_json`). A catalog
+row's `reasoning_efforts` lists what its provider accepts, and
+`litellm/team/effort_clamp.py` moves other values into it. A routing change is
+a catalog edit and `integrations/bin/gateway apply`, never an edit of the
+generated `$HOME/state/team/litellm/config.yaml`: the start-up check refuses
+drift and LiteLLM stays down (it did on 2026-11-14).
 
 ## Looking at and changing the gateway
 
