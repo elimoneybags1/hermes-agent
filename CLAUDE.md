@@ -89,6 +89,10 @@ profile is main plus its own additions, kept live by three mechanisms:
   (through gh's credential helper) use that login and no other profile has it.
   Hermes strips `GH_TOKEN` from every terminal, so a token in `.env` would not
   work. Create one with `GH_CONFIG_DIR=$HOME/state/team/hermes/profiles/<name>/gh gh auth login`.
+- **Pinned folder** — a project profile whose config sets `terminal.cwd` starts
+  there from any launch: the launcher changes into it when `hermes -p <name>` is
+  typed elsewhere (Hermes itself applies `terminal.cwd` only to gateway, Desktop
+  and cron sessions).
 - **signalexp** — works on the Signal team's `Signal-EXP/hermes-agent` at
   `~/work/SignalEXP`, by pull request only; its brief is its `SOUL.project.md`.
   Nothing from this repo goes into theirs.

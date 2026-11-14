@@ -116,6 +116,21 @@ scope_github() {
     fi
 }
 
+# A project profile with terminal.cwd works in that folder from any launch. Hermes
+# applies terminal.cwd only to gateway, Desktop and cron sessions; a CLI session
+# would otherwise work wherever `hermes -p <name>` was typed.
+pin_cwd() {
+    [ "$1" != default ] || return 0
+    _conf="$HERMES_HOME/profiles/$1/config.yaml"
+    [ -f "$_conf" ] || return 0
+    _dir="$(awk '/^terminal:/{t=1; next} t && /^[^ ]/{t=0} t && /^  cwd:/{sub(/^  cwd:[ ]*/, ""); gsub(/["'"'"']/, ""); print; exit}' "$_conf")"
+    case "$_dir" in "~"*) _dir="$HOME${_dir#\~}" ;; esac
+    [ -n "$_dir" ] && [ "$_dir" != . ] && [ -d "$_dir" ] || return 0
+    case "$(pwd -P)/" in "$(cd "$_dir" && pwd -P)/"*) return 0 ;; esac
+    echo "hermes: profile '$1' works in $_dir" >&2
+    cd "$_dir"
+}
+
 explicit=no
 EXPLICIT_PROFILE=""
 prev=""
@@ -131,6 +146,7 @@ if [ "$explicit" = yes ]; then
     if [ -n "$EXPLICIT_PROFILE" ]; then
         inherit_from_main "$EXPLICIT_PROFILE"
         scope_github "$EXPLICIT_PROFILE"
+        pin_cwd "$EXPLICIT_PROFILE"
     fi
     HERMES "$@"
     exit $?
@@ -176,6 +192,7 @@ fi
 
 inherit_from_main "$PROFILE"
 scope_github "$PROFILE"
+pin_cwd "$PROFILE"
 
 if [ "$PROFILE" = default ]; then
     # Team: the base home itself, the overall setup. No profile flag.
