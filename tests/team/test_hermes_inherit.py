@@ -131,3 +131,27 @@ def test_cli_entry_point(home):
     subprocess.run([sys.executable, str(ROOT / "integrations" / "hermes" / "inherit.py"),
                     str(home), "proj"], check=True, capture_output=True)
     assert (home / "profiles" / "proj" / "SOUL.md").read_text().endswith("Project rules.\n")
+
+
+def test_inherit_all_covers_every_project_profile_but_not_deleted_ones(home):
+    other = home / "profiles" / "other"
+    other.mkdir()
+    (other / "config.yaml").write_text("model:\n  default: tier-auto\n")
+    deleted = home / "profiles" / ".deleted" / "old"
+    deleted.mkdir(parents=True)
+    (deleted / "config.yaml").write_text("model:\n  default: tier-auto\n")
+    assert inherit_mod.project_profiles(home) == ["other", "proj"]
+    inherit_mod.inherit_all(home, log=lambda m: None)
+    for name in ("proj", "other"):
+        assert (home / "profiles" / name / "SOUL.md").read_text() == "You are main.\n"
+    assert not (deleted / "SOUL.md").exists()
+
+
+def test_inherit_all_keeps_going_past_a_broken_profile(home):
+    broken = home / "profiles" / "broken"
+    broken.mkdir()
+    (broken / "config.yaml").write_text("model: [unclosed\n")
+    messages = []
+    inherit_mod.inherit_all(home, log=messages.append)
+    assert (home / "profiles" / "proj" / "SOUL.md").read_text() == "You are main.\n"
+    assert any("broken" in m for m in messages)

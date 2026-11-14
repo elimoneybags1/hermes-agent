@@ -15,8 +15,8 @@
 #   default profile             main: the overall configuration, launched from this repo
 #   project profiles            main plus project additions; one per project, made on
 #                               the first launch there by cloning default; picked by
-#                               integrations/bin/hermes-project. Every launch, automatic
-#                               or -p <name>, brings it up to date with main
+#                               integrations/bin/hermes-project. Every launch, of any
+#                               profile, brings all of them up to date with main
 #                               (integrations/hermes/inherit.py).
 #
 # An explicit -p/--profile, or the `profile` subcommand, skips the automatic choice.
@@ -89,21 +89,22 @@ for a in "$@"; do
     prev="$a"
 done
 
-# Bring a project profile up to date with main (default): shared lists, shared
-# skills, SOUL.md = main's + SOUL.project.md. See integrations/hermes/inherit.py.
-# A stamp keeps it off the common path: it runs only when one of its inputs changed.
-inherit_from_main() {
-    PDIR="$HERMES_HOME/profiles/$1"
-    [ "$1" != default ] && [ -f "$PDIR/config.yaml" ] || return 0
-    STAMP="$PDIR/.inherited"
-    if [ -f "$STAMP" ] && [ -z "$(find "$HERMES_HOME/config.yaml" "$HERMES_HOME/SOUL.md" \
-            "$PDIR/config.yaml" "$PDIR/SOUL.md" "$PDIR/SOUL.project.md" -newer "$STAMP" 2>/dev/null)" ]; then
+# Bring every project profile up to date with main (default): shared lists,
+# shared skills, SOUL.md = main's + SOUL.project.md. See integrations/hermes/inherit.py.
+# All of them, not only the one starting: app chats run in the long-lived gateway,
+# so opening the app or any pane is what carries a change in main to the others.
+# One stamp keeps it off the common path: it runs only when an input changed.
+inherit_all() {
+    STAMP="$HERMES_HOME/.inherited"
+    if [ -f "$STAMP" ] && [ -z "$(find "$HERMES_HOME/config.yaml" "$HERMES_HOME/SOUL.md" "$HERMES_HOME/profiles" \
+            -maxdepth 2 \( -name config.yaml -o -name SOUL.md -o -name SOUL.project.md \) \
+            -newer "$STAMP" -print 2>/dev/null | head -1)" ]; then
         return 0
     fi
-    if "$REPO/scripts/run-in-hermes-env" python3 "$REPO/integrations/hermes/inherit.py" "$HERMES_HOME" "$1" >&2; then
+    if "$REPO/scripts/run-in-hermes-env" python3 "$REPO/integrations/hermes/inherit.py" "$HERMES_HOME" --all >&2; then
         touch "$STAMP"
     else
-        echo "hermes: could not bring profile '$1' up to date with main; starting it as it is" >&2
+        echo "hermes: could not bring the project profiles up to date with main; starting as they are" >&2
     fi
 }
 
@@ -143,8 +144,8 @@ for a in "$@"; do
     prev="$a"
 done
 if [ "$explicit" = yes ]; then
+    inherit_all
     if [ -n "$EXPLICIT_PROFILE" ]; then
-        inherit_from_main "$EXPLICIT_PROFILE"
         scope_github "$EXPLICIT_PROFILE"
         pin_cwd "$EXPLICIT_PROFILE"
     fi
@@ -190,7 +191,7 @@ if [ "$PROFILE" != default ] && [ ! -f "$HERMES_HOME/profiles/$PROFILE/config.ya
     fi
 fi
 
-inherit_from_main "$PROFILE"
+inherit_all
 scope_github "$PROFILE"
 pin_cwd "$PROFILE"
 

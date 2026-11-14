@@ -14,7 +14,11 @@ additions. Three mechanisms carry main down, each matched to what Hermes can do:
                    profile's SOUL.project.md. Edit SOUL.project.md; SOUL.md is
                    rebuilt. A SOUL.md edited by hand is saved aside, not lost.
 
-Run by integrations/bin/hermes before Hermes starts:
+Run by integrations/bin/hermes before every Hermes start, for every project
+profile (not only the one starting), so opening the app or any pane brings
+them all up to date; app chats run in the long-lived gateway, which never
+passes through the launcher itself:
+    inherit.py <hermes_home> --all
     inherit.py <hermes_home> <profile>
 """
 
@@ -159,6 +163,28 @@ def inherit(home: Path, profile: str, log=print) -> None:
     sync_soul(home, pdir, log=log)
 
 
+def project_profiles(home: Path) -> list[str]:
+    """Every project profile: a directory under profiles/ with a config.yaml (not .deleted etc.)."""
+    root = home / "profiles"
+    if not root.is_dir():
+        return []
+    return sorted(p.name for p in root.iterdir()
+                  if p.is_dir() and not p.name.startswith(".") and (p / "config.yaml").is_file())
+
+
+def inherit_all(home: Path, log=print) -> None:
+    """Bring every project profile up to date with main. One profile failing does not stop the rest."""
+    for name in project_profiles(home):
+        try:
+            inherit(home, name, log=log)
+        except Exception as exc:  # a malformed profile config must not block the others or the launch
+            log(f"hermes: could not bring profile '{name}' up to date with main: {exc}")
+
+
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # the checkout, for hermes_yaml
-    inherit(Path(sys.argv[1]), sys.argv[2], log=lambda m: print(m, file=sys.stderr))
+    _log = lambda m: print(m, file=sys.stderr)
+    if sys.argv[2] == "--all":
+        inherit_all(Path(sys.argv[1]), log=_log)
+    else:
+        inherit(Path(sys.argv[1]), sys.argv[2], log=_log)

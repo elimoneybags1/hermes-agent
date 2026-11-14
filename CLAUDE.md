@@ -66,8 +66,10 @@ profile is main plus its own additions, kept live by three mechanisms:
   compression, curator, kanban, approvals). No profile can change these keys.
   To change a shared setting, edit this file, not `/config` in a main session.
 - **Inherited lists and personality** — `integrations/hermes/inherit.py`, run by
-  the launcher before every project-profile start, automatic or `-p <name>`
-  (a stamp skips it when nothing changed). It unions main's `plugins.enabled`
+  the launcher on every launch of any profile, for all project profiles at once,
+  so opening the app or any pane carries a change in main to every profile (app
+  chats run in the long-lived gateway, which never passes through the launcher).
+  A stamp (`$HOME/state/team/hermes/.inherited`) skips it when nothing changed. It unions main's `plugins.enabled`
   and `command_allowlist` into the profile's, puts main's skills
   (`$HOME/state/team/hermes/skills`) first in `skills.external_dirs`, and
   rebuilds the profile's `SOUL.md` as main's `SOUL.md` plus the profile's
