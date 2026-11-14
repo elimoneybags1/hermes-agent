@@ -43,10 +43,10 @@ def _claimed(tmp_path, monkeypatch, **task):
 
 
 def _policy(tmp_path, task):
-    from gateway.session_contract import Principal
+    from gateway.session_contract import SessionActor
     from gateway.session_kanban import build_kanban_policy
 
-    actor = Principal("owner", str(tmp_path), frozenset({"session:create"}), "transport")
+    actor = SessionActor("owner", str(tmp_path), frozenset({"session:create"}), "transport")
     connection = SimpleNamespace(
         authority=SimpleNamespace(profile_id=str(tmp_path)),
         actor=actor,

@@ -17,6 +17,11 @@ while [ -L "$SELF" ]; do
     case "$_target" in /*) SELF="$_target" ;; *) SELF="$(dirname "$SELF")/$_target" ;; esac
 done
 REPO="$(cd "$(dirname "$SELF")/../.." && pwd -P)"
+# Run from a worktree, the Team repo is still its main checkout.
+_common="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [ "$(basename "${_common:-x}")" = ".git" ]; then
+    REPO="$(cd "$(dirname "$_common")" && pwd -P)"
+fi
 DIR="$(cd "${1:-$PWD}" && pwd -P)"
 
 root="$DIR"
