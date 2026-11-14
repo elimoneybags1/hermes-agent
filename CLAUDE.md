@@ -93,6 +93,10 @@ profile is main plus its own additions, kept live by three mechanisms:
   `~/work/SignalEXP`, by pull request only; its brief is its `SOUL.project.md`.
   Nothing from this repo goes into theirs.
 - An explicit `-p <name>` or the `profile` subcommand skips the automatic choice.
+- No sticky profile: `hermes profile use <name>` or a profile switch in Desktop
+  writes `active_profile`, which Hermes applies whenever no `-p` is given, so
+  main would quietly start as that profile. The launcher deletes it on every
+  automatic launch and says so.
 - Hermes's background gateway keeps an in-memory profile list: remove a
   profile with `hermes profile delete <name>`, not `rm`, or it recreates an
   empty shell.

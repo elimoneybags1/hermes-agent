@@ -136,6 +136,18 @@ if [ "$explicit" = yes ]; then
     exit $?
 fi
 
+# Here the directory picks the profile. A sticky `hermes profile use <name>` (or a
+# profile switch in Desktop) writes active_profile, which Hermes applies whenever
+# no -p is given, so main would silently start as that profile. Clear it.
+STICKY="$HERMES_HOME/active_profile"
+if [ -f "$STICKY" ]; then
+    sticky_name="$(tr -d '[:space:]' < "$STICKY")"
+    if [ -n "$sticky_name" ] && [ "$sticky_name" != default ]; then
+        echo "hermes: cleared the sticky profile '$sticky_name'; the folder picks the profile here (use -p <name> to choose one)" >&2
+    fi
+    rm -f "$STICKY"
+fi
+
 PROFILE="$("$BIN/hermes-project")"
 if [ "$PROFILE" != default ] && [ ! -f "$HERMES_HOME/profiles/$PROFILE/config.yaml" ]; then
     # First launch in this project: clone the Team (default) profile once. A lock
